@@ -87,13 +87,13 @@ class CrawlerConfig {
 
   /// m3u8 URL 提取
   static final RegExp m3u8Pattern = RegExp(
-    r'(https?://[^"\'>\s]+\.m3u8[^"\'>\s]*)',
+    r'(https?://[^\s"\x27>]+\.m3u8[^\s"\x27>]*)',
     caseSensitive: false,
   );
 
   /// TS 切片提取
   static final RegExp tsPattern = RegExp(
-    r'^(https?://[^"\'>\s]+\.ts[^"\'>\s]*)$',
+    r'^(https?://[^\s"\x27>]+\.ts[^\s"\x27>]*)$',
     multiLine: true,
   );
 
