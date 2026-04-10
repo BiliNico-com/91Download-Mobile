@@ -46,12 +46,11 @@ class _BatchPageState extends State<BatchPage> {
       ),
       body: Column(
         children: [
-            _buildSettings(),
-            if (_progress > 0) _buildProgress(),
-            Expanded(child: _buildVideoGrid()),
-            _buildBottomBar(),
-          ],
-        ),
+          _buildSettings(),
+          if (_progress > 0) _buildProgress(),
+          Expanded(child: _buildVideoGrid()),
+          _buildBottomBar(),
+        ],
       ),
     );
   }
