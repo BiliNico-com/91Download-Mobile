@@ -14,6 +14,7 @@ class SearchPage extends StatefulWidget {
 class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMixin {
   final _keywordController = TextEditingController();
   List<VideoInfo> _results = [];
+  List<AuthorInfo> _authorResults = [];  // 作者搜索结果
   Set<String> _selectedIds = {};
   bool _isLoading = false;
   bool _isAuthorMode = false;
@@ -75,62 +76,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           Expanded(
             child: _isLoading
                 ? Center(child: CircularProgressIndicator())
-                : _results.isEmpty
-                    ? Center(child: Text('输入关键词搜索', style: TextStyle(color: Colors.grey)))
-                    : GridView.builder(
-                        padding: EdgeInsets.all(8),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          childAspectRatio: 0.75,
-                        ),
-                        itemCount: _results.length,
-                        itemBuilder: (context, index) {
-                          final video = _results[index];
-                          final selected = _selectedIds.contains(video.id);
-                          
-                          return GestureDetector(
-                            onTap: () => _toggleSelection(video.id),
-                            child: Card(
-                              clipBehavior: Clip.antiAlias,
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  video.cover != null
-                                      ? Image.network(video.cover!, fit: BoxFit.cover)
-                                      : Icon(Icons.video_file, size: 50, color: Colors.grey),
-                                  Positioned(
-                                    bottom: 0,
-                                    left: 0,
-                                    right: 0,
-                                    child: Container(
-                                      padding: EdgeInsets.all(8),
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          colors: [Colors.black.withOpacity(0.8), Colors.transparent],
-                                          begin: Alignment.bottomCenter,
-                                          end: Alignment.topCenter,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        video.title,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(fontSize: 12, color: Colors.white),
-                                      ),
-                                    ),
-                                  ),
-                                  if (selected)
-                                    Positioned(
-                                      top: 8,
-                                      right: 8,
-                                      child: Icon(Icons.check_circle, color: Colors.blue),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                : _isAuthorMode
+                    ? _buildAuthorResults()
+                    : _buildVideoResults(),
           ),
           
           // 底部操作栏
@@ -194,17 +142,132 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     setState(() {
       _isLoading = true;
       _results.clear();
+      _authorResults.clear();
+      _selectedIds.clear();
     });
     
-    await logger.d('Search', '开始搜索...');
-    final results = await crawler.searchVideos(_keywordController.text);
-    await logger.i('Search', '搜索完成, 结果数: ${results.length}');
+    if (_isAuthorMode) {
+      // 搜索作者
+      await logger.d('Search', '开始搜索作者...');
+      final authors = await crawler.searchAuthors(_keywordController.text);
+      await logger.i('Search', '作者搜索完成, 结果数: ${authors.length}');
+      
+      setState(() {
+        _authorResults = authors;
+        _isLoading = false;
+      });
+    } else {
+      // 搜索视频
+      await logger.d('Search', '开始搜索视频...');
+      final results = await crawler.searchVideos(_keywordController.text);
+      await logger.i('Search', '视频搜索完成, 结果数: ${results.length}');
+      
+      setState(() {
+        _results = results;
+        _selectedIds = results.map((v) => v.id).toSet();
+        _isLoading = false;
+      });
+    }
+  }
+  
+  /// 构建视频搜索结果
+  Widget _buildVideoResults() {
+    if (_results.isEmpty) {
+      return Center(child: Text('输入关键词搜索', style: TextStyle(color: Colors.grey)));
+    }
     
-    setState(() {
-      _results = results;
-      _selectedIds = results.map((v) => v.id).toSet();
-      _isLoading = false;
-    });
+    return GridView.builder(
+      padding: EdgeInsets.all(8),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 0.75,
+      ),
+      itemCount: _results.length,
+      itemBuilder: (context, index) {
+        final video = _results[index];
+        final selected = _selectedIds.contains(video.id);
+        
+        return GestureDetector(
+          onTap: () => _toggleSelection(video.id),
+          child: Card(
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                video.cover != null
+                    ? Image.network(video.cover!, fit: BoxFit.cover)
+                    : Icon(Icons.video_file, size: 50, color: Colors.grey),
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Colors.black.withOpacity(0.8), Colors.transparent],
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                      ),
+                    ),
+                    child: Text(
+                      video.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: Colors.white),
+                    ),
+                  ),
+                ),
+                if (selected)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Icon(Icons.check_circle, color: Colors.blue),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+  
+  /// 构建作者搜索结果
+  Widget _buildAuthorResults() {
+    if (_authorResults.isEmpty) {
+      return Center(child: Text('输入关键词搜索作者', style: TextStyle(color: Colors.grey)));
+    }
+    
+    return ListView.builder(
+      padding: EdgeInsets.all(16),
+      itemCount: _authorResults.length,
+      itemBuilder: (context, index) {
+        final author = _authorResults[index];
+        return Card(
+          child: ListTile(
+            leading: CircleAvatar(
+              child: Icon(Icons.person),
+            ),
+            title: Text(author.name),
+            subtitle: Text('视频数: ${author.videoCount}'),
+            trailing: Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () => _showAuthorVideos(author),
+          ),
+        );
+      },
+    );
+  }
+  
+  /// 显示作者的所有视频
+  void _showAuthorVideos(AuthorInfo author) async {
+    await logger.i('Search', '点击作者: ${author.name}');
+    
+    // TODO: 跳转到作者视频列表页或弹窗显示
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('作者功能开发中: ${author.name} (${author.videoCount}个视频)')),
+      );
+    }
   }
 
   void _download() async {
@@ -222,60 +285,32 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     // 获取选中的视频
     final selectedVideos = _results.where((v) => _selectedIds.contains(v.id)).toList();
     
-    await logger.i('Search', '开始下载 ${selectedVideos.length} 个视频');
+    await logger.i('Search', '添加 ${selectedVideos.length} 个视频到下载队列');
     
-    // 显示下载开始提示
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('开始下载 ${selectedVideos.length} 个视频')),
-    );
-    
-    // TODO: 实现下载队列和进度显示
-    // 暂时只下载第一个视频作为测试
-    if (selectedVideos.isNotEmpty) {
-      final video = selectedVideos.first;
-      await logger.i('Search', '下载视频: ${video.title}');
-      
-      try {
-        // 获取下载目录
-        final savePath = '${appState.downloadDir}/${video.title}.mp4';
-        
-        // 获取视频详情（m3u8地址）
-        final detail = await crawler.getVideoDetail(video);
-        if (detail == null || detail.m3u8Url == null) {
-          await logger.e('Search', '无法获取视频地址: ${video.title}');
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('无法获取视频地址')),
-            );
-          }
-          return;
-        }
-        
-        await logger.i('Search', '获取到 m3u8 地址: ${detail.m3u8Url}');
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('获取到视频地址，开始下载...')),
-          );
-        }
-        
-        // 开始下载
-        final success = await crawler.downloadVideo(detail, savePath);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(success ? '下载完成' : '下载失败')),
-          );
-        }
-        
-      } catch (e) {
-        await logger.e('Search', '下载失败: $e');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('下载失败: $e')),
-          );
-        }
-      }
+    // 添加到下载管理器
+    for (final video in selectedVideos) {
+      appState.downloadManager.addTask(video);
     }
+    
+    // 显示提示
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已添加 ${selectedVideos.length} 个视频到下载队列'),
+          action: SnackBarAction(
+            label: '查看',
+            onPressed: () {
+              // 切换到下载页面
+              DefaultTabController.of(context).animateTo(3);
+            },
+          ),
+        ),
+      );
+    }
+    
+    // 清空选择
+    setState(() {
+      _selectedIds.clear();
+    });
   }
 }

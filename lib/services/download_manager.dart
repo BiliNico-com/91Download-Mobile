@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'video_info.dart';
+import '../models/video_info.dart';
+import '../crawler/crawler_core.dart';
+import '../utils/logger.dart';
 
 /// 下载任务状态
 enum DownloadStatus {
@@ -49,6 +51,14 @@ class DownloadTask {
 class DownloadManager extends ChangeNotifier {
   final List<DownloadTask> _tasks = [];
   final Map<String, DownloadTask> _taskMap = {};
+  CrawlerCore? _crawler;
+  String _downloadDir = '';
+  
+  /// 设置爬虫和下载目录
+  void setup(CrawlerCore crawler, String downloadDir) {
+    _crawler = crawler;
+    _downloadDir = downloadDir;
+  }
   
   List<DownloadTask> get tasks => List.unmodifiable(_tasks);
   List<DownloadTask> get downloadingTasks => 
@@ -72,7 +82,74 @@ class DownloadManager extends ChangeNotifier {
     _tasks.insert(0, task);
     _taskMap[id] = task;
     notifyListeners();
+    
+    // 自动开始下载
+    _startDownload(task);
+    
     return task;
+  }
+  
+  /// 执行下载
+  Future<void> _startDownload(DownloadTask task) async {
+    if (_crawler == null || _downloadDir.isEmpty) {
+      task.status = DownloadStatus.failed;
+      task.error = '未配置爬虫或下载目录';
+      notifyListeners();
+      return;
+    }
+    
+    task.status = DownloadStatus.downloading;
+    notifyListeners();
+    
+    await logger.i('DownloadManager', '开始下载: ${task.video.title}');
+    
+    try {
+      // 1. 获取视频详情（m3u8地址）
+      await logger.d('DownloadManager', '获取视频详情...');
+      final detail = await _crawler!.getVideoDetail(task.video);
+      
+      if (detail == null || detail.m3u8Url == null) {
+        task.status = DownloadStatus.failed;
+        task.error = '无法获取视频地址';
+        notifyListeners();
+        await logger.e('DownloadManager', '获取视频地址失败');
+        return;
+      }
+      
+      await logger.i('DownloadManager', '获取到 m3u8 地址');
+      
+      // 2. 下载视频
+      final savePath = '$_downloadDir/${task.video.title}.mp4';
+      await logger.i('DownloadManager', '保存路径: $savePath');
+      
+      // 设置进度回调
+      _crawler!.onProgress = (progress, msg) {
+        task.progress = progress;
+        task.progressText = msg;
+        notifyListeners();
+      };
+      
+      final success = await _crawler!.downloadVideo(detail, savePath);
+      
+      if (success) {
+        task.status = DownloadStatus.completed;
+        task.filePath = savePath;
+        task.progress = 1.0;
+        task.progressText = '下载完成';
+        await logger.i('DownloadManager', '下载完成: ${task.video.title}');
+      } else {
+        task.status = DownloadStatus.failed;
+        task.error = '下载失败';
+        await logger.e('DownloadManager', '下载失败');
+      }
+      
+    } catch (e) {
+      task.status = DownloadStatus.failed;
+      task.error = e.toString();
+      await logger.e('DownloadManager', '下载异常: $e');
+    }
+    
+    notifyListeners();
   }
   
   /// 批量添加任务

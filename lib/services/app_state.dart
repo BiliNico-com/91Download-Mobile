@@ -38,6 +38,10 @@ class AppState extends ChangeNotifier {
   CrawlerCore? get crawler {
     if (currentSite == null) return null;
     _crawler ??= CrawlerCore(baseUrl: currentSite!);
+    // 设置下载管理器
+    if (_crawler != null && downloadDir.isNotEmpty) {
+      downloadManager.setup(_crawler!, downloadDir);
+    }
     return _crawler;
   }
 

@@ -345,8 +345,34 @@ class CrawlerCore {
       final resp = await _dio.get(url);
       await logger.d('Crawler', '搜索作者响应状态: ${resp.statusCode}');
       final html = resp.data.toString();
-      // TODO: 实现作者解析
-      return [];
+      
+      final authors = <AuthorInfo>[];
+      final seenNames = <String>{};
+      
+      // 匹配作者链接（参考PC版正则）
+      // <a class="btn btn-default" href="user.htm?author=xxx">&nbsp;名字&nbsp;<span class="badge">数量</span></a>
+      final pattern = RegExp(
+        r'<a[^>]*class="[^"]*btn[^"]*"[^>]*href="user\.htm\?author=([^"]+)"[^>]*>\s*(&nbsp;)*([^<&]+)\s*(&nbsp;)*\s*<span[^>]*class="[^"]*badge[^"]*"[^>]*>\s*(\d+)\s*</span>\s*</a>',
+        caseSensitive: false,
+      );
+      
+      for (final match in pattern.allMatches(html)) {
+        final authorParam = match.group(1) ?? '';
+        final namePart = (match.group(3) ?? '').trim();
+        final count = int.tryParse(match.group(5) ?? '0') ?? 0;
+        
+        if (!seenNames.contains(namePart)) {
+          seenNames.add(namePart);
+          authors.add(AuthorInfo(
+            name: namePart.isNotEmpty ? namePart : authorParam,
+            videoCount: count,
+            profileUrl: '$baseUrl/user.htm?author=$authorParam',
+          ));
+        }
+      }
+      
+      await logger.i('Crawler', '搜索作者完成, 结果数: ${authors.length}');
+      return authors;
     } catch (e) {
       await logger.e('Crawler', '搜索作者失败: $e');
       return [];

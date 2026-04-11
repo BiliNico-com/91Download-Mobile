@@ -472,8 +472,38 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
 
   Future<void> _startDownload() async {
     await logger.i('Batch', 'UI操作: 点击下载按钮, 选中 ${_selectedIds.length} 个视频');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('开始下载 ${_selectedIds.length} 个视频')),
-    );
+    
+    final appState = context.read<AppState>();
+    
+    // 获取选中的视频
+    final selectedVideos = _videos.where((v) => _selectedIds.contains(v.id)).toList();
+    
+    await logger.i('Batch', '添加 ${selectedVideos.length} 个视频到下载队列');
+    
+    // 添加到下载管理器
+    for (final video in selectedVideos) {
+      appState.downloadManager.addTask(video);
+    }
+    
+    // 显示提示
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已添加 ${selectedVideos.length} 个视频到下载队列'),
+          action: SnackBarAction(
+            label: '查看',
+            onPressed: () {
+              // 切换到下载页面
+              DefaultTabController.of(context).animateTo(3);
+            },
+          ),
+        ),
+      );
+    }
+    
+    // 清空选择
+    setState(() {
+      _selectedIds.clear();
+    });
   }
 }
