@@ -221,7 +221,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                 ),
                 onPressed: () {
                   appState.togglePrivacyMode();
-                  logger.i('Batch', 'UI操作: 切换隐私模式 -> ${appState.privacyMode}');
+                  logger.ui('Batch', 'UI操作: 切换隐私模式 -> ${appState.privacyMode}');
                 },
                 tooltip: appState.privacyMode ? '取消模糊' : '模糊预览图',
               ),
@@ -241,29 +241,18 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   _buildBottomBar(),
                 ],
               ),
-              // 悬浮下载按钮（右下角）
-              if (_selectedIds.isNotEmpty)
-                Positioned(
-                  bottom: 16,
-                  right: 16,
-                  child: FloatingActionButton.extended(
-                    onPressed: _startDownload,
-                    icon: Icon(Icons.download),
-                    label: Text('下载 (${_selectedIds.length})'),
-                  ),
-                ),
-              // 回顶部按钮和页码显示（左下角，避免与下载按钮重叠）
+              // 悬浮按钮组（左下角：页码+回顶部+已选数量，右下角：下载）
               if (_showBackToTop && appState.showBackToTop)
                 Positioned(
                   bottom: 16,
                   left: 16,
-                  child: Column(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       // 悬浮页码显示
                       if (_currentPage > 0)
                         Container(
-                          margin: EdgeInsets.only(bottom: 8),
+                          margin: EdgeInsets.only(right: 8),
                           padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
                             color: Colors.black87,
@@ -281,7 +270,32 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                         onPressed: _scrollToTop,
                         child: Icon(Icons.arrow_upward),
                       ),
+                      // 已选数量
+                      if (_selectedIds.isNotEmpty)
+                        Container(
+                          margin: EdgeInsets.only(left: 8),
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '已选 ${_selectedIds.length} 个',
+                            style: TextStyle(fontSize: 12, color: Colors.blue),
+                          ),
+                        ),
                     ],
+                  ),
+                ),
+              // 悬浮下载按钮（右下角）
+              if (_selectedIds.isNotEmpty)
+                Positioned(
+                  bottom: 16,
+                  right: 16,
+                  child: FloatingActionButton.extended(
+                    onPressed: _startDownload,
+                    icon: Icon(Icons.download),
+                    label: Text('下载 (${_selectedIds.length})'),
                   ),
                 ),
             ],
@@ -324,7 +338,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                         }).toList(),
                         onChanged: (v) async {
                           if (v != null) {
-                            await logger.i('Batch', 'UI操作: 选择列表类型 -> ${typeNames[v]}');
+                            await logger.ui('Batch', 'UI操作: 选择列表类型 -> ${typeNames[v]}');
                             setState(() => _selectedType = v);
                           }
                         },
@@ -431,7 +445,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         return GestureDetector(
           onTap: () async {
             final action = isSelected ? '取消选择' : '选择';
-            await logger.d('Batch', 'UI操作: $action视频 [${video.title}]');
+            await logger.ui('Batch', 'UI操作: $action视频 [${video.title}]');
             setState(() {
               if (isSelected) {
                 _selectedIds.remove(video.id);
@@ -560,7 +574,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         return GestureDetector(
           onTap: () async {
             final action = isSelected ? '取消选择' : '选择';
-            await logger.d('Batch', 'UI操作: $action视频 [${video.title}]');
+            await logger.ui('Batch', 'UI操作: $action视频 [${video.title}]');
             setState(() {
               if (isSelected) {
                 _selectedIds.remove(video.id);
@@ -692,12 +706,12 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       child: SafeArea(
         child: Row(
           children: [
-            // 只有选中了视频才显示全选按钮（与搜索页一致）
+            // 全选按钮
             if (_selectedIds.isNotEmpty)
               TextButton(
                 onPressed: () async {
                   final isAllSelected = _selectedIds.length == _videos.length;
-                  await logger.i('Batch', 'UI操作: ${isAllSelected ? "取消全选" : "全选"}');
+                  await logger.ui('Batch', 'UI操作: ${isAllSelected ? "取消全选" : "全选"}');
                   setState(() {
                     if (isAllSelected) {
                       _selectedIds.clear();
@@ -707,19 +721,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   });
                 },
                 child: Text(_selectedIds.length == _videos.length ? '取消全选' : '全选'),
-              ),
-            // 已选数量提示（放在全选按钮旁边）
-            if (_selectedIds.isNotEmpty)
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  '已选 ${_selectedIds.length} 个',
-                  style: TextStyle(fontSize: 12, color: Colors.blue),
-                ),
               ),
             Spacer(),
           ],
@@ -736,7 +737,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       _status = '加载中...';
     });
     
-    await logger.i('Batch', 'UI操作: 点击加载按钮, 类型=$_selectedType, 页码=$_pageStart-$_pageEnd');
+    await logger.ui('Batch', 'UI操作: 点击加载按钮, 类型=$_selectedType, 页码=$_pageStart-$_pageEnd');
     
     setState(() {
       _isLoading = true;
@@ -780,7 +781,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   }
 
   Future<void> _startDownload() async {
-    await logger.i('Batch', 'UI操作: 点击下载按钮, 选中 ${_selectedIds.length} 个视频');
+    await logger.ui('Batch', 'UI操作: 点击下载按钮, 选中 ${_selectedIds.length} 个视频');
     
     final appState = context.read<AppState>();
     

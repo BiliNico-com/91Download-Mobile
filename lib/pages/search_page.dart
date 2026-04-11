@@ -168,7 +168,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                 ),
                 onPressed: () {
                   appState.togglePrivacyMode();
-                  logger.i('Search', 'UI操作: 切换隐私模式 -> ${appState.privacyMode}');
+                  logger.ui('Search', 'UI操作: 切换隐私模式 -> ${appState.privacyMode}');
                 },
                 tooltip: appState.privacyMode ? '取消模糊' : '模糊预览图',
               );
@@ -194,19 +194,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                         ? _buildAuthorResults()
                         : _buildVideoResults(),
                 
-                // 悬浮下载按钮（右下角）
-                if (_selectedIds.isNotEmpty)
-                  Positioned(
-                    bottom: 16,
-                    right: 16,
-                    child: FloatingActionButton.extended(
-                      onPressed: _download,
-                      icon: Icon(Icons.download),
-                      label: Text('下载 (${_selectedIds.length})'),
-                    ),
-                  ),
-                
-                // 悬浮页码显示 + 回顶部按钮（左下角，避免与下载按钮重叠）
+                // 悬浮按钮组（左下角：页码+回顶部+已选数量，右下角：下载）
                 Consumer<AppState>(
                   builder: (context, appState, _) {
                     if (!_showPageIndicator || !appState.showBackToTop) {
@@ -215,13 +203,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     return Positioned(
                       bottom: 16,
                       left: 16,
-                      child: Column(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           // 悬浮页码显示
                           if (_currentPage > 0 && !_isAuthorMode)
                             Container(
-                              margin: EdgeInsets.only(bottom: 8),
+                              margin: EdgeInsets.only(right: 8),
                               padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                               decoration: BoxDecoration(
                                 color: Colors.black87,
@@ -239,11 +227,36 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                             onPressed: _scrollToTop,
                             child: Icon(Icons.arrow_upward),
                           ),
+                          // 已选数量
+                          if (_selectedIds.isNotEmpty)
+                            Container(
+                              margin: EdgeInsets.only(left: 8),
+                              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '已选 ${_selectedIds.length} 个',
+                                style: TextStyle(fontSize: 12, color: Colors.blue),
+                              ),
+                            ),
                         ],
                       ),
                     );
                   },
                 ),
+                // 悬浮下载按钮（右下角）
+                if (_selectedIds.isNotEmpty)
+                  Positioned(
+                    bottom: 16,
+                    right: 16,
+                    child: FloatingActionButton.extended(
+                      onPressed: _download,
+                      icon: Icon(Icons.download),
+                      label: Text('下载 (${_selectedIds.length})'),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -307,20 +320,6 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     child: Text(_selectedIds.length == _results.length ? '取消全选' : '全选'),
                   ),
                 Spacer(),
-                // 就绪状态
-                if (_selectedIds.isNotEmpty)
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '已选 ${_selectedIds.length} 个',
-                      style: TextStyle(fontSize: 12, color: Colors.blue),
-                    ),
-                  ),
-                SizedBox(width: 8),
                 // 排序选择（仅 original CMS 支持）
                 Consumer<AppState>(
                   builder: (context, appState, _) {
@@ -452,7 +451,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       _status = '搜索中...';
     });
     
-    await logger.i('Search', 'UI操作: 点击搜索按钮, 关键词: ${_keywordController.text}, 作者模式: $_isAuthorMode, 排序: $_sortBy');
+    await logger.ui('Search', 'UI操作: 点击搜索按钮, 关键词: ${_keywordController.text}, 作者模式: $_isAuthorMode, 排序: $_sortBy');
     
     final appState = context.read<AppState>();
     final crawler = appState.crawler;
@@ -809,7 +808,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   Future<void> _download() async {
     if (_selectedIds.isEmpty) return;
     
-    await logger.i('Search', 'UI操作: 点击下载按钮, 选中 ${_selectedIds.length} 个视频');
+    await logger.ui('Search', 'UI操作: 点击下载按钮, 选中 ${_selectedIds.length} 个视频');
     
     final appState = context.read<AppState>();
     
