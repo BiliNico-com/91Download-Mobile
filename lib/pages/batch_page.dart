@@ -191,14 +191,19 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           appBar: AppBar(
             backgroundColor: Theme.of(context).scaffoldBackgroundColor.withOpacity(_appBarOpacity),
             elevation: _appBarOpacity < 0.5 ? 0 : 4,
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('批量爬取'),
-                Text('已加载 ${_videos.length} 个视频', 
-                  style: TextStyle(fontSize: 12, color: Colors.grey)),
-              ],
+            // 左侧文字跟随透明度隐藏
+            title: Opacity(
+              opacity: _appBarOpacity,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('批量爬取'),
+                  Text('已加载 ${_videos.length} 个视频', 
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ],
+              ),
             ),
+            // 右侧按钮保持不透明（只有隐藏设置区域时才显示）
             actions: [
               // 设置区域隐藏时显示设置按钮
               if (!_showSettings)

@@ -197,24 +197,29 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         appBar: AppBar(
           backgroundColor: Theme.of(context).scaffoldBackgroundColor.withOpacity(_appBarOpacity),
           elevation: _appBarOpacity < 0.5 ? 0 : 4,
-          title: _isAuthorPageMode 
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('作者: $_currentAuthorName'),
-                  Text('点击作者主页查看视频',
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              )
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('搜索'),
-                  Text('通过关键词搜索并下载视频',
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              ),
-        actions: [
+          // 左侧文字跟随透明度隐藏
+          title: Opacity(
+            opacity: _appBarOpacity,
+            child: _isAuthorPageMode 
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('作者: $_currentAuthorName'),
+                    Text('点击作者主页查看视频',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('搜索'),
+                    Text('通过关键词搜索并下载视频',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
+                ),
+          ),
+          // 右侧按钮保持不透明（只有隐藏搜索/设置区域时才显示）
+          actions: [
           // 搜索区域隐藏时显示搜索按钮
           if (!_showSettings)
             IconButton(
