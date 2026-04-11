@@ -4,6 +4,7 @@ import 'pages/main_page.dart';
 import 'services/app_state.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
@@ -23,7 +24,7 @@ class MyApp extends StatelessWidget {
             brightness: Brightness.dark,
           ),
           useMaterial3: true,
-          scaffoldBackgroundColor: const Color(0xFF0F1729),
+          scaffoldBackgroundColor: const Color(0xFF0F172A),
         ),
         home: const MainPage(),
       ),
