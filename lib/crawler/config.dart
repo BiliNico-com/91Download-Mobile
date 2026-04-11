@@ -87,8 +87,9 @@ class CrawlerConfig {
   /// 构建搜索URL
   static String buildSearchUrl(String baseUrl, String siteType, String keyword, {int page = 1, String sort = "new"}) {
     if (siteType == "porn91") {
-      // porn91 风格搜索 URL（不支持分页，只取第1页）
-      return "$baseUrl/search_result.php?search_id=${Uri.encodeComponent(keyword)}&search_type=search_videos&min_duration=";
+      // porn91 风格搜索 URL（支持分页）
+      // URL格式: search_result.php?search_id=xxx&search_type=search_videos&min_duration=&page=N
+      return "$baseUrl/search_result.php?search_id=${Uri.encodeComponent(keyword)}&search_type=search_videos&min_duration=&page=$page";
     } else {
       // original 风格搜索 URL（支持分页）
       return "$baseUrl/search.htm?search=${Uri.encodeComponent(keyword)}&sort=$sort&page=$page";
@@ -145,9 +146,19 @@ class CrawlerConfig {
     r'class="video-title[^"]*"[^>]*>([^<]+)',
   );
 
-  /// 作者提取
+  /// 作者提取 - porn91 风格
   static final RegExp authorPattern = RegExp(
     r'作者[：:]\s*</span>\s*([^<\n]+)',
+  );
+  
+  /// 作者提取 - original 风格
+  static final RegExp authorPatternOriginal = RegExp(
+    r'作者[：:]\s*(?:<a[^>]*>)?([^<\n]+?)(?:</a>)?',
+  );
+  
+  /// 时长提取 - original 风格
+  static final RegExp durationPatternOriginal = RegExp(
+    r'(?:时长|时间|时长：|时间：)\s*([0-9:]+)',
   );
   
   /// original CMS 标题提取

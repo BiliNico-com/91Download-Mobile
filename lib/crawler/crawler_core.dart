@@ -197,6 +197,13 @@ class CrawlerCore {
         author = authorMatch.group(1)!.trim();
       }
       
+      // 提取时长
+      String? duration;
+      final durationMatch = CrawlerConfig.durationPattern.firstMatch(wellContent);
+      if (durationMatch != null) {
+        duration = durationMatch.group(1)!.trim();
+      }
+      
       // 构造完整 URL
       String videoUrl;
       if (videoHref.startsWith('http')) {
@@ -217,6 +224,7 @@ class CrawlerCore {
         title: title,
         cover: cover,
         author: author,
+        duration: duration,
       ));
     }
     
@@ -522,15 +530,41 @@ class CrawlerCore {
         // 提取作者信息
         String? author = video.author;
         if (author == null) {
-          final authorMatch = CrawlerConfig.authorPattern.firstMatch(html);
-          if (authorMatch != null) {
-            author = authorMatch.group(1)?.trim();
+          if (_siteType == "porn91") {
+            final authorMatch = CrawlerConfig.authorPattern.firstMatch(html);
+            if (authorMatch != null) {
+              author = authorMatch.group(1)?.trim();
+            }
+          } else {
+            // original CMS
+            final authorMatch = CrawlerConfig.authorPatternOriginal.firstMatch(html);
+            if (authorMatch != null) {
+              author = authorMatch.group(1)?.trim();
+            }
+          }
+        }
+        
+        // 提取时长
+        String? duration = video.duration;
+        if (duration == null) {
+          if (_siteType == "porn91") {
+            final durationMatch = CrawlerConfig.durationPattern.firstMatch(html);
+            if (durationMatch != null) {
+              duration = durationMatch.group(1)?.trim();
+            }
+          } else {
+            // original CMS
+            final durationMatch = CrawlerConfig.durationPatternOriginal.firstMatch(html);
+            if (durationMatch != null) {
+              duration = durationMatch.group(1)?.trim();
+            }
           }
         }
         
         await logger.i('Crawler', '========== 视频详情获取成功 ==========');
         await logger.i('Crawler', '提取方式: $extractionMethod');
         await logger.i('Crawler', '视频URL: $videoUrl');
+        await logger.i('Crawler', '作者: $author, 时长: $duration');
         
         return VideoInfo(
           id: video.id,
@@ -538,6 +572,7 @@ class CrawlerCore {
           title: video.title,
           cover: video.cover,
           author: author,
+          duration: duration,
           m3u8Url: videoUrl,
         );
       }
