@@ -481,6 +481,18 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   },
                 ),
               ),
+            Divider(),
+            // 外部播放器设置
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('使用外部播放器'),
+              subtitle: Text('点击视频时使用系统播放器打开'),
+              value: appState.useExternalPlayer,
+              onChanged: (v) {
+                appState.useExternalPlayer = v;
+                appState.notifyListeners();
+              },
+            ),
           ],
         ),
       ),

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
@@ -880,24 +881,34 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   Future<void> _playWithExternalPlayer(DownloadTask task) async {
     
     try {
-      // 使用 url_launcher 打开外部播放器
-      // 注意：需要导入 url_launcher: ^6.1.0
-      // 如果未安装，则回退到内置播放器
-      // ignore: depend_on_referenced_packages
-      final uri = Uri.file(task.filePath!);
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('正在打开外部播放器...')),
-        );
+      final file = File(task.filePath!);
+      if (!await file.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('文件不存在')),
+          );
+        }
+        return;
       }
       
-      // 由于当前环境可能没有 url_launcher，直接使用内置播放器
-      await _playWithInternalPlayer(task);
+      // 使用 url_launcher 打开外部播放器
+      final uri = Uri.parse('file://${task.filePath}');
+      final canLaunch = await canLaunchUrl(uri);
+      
+      if (canLaunch) {
+        await launchUrl(uri);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('没有可用的外部播放器，使用内置播放器')),
+          );
+        }
+        await _playWithInternalPlayer(task);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('打开失败: $e')),
+          SnackBar(content: Text('打开外部播放器失败: $e')),
         );
       }
       // 回退到内置播放器
