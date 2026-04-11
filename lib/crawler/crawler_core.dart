@@ -558,14 +558,17 @@ class CrawlerCore {
         }
         
         // 策略 A: strencode2("%3c%73%6f...") — URL 编码的 <source> 标签
-        // 这是真实视频，优先使用
-        final strencodeMatch = RegExp(r'''strencode2\(["'](%[0-9a-fA-F]{2}[^"']+)["']\)''').firstMatch(html);
-        if (strencodeMatch != null) {
+        // 可能有多个strencode2调用，优先匹配封面ID
+        final strencodePattern = RegExp(r'''strencode2\(["'](%[0-9a-fA-F]{2}[^"']+)["']\)''');
+        final strencodeMatches = strencodePattern.allMatches(html).toList();
+        
+        await logger.log('Crawler', '找到 ${strencodeMatches.length} 个strencode2调用');
+        
+        for (var i = 0; i < strencodeMatches.length; i++) {
+          final m = strencodeMatches[i];
           try {
-            final encoded = strencodeMatch.group(1)!;
+            final encoded = m.group(1)!;
             final decoded = Uri.decodeComponent(encoded);
-            
-            await logger.log('Crawler', '[策略A] 解码内容: ${decoded.substring(0, decoded.length > 300 ? 300 : decoded.length)}');
             
             // 提取 src 属性
             final srcPattern = RegExp(r'''src=["']([^"']+)["']''', caseSensitive: false);
@@ -574,18 +577,33 @@ class CrawlerCore {
             if (srcMatch != null) {
               final src = srcMatch.group(1)?.replaceAll('&amp;', '&') ?? '';
               if (src.contains('.mp4') || src.contains('.m3u8')) {
-                videoUrl = src;
-                extractionMethod = 'strencode2解码';
-                await logger.log('Crawler', '[策略A] 提取成功: $src');
+                // 提取视频URL中的ID
+                final urlIdMatch = RegExp(r'/(\d+)\.(?:mp4|m3u8)').firstMatch(src);
+                final urlVideoId = urlIdMatch?.group(1);
+                
+                await logger.log('Crawler', '[策略A-$i] 视频ID: $urlVideoId, 封面ID: $videoId');
+                
+                // 优先匹配封面ID
+                if (videoId != null && urlVideoId == videoId) {
+                  videoUrl = src;
+                  extractionMethod = 'strencode2解码(ID匹配)';
+                  await logger.log('Crawler', '[策略A-$i] ✅ 匹配成功: $src');
+                  break;  // 找到匹配的，退出循环
+                } else if (videoUrl == null) {
+                  // 没有封面ID时，取第一个作为候选
+                  videoUrl = src;
+                  extractionMethod = 'strencode2解码(首个)';
+                  await logger.log('Crawler', '[策略A-$i] 作为候选: $src');
+                }
               }
             }
           } catch (e) {
-            await logger.log('Crawler', '[策略A] strencode2 解码失败: $e');
+            await logger.log('Crawler', '[策略A-$i] 解码失败: $e');
           }
         }
         
-        // 策略 B: 直接查找 <source> 标签（广告）
-        // 排除已知的广告视频ID（如358999）
+        // 策略 B: 直接查找 <source> 标签
+        // 优先匹配封面ID，排除已知广告
         if (videoUrl == null) {
           
           final sourcePattern = RegExp(r'''<source[^>]+src=["']([^"']+)["']''', caseSensitive: false);
@@ -593,21 +611,43 @@ class CrawlerCore {
           
           await logger.log('Crawler', '找到 ${sourceMatches.length} 个source标签');
           
-          // 排除广告，取第一个非广告的source
+          // 优先匹配封面ID
           for (var i = 0; i < sourceMatches.length; i++) {
             final match = sourceMatches[i];
             final src = match.group(1)?.replaceAll('&amp;', '&') ?? '';
             
             if (src.contains('.mp4') || src.contains('.m3u8')) {
-              // 排除已知的广告视频ID
-              if (src.contains('358999')) {
-                await logger.log('Crawler', 'source[$i] 是广告，跳过: $src');
-                continue;
+              // 提取视频URL中的ID
+              final urlIdMatch = RegExp(r'/(\d+)\.(?:mp4|m3u8)').firstMatch(src);
+              final urlVideoId = urlIdMatch?.group(1);
+              
+              // 优先匹配封面ID
+              if (videoId != null && urlVideoId == videoId) {
+                videoUrl = src;
+                extractionMethod = 'source标签(ID匹配)';
+                await logger.log('Crawler', 'source[$i] ✅ 封面ID匹配: $src');
+                break;
               }
-              videoUrl = src;
-              extractionMethod = 'source标签';
-              await logger.log('Crawler', 'source[$i] 提取成功: $src');
-              break;
+            }
+          }
+          
+          // 如果没有匹配到封面ID，取第一个非广告的source
+          if (videoUrl == null) {
+            for (var i = 0; i < sourceMatches.length; i++) {
+              final match = sourceMatches[i];
+              final src = match.group(1)?.replaceAll('&amp;', '&') ?? '';
+              
+              if (src.contains('.mp4') || src.contains('.m3u8')) {
+                // 排除已知的广告视频ID
+                if (src.contains('358999')) {
+                  await logger.log('Crawler', 'source[$i] 是广告，跳过: $src');
+                  continue;
+                }
+                videoUrl = src;
+                extractionMethod = 'source标签(首个非广告)';
+                await logger.log('Crawler', 'source[$i] 提取成功: $src');
+                break;
+              }
             }
           }
         }
