@@ -419,21 +419,35 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         return Column(
           children: [
             // 顶部空间（避免被AppBar遮挡）
-            SizedBox(height: topPadding),
-            Card(
-          margin: EdgeInsets.all(16),
-          child: Padding(
-            padding: EdgeInsets.all(16),
-            child: Column(
-              children: [
-                Row(
+            SizedBox(height: topPadding + 8),
+            // 居中悬浮胶囊
+            Center(
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardColor,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('列表: '),
-                    Expanded(
-                      child: DropdownButtonFormField(
+                    Icon(Icons.list_alt, size: 18, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('列表: ', style: TextStyle(fontSize: 14)),
+                    DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
                         value: _selectedType,
+                        isDense: true,
+                        icon: Icon(Icons.keyboard_arrow_down, size: 18),
                         items: typeNames.entries.map((e) {
-                          return DropdownMenuItem(value: e.key, child: Text(e.value));
+                          return DropdownMenuItem(value: e.key, child: Text(e.value, style: TextStyle(fontSize: 14)));
                         }).toList(),
                         onChanged: (v) async {
                           if (v != null) {
@@ -444,10 +458,9 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
-          ),
-        ),
+            SizedBox(height: 8),
           ],
         );
       },
