@@ -158,7 +158,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
             Container(
               padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                color: Theme.of(context).colorScheme.surfaceVariant,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(

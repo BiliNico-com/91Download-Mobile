@@ -195,14 +195,14 @@ class MyApp extends StatelessWidget {
       iconTheme: IconThemeData(color: Colors.white),
       // Switch
       switchTheme: SwitchThemeData(
-        thumbColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
+        thumbColor: MaterialStateProperty.resolveWith((states) {
+          if (states.contains(MaterialState.selected)) {
             return Color(0xFF6366F1);
           }
           return Colors.grey;
         }),
-        trackColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
+        trackColor: MaterialStateProperty.resolveWith((states) {
+          if (states.contains(MaterialState.selected)) {
             return Color(0xFF6366F1).withOpacity(0.5);
           }
           return Colors.grey.withOpacity(0.3);
