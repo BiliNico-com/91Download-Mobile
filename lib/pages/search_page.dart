@@ -319,14 +319,14 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       ),
       body: Stack(
         children: [
-          // 视频列表（从顶部开始，延伸到AppBar下方）
           Column(
             children: [
-              // 搜索框区域（可收缩）
+              // 顶部空间（设置区域的高度，避免内容跳动）
               AnimatedContainer(
-                duration: Duration(milliseconds: 200),
-                height: _showSettings ? null : 0,
-                child: _showSettings ? _buildSearchArea() : SizedBox.shrink(),
+                duration: Duration(milliseconds: 300),
+                height: _showSettings 
+                    ? (kToolbarHeight + MediaQuery.of(context).padding.top + 140) 
+                    : 8,
               ),
               // 结果列表
               Expanded(
@@ -380,34 +380,6 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                                 ),
                               ),
                             ),
-                          // 悬浮页码显示
-                          if (!_isAuthorPageMode && _currentPage > 0 && !_isAuthorMode)
-                            Container(
-                              margin: EdgeInsets.only(bottom: 8),
-                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Colors.black87,
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Text(
-                                '第 $_currentPage 页',
-                                style: TextStyle(color: Colors.white, fontSize: 12),
-                              ),
-                            ),
-                          // 作者页码显示
-                          if (_isAuthorPageMode && _authorCurrentPage > 0)
-                            Container(
-                              margin: EdgeInsets.only(bottom: 8),
-                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Colors.black87,
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Text(
-                                '第 $_authorCurrentPage 页',
-                                style: TextStyle(color: Colors.white, fontSize: 12),
-                              ),
-                            ),
                           // 搜索按钮（搜索区域隐藏时显示）
                           if (!_showSettings)
                             GestureDetector(
@@ -458,138 +430,205 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               ],
             ),
           ),
+          // 搜索区域（平滑移动到左侧）
+          AnimatedPositioned(
+            duration: Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+            top: kToolbarHeight + MediaQuery.of(context).padding.top + 8,
+            left: _showSettings ? 0 : -250,
+            right: _showSettings ? 0 : null,
+            child: _buildSearchArea(),
+          ),
+          // 页码跳转悬浮胶囊（仅视频搜索模式显示）
+          if (!_isAuthorMode) _buildBottomPageNavigation(),
         ],
       ),
-    ],
-  ),
-),
+    ),
   );
 }
   
   /// 搜索区域（可收缩）
   Widget _buildSearchArea() {
-    return Column(
-      children: [
-        // 顶部空间（避免被AppBar遮挡）
-        SizedBox(height: kToolbarHeight + MediaQuery.of(context).padding.top),
-        // 搜索框
-        Padding(
-          padding: EdgeInsets.all(16),
-          child: Row(
-            children: [
-              // 模式切换
-              DropdownButton<bool>(
-                value: _isAuthorMode,
-                items: [
-                  DropdownMenuItem(value: false, child: Text('搜视频')),
-                  DropdownMenuItem(value: true, child: Text('搜作者')),
-                ],
-                onChanged: (v) => setState(() => _isAuthorMode = v!),
-              ),
-              SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: _keywordController,
-                  decoration: InputDecoration(
-                    hintText: '输入关键词...',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12),
+    return Center(
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 搜索框
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 模式切换
+                DropdownButton<bool>(
+                  value: _isAuthorMode,
+                  items: [
+                    DropdownMenuItem(value: false, child: Text('搜视频')),
+                    DropdownMenuItem(value: true, child: Text('搜作者')),
+                  ],
+                  onChanged: (v) => setState(() => _isAuthorMode = v!),
+                ),
+                SizedBox(width: 8),
+                SizedBox(
+                  width: 180,
+                  child: TextField(
+                    controller: _keywordController,
+                    decoration: InputDecoration(
+                      hintText: '输入关键词...',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12),
+                      isDense: true,
+                    ),
                   ),
+                ),
+                SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _search,
+                  child: Text('搜索'),
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            // 排序选择（仅在视频搜索模式显示，仅 original CMS 支持）
+            if (!_isAuthorMode)
+              Consumer<AppState>(
+                builder: (context, appState, _) {
+                  final siteType = appState.crawler?.siteType ?? 'original';
+                  if (siteType == 'porn91') {
+                    return SizedBox.shrink();  // porn91 不支持排序
+                  }
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('排序: ', style: TextStyle(fontSize: 12)),
+                      DropdownButton<String>(
+                        value: _sortBy,
+                        isDense: true,
+                        items: [
+                          DropdownMenuItem(value: 'default', child: Text('默认')),
+                          DropdownMenuItem(value: 'new', child: Text('最新')),
+                          DropdownMenuItem(value: 'hot', child: Text('最热')),
+                        ],
+                        onChanged: (v) {
+                          if (v != null && v != _sortBy) {
+                            setState(() => _sortBy = v);
+                            if (_lastKeyword.isNotEmpty) {
+                              _search();
+                            }
+                          }
+                        },
+                      ),
+                    ],
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 底部页码跳转区域（悬浮胶囊）
+  Widget _buildBottomPageNavigation() {
+    return Positioned(
+      bottom: 16,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).cardColor,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.15),
+                blurRadius: 12,
+                offset: Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 当前页显示
+              if (_currentPage > 0)
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '第$_currentPage页',
+                    style: TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.w500),
+                  ),
+                ),
+              if (_currentPage > 0) SizedBox(width: 12),
+              // 分隔线
+              Container(width: 1, height: 16, color: Theme.of(context).dividerColor.withOpacity(0.3)),
+              SizedBox(width: 12),
+              // 跳转页输入
+              Text('跳转', style: TextStyle(fontSize: 12)),
+              SizedBox(width: 8),
+              SizedBox(
+                width: 50,
+                child: TextField(
+                  controller: _pageController,
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14),
+                  decoration: InputDecoration(
+                    contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: Theme.of(context).scaffoldBackgroundColor,
+                    isDense: true,
+                  ),
+                  onChanged: (v) {
+                    _currentPage = int.tryParse(v) ?? 1;
+                  },
                 ),
               ),
               SizedBox(width: 8),
-              FilledButton(
-                onPressed: _search,
-                child: Text('搜索'),
+              // 跳转按钮
+              Material(
+                color: Colors.blue,
+                borderRadius: BorderRadius.circular(8),
+                child: InkWell(
+                  onTap: (_isLoading || _isLoadingMore) ? null : () {
+                    final page = int.tryParse(_pageController.text);
+                    if (page != null && page > 0) {
+                      _goToPage(page);
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    child: _isLoading || _isLoadingMore
+                      ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : Icon(Icons.arrow_forward, color: Colors.white, size: 16),
+                  ),
+                ),
               ),
             ],
           ),
         ),
-        
-        // 排序和页码控制（仅在视频搜索模式显示）
-        if (!_isAuthorMode)
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Spacer(),
-                // 排序选择（仅 original CMS 支持）
-                Consumer<AppState>(
-                  builder: (context, appState, _) {
-                    final siteType = appState.crawler?.siteType ?? 'original';
-                    if (siteType == 'porn91') {
-                      return SizedBox.shrink();  // porn91 不支持排序
-                    }
-                    return Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('排序: ', style: TextStyle(fontSize: 12)),
-                        DropdownButton<String>(
-                          value: _sortBy,
-                          isDense: true,
-                          items: [
-                            DropdownMenuItem(value: 'default', child: Text('默认')),
-                            DropdownMenuItem(value: 'new', child: Text('最新')),
-                            DropdownMenuItem(value: 'hot', child: Text('最热')),
-                          ],
-                          onChanged: (v) {
-                            if (v != null && v != _sortBy) {
-                              setState(() => _sortBy = v);
-                              if (_lastKeyword.isNotEmpty) {
-                                _search();
-                              }
-                            }
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                SizedBox(width: 8),
-                // 页码跳转（输入框+跳转按钮）
-                if (_currentPage > 0)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('页: ', style: TextStyle(fontSize: 12)),
-                      SizedBox(
-                        width: 50,
-                        child: TextField(
-                          controller: _pageController,
-                          keyboardType: TextInputType.number,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 12),
-                          decoration: InputDecoration(
-                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                      SizedBox(width: 4),
-                      ElevatedButton(
-                        onPressed: _isLoading || _isLoadingMore ? null : () {
-                          final page = int.tryParse(_pageController.text);
-                          if (page != null && page > 0) {
-                            _goToPage(page);
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          minimumSize: Size.zero,
-                        ),
-                        child: _isLoading || _isLoadingMore
-                          ? SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2))
-                          : Text('跳转', style: TextStyle(fontSize: 12)),
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-        SizedBox(height: 8),
-        Divider(height: 1),
-      ],
+      ),
     );
   }
 
