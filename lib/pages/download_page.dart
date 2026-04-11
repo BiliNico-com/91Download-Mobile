@@ -663,7 +663,8 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           ],
         ),
       ),
-    );
+    ),
+  );
   }
   
   Widget _buildTaskControls(DownloadTask task, AppState appState) {

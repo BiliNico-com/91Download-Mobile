@@ -621,7 +621,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                             ),
-                            if (video.author != null && video.author!.isNotEmpty) [
+                            if (video.author != null && video.author!.isNotEmpty) ...[
                               SizedBox(height: 4),
                               Text(
                                 video.author!,
@@ -749,7 +749,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(color: Colors.white, fontSize: 12),
                             ),
-                            if (video.author != null && video.author!.isNotEmpty) [
+                            if (video.author != null && video.author!.isNotEmpty) ...[
                               SizedBox(height: 2),
                               Text(
                                 video.author!,
