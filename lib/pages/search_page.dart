@@ -194,7 +194,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                         ? _buildAuthorResults()
                         : _buildVideoResults(),
                 
-                // 悬浮下载按钮
+                // 悬浮下载按钮（右下角）
                 if (_selectedIds.isNotEmpty)
                   Positioned(
                     bottom: 16,
@@ -206,7 +206,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     ),
                   ),
                 
-                // 悬浮页码显示 + 回顶部按钮（与批量页一致，挨着且受按钮位置控制）
+                // 悬浮页码显示 + 回顶部按钮（左下角，避免与下载按钮重叠）
                 Consumer<AppState>(
                   builder: (context, appState, _) {
                     if (!_showPageIndicator || !appState.showBackToTop) {
@@ -214,8 +214,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     }
                     return Positioned(
                       bottom: 16,
-                      left: appState.backToTopPosition == 'left' ? 16 : null,
-                      right: appState.backToTopPosition == 'right' ? 16 : null,
+                      left: 16,
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [

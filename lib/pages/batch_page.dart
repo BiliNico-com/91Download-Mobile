@@ -194,6 +194,25 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
               ],
             ),
             actions: [
+              // 就绪状态（与搜索页一致）
+              Container(
+                margin: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _status == '就绪' ? Colors.green.withOpacity(0.2) : Colors.orange.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: Text(
+                    _status,
+                    style: TextStyle(
+                      color: _status == '就绪' ? Colors.green : Colors.orange,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: 4),
               // 隐私模式按钮
               IconButton(
                 icon: Icon(
@@ -206,26 +225,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                 },
                 tooltip: appState.privacyMode ? '取消模糊' : '模糊预览图',
               ),
-              SizedBox(width: 8),
-              // 就绪状态
-              Container(
-                margin: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                decoration: BoxDecoration(
-                  color: _status == '就绪' ? Colors.green.withOpacity(0.2) : Colors.orange.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Center(
-                  child: Text(
-                    _status,
-                    style: TextStyle(
-                      color: _status == '就绪' ? Colors.green : Colors.orange,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(width: 8),
             ],
           ),
           body: Stack(
@@ -242,12 +241,22 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   _buildBottomBar(),
                 ],
               ),
-              // 回顶部按钮和页码显示（在批量页保持原有位置，功能与搜索页一致）
+              // 悬浮下载按钮（右下角）
+              if (_selectedIds.isNotEmpty)
+                Positioned(
+                  bottom: 16,
+                  right: 16,
+                  child: FloatingActionButton.extended(
+                    onPressed: _startDownload,
+                    icon: Icon(Icons.download),
+                    label: Text('下载 (${_selectedIds.length})'),
+                  ),
+                ),
+              // 回顶部按钮和页码显示（左下角，避免与下载按钮重叠）
               if (_showBackToTop && appState.showBackToTop)
                 Positioned(
-                  bottom: 80,
-                  left: appState.backToTopPosition == 'left' ? 16 : null,
-                  right: appState.backToTopPosition == 'right' ? 16 : null,
+                  bottom: 16,
+                  left: 16,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -697,25 +706,11 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     }
                   });
                 },
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _selectedIds.length == _videos.length 
-                        ? Icons.check_box 
-                        : Icons.check_box_outline_blank,
-                      size: 18,
-                    ),
-                    SizedBox(width: 4),
-                    Text(_selectedIds.length == _videos.length ? '取消全选' : '全选'),
-                  ],
-                ),
+                child: Text(_selectedIds.length == _videos.length ? '取消全选' : '全选'),
               ),
-            Spacer(),
-            // 已选数量提示
+            // 已选数量提示（放在全选按钮旁边）
             if (_selectedIds.isNotEmpty)
               Container(
-                margin: EdgeInsets.only(right: 12),
                 padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: Colors.blue.withOpacity(0.1),
@@ -726,12 +721,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   style: TextStyle(fontSize: 12, color: Colors.blue),
                 ),
               ),
-            // 下载按钮（与搜索页一致）
-            FilledButton.icon(
-              onPressed: _selectedIds.isEmpty ? null : _startDownload,
-              icon: Icon(Icons.download),
-              label: Text('下载 (${_selectedIds.length})'),
-            ),
+            Spacer(),
           ],
         ),
       ),
