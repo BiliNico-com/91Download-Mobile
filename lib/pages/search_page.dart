@@ -875,16 +875,17 @@ class _VideoResultsWidget extends StatelessWidget {
                         ),
                       ),
                       SizedBox(width: 12),
-                      // 信息：视频名称 - 作者
+                      // 信息：视频名称 + 作者（左上对齐，标题2行）
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.start,
                           children: [
                             Text(
                               video.title,
-                              maxLines: 1,
+                              maxLines: 2,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                             ),
                             if (video.author != null && video.author!.isNotEmpty) ...[
                               SizedBox(height: 4),
@@ -892,7 +893,7 @@ class _VideoResultsWidget extends StatelessWidget {
                                 video.author!,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 12, color: Colors.grey),
+                                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                               ),
                             ],
                           ],

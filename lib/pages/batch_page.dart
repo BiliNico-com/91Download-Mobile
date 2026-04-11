@@ -601,33 +601,27 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     ),
                   ),
                   SizedBox(width: 12),
-                  // 信息 - 视频名称+作者
+                  // 信息：视频名称 + 作者（左上对齐，标题2行）
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.start,
                       children: [
-                        // 第一行：视频名称 - 作者
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                video.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                              ),
-                            ),
-                            if (video.author != null && video.author!.isNotEmpty) ...[
-                              SizedBox(width: 8),
-                              Text(
-                                '- ${video.author}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 12, color: Colors.grey),
-                              ),
-                            ],
-                          ],
+                        Text(
+                          video.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                         ),
+                        if (video.author != null && video.author!.isNotEmpty) ...[
+                          SizedBox(height: 4),
+                          Text(
+                            video.author!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                          ),
+                        ],
                       ],
                     ),
                   ),
