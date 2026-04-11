@@ -534,6 +534,20 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       return;
     }
     
+    if (!logger.enabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('请先开启Debug模式')),
+      );
+      return;
+    }
+    
+    if (logger.logPath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('日志文件未初始化，请稍后重试')),
+      );
+      return;
+    }
+    
     final savedPath = await logger.saveToDirectory(downloadDir);
     if (savedPath != null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -541,7 +555,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存日志失败')),
+        SnackBar(content: Text('保存日志失败，请检查存储权限')),
       );
     }
   }

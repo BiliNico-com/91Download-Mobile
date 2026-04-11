@@ -224,8 +224,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     if (!_showPageIndicator || !appState.showBackToTop) {
                       return SizedBox.shrink();
                     }
+                    // 右下角且选中视频时，需要避开下载按钮
+                    final isRight = appState.backToTopPosition == 'right';
+                    final hasSelection = _selectedIds.isNotEmpty;
+                    final bottomOffset = (isRight && hasSelection) ? 80.0 : 16.0;
+                    
                     return Positioned(
-                      bottom: 16,
+                      bottom: bottomOffset,
                       left: appState.backToTopPosition == 'left' ? 16 : null,
                       right: appState.backToTopPosition == 'right' ? 16 : null,
                       child: Column(

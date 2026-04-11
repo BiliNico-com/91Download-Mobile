@@ -286,7 +286,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
               // 悬浮按钮组（页码在上，回顶部按钮在下）
               if (_showBackToTop && appState.showBackToTop)
                 Positioned(
-                  bottom: 16,
+                  // 右下角且选中视频时，需要避开下载按钮
+                  bottom: (appState.backToTopPosition == 'right' && _selectedIds.isNotEmpty) ? 80.0 : 16.0,
                   left: appState.backToTopPosition == 'left' ? 16 : null,
                   right: appState.backToTopPosition == 'right' ? 16 : null,
                   child: Column(
