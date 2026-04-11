@@ -758,6 +758,11 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   Widget _buildCompletedTaskItem(DownloadTask task, bool selected, AppState appState) {
     return GestureDetector(
       onTap: () {
+        // 短按播放视频
+        _playVideo(task, appState);
+      },
+      onLongPress: () {
+        // 长按选择视频
         setState(() {
           if (_selectedIds.contains(task.id)) {
             _selectedIds.remove(task.id);
@@ -765,10 +770,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             _selectedIds.add(task.id);
           }
         });
-      },
-      onLongPress: () {
-        // 长按播放视频
-        _playVideo(task, appState);
       },
       child: Card(
         margin: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -782,10 +783,11 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                   ? Image.network(task.video.cover!, width: 60, height: 45, fit: BoxFit.cover)
                   : Container(width: 60, height: 45, color: Colors.grey[300], child: Icon(Icons.video_file, size: 20)),
               ),
+              // 选中标记（左上角）
               if (selected)
                 Positioned(
-                  right: 0,
-                  bottom: 0,
+                  top: 0,
+                  left: 0,
                   child: Container(
                     padding: EdgeInsets.all(2),
                     decoration: BoxDecoration(
@@ -821,9 +823,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                 onPressed: () => _shareVideo(task),
                 tooltip: '分享',
               ),
-              selected 
-                ? Icon(Icons.check_circle, color: Colors.blue)
-                : Icon(Icons.check_circle_outline, color: Colors.grey),
             ],
           ),
         ),
