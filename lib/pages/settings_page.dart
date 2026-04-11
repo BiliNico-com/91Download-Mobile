@@ -273,6 +273,36 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               ],
             ),
             SizedBox(height: 12),
+            // 回顶部按钮设置
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('显示回顶部按钮'),
+              subtitle: Text('滚动时显示快速回顶部按钮'),
+              value: appState.showBackToTop,
+              onChanged: (v) {
+                appState.showBackToTop = v;
+                appState.notifyListeners();
+                logger.i('Settings', 'UI操作: 切换回顶部按钮 -> $v');
+              },
+            ),
+            if (appState.showBackToTop)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('按钮位置'),
+                trailing: SegmentedButton<String>(
+                  segments: [
+                    ButtonSegment(value: 'left', label: Text('左下')),
+                    ButtonSegment(value: 'right', label: Text('右下')),
+                  ],
+                  selected: {appState.backToTopPosition},
+                  onSelectionChanged: (s) {
+                    appState.backToTopPosition = s.first;
+                    appState.notifyListeners();
+                    logger.i('Settings', 'UI操作: 回顶部按钮位置 -> ${s.first}');
+                  },
+                ),
+              ),
+            Divider(),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: Text('Debug模式'),

@@ -16,6 +16,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   String _selectedType = 'list';
   int _pageStart = 1;
   int _pageEnd = 3;
+  int _currentPage = 0;  // 当前加载到的页码
+  bool _hasMore = true;  // 是否还有更多
   List<VideoInfo> _videos = [];
   Set<String> _selectedIds = {};
   bool _isLoading = false;
@@ -23,8 +25,70 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   double _progress = 0.0;
   String _progressText = '';
   
+  // 滚动控制
+  final ScrollController _scrollController = ScrollController();
+  bool _showBackToTop = false;
+  
   @override
   bool get wantKeepAlive => true;  // 保持页面状态
+  
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+  
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+  
+  void _onScroll() {
+    // 显示/隐藏回顶部按钮
+    final showBtn = _scrollController.offset > 500;
+    if (showBtn != _showBackToTop) {
+      setState(() => _showBackToTop = showBtn);
+    }
+    
+    // 自动加载更多
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      if (!_isLoading && _hasMore && _videos.isNotEmpty) {
+        _loadMore();
+      }
+    }
+  }
+  
+  void _scrollToTop() {
+    _scrollController.animateTo(0, duration: Duration(milliseconds: 300), curve: Curves.easeOut);
+  }
+  
+  Future<void> _loadMore() async {
+    if (!_hasMore || _isLoading) return;
+    
+    final appState = context.read<AppState>();
+    final crawler = appState.crawler;
+    if (crawler == null) return;
+    
+    setState(() => _isLoading = true);
+    
+    _currentPage++;
+    await logger.i('Batch', '自动加载更多: 第 $_currentPage 页');
+    
+    final newVideos = await crawler.getVideoList(_selectedType, _currentPage);
+    
+    if (newVideos.isEmpty) {
+      _hasMore = false;
+    } else {
+      setState(() {
+        _videos.addAll(newVideos);
+        _selectedIds.addAll(newVideos.map((v) => v.id));
+      });
+    }
+    
+    setState(() => _isLoading = false);
+  }
   
   // porn91 站点的列表类型（完整12个分类）
   static const _typeNamesPorn91 = {
@@ -100,35 +164,54 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   }
   
   Widget _buildMainContent() {
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('批量爬取'),
-            Text('按页面范围批量下载视频资源', 
-              style: TextStyle(fontSize: 12, color: Colors.grey)),
-          ],
-        ),
-        actions: [
-          Container(
-            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.green.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(16),
+    return Consumer<AppState>(
+      builder: (context, appState, _) {
+        return Scaffold(
+          appBar: AppBar(
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('批量爬取'),
+                Text('已加载 ${_videos.length} 个视频', 
+                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
             ),
-            child: Text(_status, style: TextStyle(color: Colors.green)),
+            actions: [
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(_status, style: TextStyle(color: Colors.green)),
+              ),
+            ],
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildSettings(),
-          if (_progress > 0) _buildProgress(),
-          Expanded(child: _buildVideoGrid()),
-          _buildBottomBar(),
-        ],
-      ),
+          body: Stack(
+            children: [
+              Column(
+                children: [
+                  _buildSettings(),
+                  Expanded(child: _buildVideoGrid()),
+                  _buildBottomBar(),
+                ],
+              ),
+              // 回顶部按钮
+              if (_showBackToTop && appState.showBackToTop)
+                Positioned(
+                  bottom: 80,
+                  left: appState.backToTopPosition == 'left' ? 16 : null,
+                  right: appState.backToTopPosition == 'right' ? 16 : null,
+                  child: FloatingActionButton(
+                    mini: true,
+                    onPressed: _scrollToTop,
+                    child: Icon(Icons.arrow_upward),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -237,6 +320,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     }
     
     return GridView.builder(
+      controller: _scrollController,
       padding: EdgeInsets.all(8),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
@@ -244,8 +328,18 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         crossAxisSpacing: 8,
         mainAxisSpacing: 8,
       ),
-      itemCount: _videos.length,
+      itemCount: _videos.length + (_hasMore ? 1 : 0),  // 加载更多指示器
       itemBuilder: (context, index) {
+        // 加载更多指示器
+        if (index == _videos.length) {
+          return Center(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+        
         final video = _videos[index];
         final isSelected = _selectedIds.contains(video.id);
         
@@ -267,15 +361,16 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.grey[800],
-                      borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-                    ),
-                    child: Center(
-                      child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
-                    ),
-                  ),
+                  child: video.cover != null
+                    ? Image.network(video.cover!, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: Colors.grey[800],
+                          child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
+                        ))
+                    : Container(
+                        color: Colors.grey[800],
+                        child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
+                      ),
                 ),
                 Padding(
                   padding: EdgeInsets.all(8),
@@ -369,6 +464,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       _selectedIds = videos.map((v) => v.id).toSet();
       _isLoading = false;
       _status = '就绪';
+      _currentPage = _pageEnd;  // 记录当前页码
+      _hasMore = videos.length == (_pageEnd - _pageStart + 1) * 24;  // 假设每页24个
     });
     print('[Batch] 加载完成, _videos.length=${_videos.length}');
   }

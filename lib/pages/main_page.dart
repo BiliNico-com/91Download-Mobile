@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'batch_page.dart';
 import 'search_page.dart';
-import 'history_page.dart';
+import 'download_page.dart';
 import 'settings_page.dart';
 import '../utils/logger.dart';
 
@@ -16,11 +16,11 @@ class _MainPageState extends State<MainPage> {
   int _currentIndex = 0;
   late PageController _pageController;
   
-  final _pageNames = ['批量爬取', '搜索', '已下载', '设置'];
+  final _pageNames = ['批量爬取', '搜索', '下载', '设置'];
   final _pages = const [
     BatchPage(),
     SearchPage(),
-    HistoryPage(),
+    DownloadPage(),
     SettingsPage(),
   ];
 

@@ -24,6 +24,10 @@ class AppState extends ChangeNotifier {
 
   // 主题
   bool isDarkMode = true;
+  
+  // 回顶部按钮设置
+  bool showBackToTop = true;
+  String backToTopPosition = 'right'; // 'left' 或 'right'
 
   // 爬虫实例
   CrawlerCore? _crawler;
