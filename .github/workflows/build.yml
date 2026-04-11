@@ -132,8 +132,24 @@ jobs:
     - name: Build APK
       run: flutter build apk --release
     
-    - name: Upload APK
+    - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: app-release
         path: build/app/outputs/flutter-apk/app-release.apk
+    
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v1.0.${{ github.run_number }}
+        name: Build ${{ github.run_number }}
+        body: |
+          自动构建版本
+          Commit: ${{ github.sha }}
+          时间: ${{ github.event.head_commit.timestamp }}
+        files: build/app/outputs/flutter-apk/app-release.apk
+        draft: false
+        prerelease: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
