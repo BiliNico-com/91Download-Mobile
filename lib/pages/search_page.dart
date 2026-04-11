@@ -1016,63 +1016,65 @@ class _VideoResultsWidget extends StatelessWidget {
                                   shape: BoxShape.circle,
                                 ),
                                 child: Icon(Icons.check, color: Colors.white, size: 16),
-                          ),
-                        ),
-                      // 时长标签（右下角，在标题上方，在毛玻璃之上）
-                      if (video.duration != null)
-                        Positioned(
-                          bottom: 50,  // 在标题区域上方
-                          right: 8,
-                          child: Container(
-                            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.black87,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              video.duration!,
-                              style: TextStyle(color: Colors.white, fontSize: 10),
-                            ),
-                          ),
-                        ),
-                      // 标题和作者
-                      Positioned(
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        child: Container(
-                          padding: EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                video.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: Colors.white, fontSize: 12),
                               ),
-                              if (video.author != null && video.author!.isNotEmpty) ...[
-                                SizedBox(height: 2),
-                                Text(
-                                  video.author!,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(color: Colors.grey, fontSize: 10),
+                            ),
+                          // 时长标签（右下角，在标题上方，在毛玻璃之上）
+                          if (video.duration != null)
+                            Positioned(
+                              bottom: 50,  // 在标题区域上方
+                              right: 8,
+                              child: Container(
+                                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.black87,
+                                  borderRadius: BorderRadius.circular(4),
                                 ),
-                              ],
-                            ],
+                                child: Text(
+                                  video.duration!,
+                                  style: TextStyle(color: Colors.white, fontSize: 10),
+                                ),
+                              ),
+                            ),
+                          // 标题和作者
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              padding: EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    video.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(color: Colors.white, fontSize: 12),
+                                  ),
+                                  if (video.author != null && video.author!.isNotEmpty) ...[
+                                    SizedBox(height: 2),
+                                    Text(
+                                      video.author!,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(color: Colors.grey, fontSize: 10),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 );
               },
