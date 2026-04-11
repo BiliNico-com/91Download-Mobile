@@ -194,41 +194,49 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
               ],
             ),
             actions: [
-              // 已选数量
+              // 已选数量（居中显示）
               if (_selectedIds.isNotEmpty)
                 Container(
-                  margin: EdgeInsets.symmetric(vertical: 12, horizontal: 4),
-                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  margin: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: Colors.blue.withOpacity(0.2),
                     borderRadius: BorderRadius.circular(12),
                   ),
+                  alignment: Alignment.center,
                   child: Text(
                     '已选 ${_selectedIds.length} 个',
                     style: TextStyle(color: Colors.blue, fontSize: 12),
                   ),
                 ),
-              // 全选勾选框
+              // 全选勾选框（添加背景避免被毛玻璃覆盖）
               if (_selectedIds.isNotEmpty)
-                IconButton(
-                  icon: Icon(
-                    _selectedIds.length == _videos.length 
-                      ? Icons.check_box 
-                      : Icons.check_box_outline_blank,
-                    color: Colors.blue,
+                Container(
+                  margin: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.85),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  onPressed: () {
-                    final isAllSelected = _selectedIds.length == _videos.length;
-                    logger.ui('Batch', 'UI操作: ${isAllSelected ? "取消全选" : "全选"}');
-                    setState(() {
-                      if (isAllSelected) {
-                        _selectedIds.clear();
-                      } else {
-                        _selectedIds = _videos.map((v) => v.id).toSet();
-                      }
-                    });
-                  },
-                  tooltip: _selectedIds.length == _videos.length ? '取消全选' : '全选',
+                  child: IconButton(
+                    icon: Icon(
+                      _selectedIds.length == _videos.length 
+                        ? Icons.check_box 
+                        : Icons.check_box_outline_blank,
+                      color: Colors.blue,
+                    ),
+                    onPressed: () {
+                      final isAllSelected = _selectedIds.length == _videos.length;
+                      logger.ui('Batch', 'UI操作: ${isAllSelected ? "取消全选" : "全选"}');
+                      setState(() {
+                        if (isAllSelected) {
+                          _selectedIds.clear();
+                        } else {
+                          _selectedIds = _videos.map((v) => v.id).toSet();
+                        }
+                      });
+                    },
+                    tooltip: _selectedIds.length == _videos.length ? '取消全选' : '全选',
+                  ),
                 ),
               // 就绪按钮
               Container(
@@ -351,6 +359,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     Text('页码: '),
                     SizedBox(width: 50, child: TextFormField(
                       initialValue: '1',
+                      textAlign: TextAlign.center,
+                      decoration: InputDecoration(
+                        contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                      ),
                       onChanged: (v) {
                         _pageStart = int.tryParse(v) ?? 1;
                       },
@@ -358,6 +370,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     Text(' ~ '),
                     SizedBox(width: 50, child: TextFormField(
                       initialValue: '3',
+                      textAlign: TextAlign.center,
+                      decoration: InputDecoration(
+                        contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                      ),
                       onChanged: (v) {
                         _pageEnd = int.tryParse(v) ?? 3;
                       },
