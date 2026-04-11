@@ -35,6 +35,9 @@ class AppState extends ChangeNotifier {
   // 视频显示模式: 'grid' 大图模式, 'list' 列表模式
   String videoDisplayMode = 'grid';
 
+  // 隐私模式：模糊预览图
+  bool privacyMode = false;
+
   // 当前页面索引（用于导航）
   int currentPageIndex = 0;
   Function(int)? navigateToPage;  // 由 MainPage 设置
@@ -208,6 +211,12 @@ class AppState extends ChangeNotifier {
   // 设置视频显示模式
   void setVideoDisplayMode(String mode) {
     videoDisplayMode = mode;
+    notifyListeners();
+  }
+  
+  // 切换隐私模式
+  void togglePrivacyMode() {
+    privacyMode = !privacyMode;
     notifyListeners();
   }
 }

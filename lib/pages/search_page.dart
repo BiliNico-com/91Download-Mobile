@@ -19,8 +19,71 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   bool _isLoading = false;
   bool _isAuthorMode = false;
   
+  // 分页相关
+  int _currentPage = 1;
+  bool _hasMore = true;
+  String _lastKeyword = '';
+  String _sortBy = 'default';  // default, new, hot
+  
+  // 滚动控制
+  final ScrollController _scrollController = ScrollController();
+  bool _showPageIndicator = false;
+  
   @override
   bool get wantKeepAlive => true;  // 保持页面状态
+  
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+  
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+  
+  void _onScroll() {
+    // 显示页码指示器
+    final showIndicator = _scrollController.offset > 100;
+    if (showIndicator != _showPageIndicator) {
+      setState(() => _showPageIndicator = showIndicator);
+    }
+    
+    // 自动加载更多
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      if (!_isLoading && _hasMore && _results.isNotEmpty && !_isAuthorMode) {
+        _loadMore();
+      }
+    }
+  }
+  
+  Future<void> _loadMore() async {
+    if (!_hasMore || _isLoading || _lastKeyword.isEmpty) return;
+    
+    final appState = context.read<AppState>();
+    final crawler = appState.crawler;
+    if (crawler == null) return;
+    
+    setState(() => _isLoading = true);
+    _currentPage++;
+    
+    await logger.i('Search', '加载更多: 第 $_currentPage 页');
+    
+    final newResults = await crawler.searchVideos(_lastKeyword, page: _currentPage);
+    
+    if (newResults.isEmpty) {
+      _hasMore = false;
+    } else {
+      setState(() {
+        _results.addAll(newResults);
+      });
+    }
+    
+    setState(() => _isLoading = false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -72,13 +135,98 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
             ),
           ),
           
+          // 排序和页码控制（仅在视频搜索模式显示）
+          if (!_isAuthorMode)
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  // 排序选择
+                  Text('排序: ', style: TextStyle(fontSize: 12)),
+                  DropdownButton<String>(
+                    value: _sortBy,
+                    isDense: true,
+                    items: [
+                      DropdownMenuItem(value: 'default', child: Text('默认')),
+                      DropdownMenuItem(value: 'new', child: Text('最新')),
+                      DropdownMenuItem(value: 'hot', child: Text('最热')),
+                    ],
+                    onChanged: (v) {
+                      if (v != null && v != _sortBy) {
+                        setState(() => _sortBy = v);
+                        if (_lastKeyword.isNotEmpty) {
+                          _search();
+                        }
+                      }
+                    },
+                  ),
+                  Spacer(),
+                  // 页码跳转
+                  if (_currentPage > 0)
+                    Row(
+                      children: [
+                        Text('页码: ', style: TextStyle(fontSize: 12)),
+                        IconButton(
+                          icon: Icon(Icons.first_page, size: 20),
+                          onPressed: _currentPage > 1 ? () => _goToPage(1) : null,
+                          padding: EdgeInsets.zero,
+                          constraints: BoxConstraints(),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.chevron_left, size: 20),
+                          onPressed: _currentPage > 1 ? () => _goToPage(_currentPage - 1) : null,
+                          padding: EdgeInsets.zero,
+                          constraints: BoxConstraints(),
+                        ),
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text('$_currentPage', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.chevron_right, size: 20),
+                          onPressed: _hasMore ? () => _goToPage(_currentPage + 1) : null,
+                          padding: EdgeInsets.zero,
+                          constraints: BoxConstraints(),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          
           // 结果列表
           Expanded(
-            child: _isLoading
-                ? Center(child: CircularProgressIndicator())
-                : _isAuthorMode
-                    ? _buildAuthorResults()
-                    : _buildVideoResults(),
+            child: Stack(
+              children: [
+                _isLoading && _results.isEmpty
+                    ? Center(child: CircularProgressIndicator())
+                    : _isAuthorMode
+                        ? _buildAuthorResults()
+                        : _buildVideoResults(),
+                
+                // 悬浮页码显示
+                if (_showPageIndicator && _currentPage > 0 && !_isAuthorMode)
+                  Positioned(
+                    bottom: 80,
+                    right: 16,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        '第 $_currentPage 页',
+                        style: TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           
           // 底部操作栏
@@ -125,11 +273,40 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       }
     });
   }
+  
+  /// 跳转到指定页
+  Future<void> _goToPage(int page) async {
+    if (page < 1 || _lastKeyword.isEmpty) return;
+    
+    final appState = context.read<AppState>();
+    final crawler = appState.crawler;
+    if (crawler == null) return;
+    
+    setState(() {
+      _isLoading = true;
+      _currentPage = page;
+      _results.clear();
+      _selectedIds.clear();
+    });
+    
+    await logger.i('Search', '跳转到第 $page 页');
+    
+    final results = await crawler.searchVideos(_lastKeyword, page: page, sort: _sortBy);
+    
+    setState(() {
+      _results = results;
+      _hasMore = results.isNotEmpty;
+      _isLoading = false;
+    });
+    
+    // 滚动到顶部
+    _scrollController.animateTo(0, duration: Duration(milliseconds: 300), curve: Curves.easeOut);
+  }
 
   Future<void> _search() async {
     if (_keywordController.text.isEmpty) return;
     
-    await logger.i('Search', 'UI操作: 点击搜索按钮, 关键词: ${_keywordController.text}, 作者模式: $_isAuthorMode');
+    await logger.i('Search', 'UI操作: 点击搜索按钮, 关键词: ${_keywordController.text}, 作者模式: $_isAuthorMode, 排序: $_sortBy');
     
     final appState = context.read<AppState>();
     final crawler = appState.crawler;
@@ -146,6 +323,10 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       _results.clear();
       _authorResults.clear();
       _selectedIds.clear();
+      // 重置分页
+      _currentPage = 1;
+      _hasMore = true;
+      _lastKeyword = _keywordController.text;
     });
     
     if (_isAuthorMode) {
@@ -187,9 +368,19 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   /// 列表模式显示视频结果
   Widget _buildVideoListResults() {
     return ListView.builder(
+      controller: _scrollController,
       padding: EdgeInsets.all(8),
-      itemCount: _results.length,
+      itemCount: _results.length + (_hasMore ? 1 : 0),
       itemBuilder: (context, index) {
+        if (index == _results.length) {
+          return Center(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+        
         final video = _results[index];
         final selected = _selectedIds.contains(video.id);
         
@@ -203,18 +394,17 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                   // 缩略图
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: video.cover != null
-                      ? Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 120, height: 80,
-                            color: Colors.grey[800],
-                            child: Icon(Icons.video_file, size: 32, color: Colors.white54),
-                          ))
-                      : Container(
-                          width: 120, height: 80,
-                          color: Colors.grey[800],
-                          child: Icon(Icons.video_file, size: 32, color: Colors.white54),
-                        ),
+                    child: Container(
+                      width: 120, 
+                      height: 80,
+                      color: Colors.grey[800],
+                      child: video.cover != null
+                        ? Center(
+                            child: Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Icon(Icons.video_file, size: 32, color: Colors.white54)),
+                          )
+                        : Icon(Icons.video_file, size: 32, color: Colors.white54),
+                    ),
                   ),
                   SizedBox(width: 12),
                   // 信息

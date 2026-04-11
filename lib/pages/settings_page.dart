@@ -236,31 +236,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 ),
               ],
             ),
-            SizedBox(height: 8),
-            // 常用下载目录快捷选择
-            Text('快捷目录', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _buildDirChip('Download', '/storage/emulated/0/Download/91Download'),
-                _buildDirChip('Movies', '/storage/emulated/0/Movies'),
-                _buildDirChip('Pictures', '/storage/emulated/0/Pictures'),
-                _buildDirChip('内部存储', '/storage/emulated/0'),
-              ],
-            ),
           ],
         ),
       ),
-    );
-  }
-  
-  Widget _buildDirChip(String label, String path) {
-    return ActionChip(
-      label: Text(label, style: TextStyle(fontSize: 12)),
-      avatar: Icon(Icons.folder, size: 16),
-      onPressed: () => _setDownloadDirectory(path),
     );
   }
   

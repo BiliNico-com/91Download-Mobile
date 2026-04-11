@@ -177,6 +177,19 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
               ],
             ),
             actions: [
+              // 隐私模式按钮
+              IconButton(
+                icon: Icon(
+                  appState.privacyMode ? Icons.visibility_off : Icons.visibility,
+                  color: appState.privacyMode ? Colors.red : Colors.grey,
+                ),
+                onPressed: () {
+                  appState.togglePrivacyMode();
+                  logger.i('Batch', 'UI操作: 切换隐私模式 -> ${appState.privacyMode}');
+                },
+                tooltip: appState.privacyMode ? '取消模糊' : '模糊预览图',
+              ),
+              SizedBox(width: 8),
               Container(
                 padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
@@ -185,6 +198,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                 ),
                 child: Text(_status, style: TextStyle(color: Colors.green)),
               ),
+              SizedBox(width: 8),
             ],
           ),
           body: Stack(
@@ -346,6 +360,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   
   /// 列表模式
   Widget _buildListView() {
+    final appState = context.read<AppState>();
+    
     return ListView.builder(
       controller: _scrollController,
       padding: EdgeInsets.all(8),
@@ -384,18 +400,31 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   // 缩略图
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: video.cover != null
-                      ? Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 120, height: 80,
-                            color: Colors.grey[800],
-                            child: Icon(Icons.play_circle, size: 32, color: Colors.white54),
-                          ))
-                      : Container(
-                          width: 120, height: 80,
-                          color: Colors.grey[800],
-                          child: Icon(Icons.play_circle, size: 32, color: Colors.white54),
-                        ),
+                    child: Container(
+                      width: 120, 
+                      height: 80,
+                      color: Colors.grey[800],
+                      child: video.cover != null
+                        ? Stack(
+                            children: [
+                              Center(
+                                child: Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Icon(Icons.play_circle, size: 32, color: Colors.white54)),
+                              ),
+                              // 模糊遮罩
+                              if (appState.privacyMode)
+                                Positioned.fill(
+                                  child: Container(
+                                    color: Colors.black.withOpacity(0.8),
+                                    child: Center(
+                                      child: Icon(Icons.lock, color: Colors.white54, size: 24),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          )
+                        : Icon(Icons.play_circle, size: 32, color: Colors.white54),
+                    ),
                   ),
                   SizedBox(width: 12),
                   // 信息
@@ -441,6 +470,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   
   /// 大图模式
   Widget _buildGridView() {
+    final appState = context.read<AppState>();
+    
     return GridView.builder(
       controller: _scrollController,
       padding: EdgeInsets.all(8),
@@ -512,6 +543,30 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                             child: Text(
                               video.duration!,
                               style: TextStyle(color: Colors.white, fontSize: 10),
+                            ),
+                          ),
+                        ),
+                      // 选中标记
+                      if (isSelected)
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: Container(
+                            padding: EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.blue,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.check, color: Colors.white, size: 16),
+                          ),
+                        ),
+                      // 模糊遮罩
+                      if (appState.privacyMode)
+                        Positioned.fill(
+                          child: Container(
+                            color: Colors.black.withOpacity(0.8),
+                            child: Center(
+                              child: Icon(Icons.lock, color: Colors.white54, size: 48),
                             ),
                           ),
                         ),
