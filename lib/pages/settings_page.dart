@@ -158,8 +158,11 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               }).toList(),
               onChanged: (site) async {
                 if (site != null) {
-                  appState.changeSite(site);
+                  // 先记录日志，再执行操作
+                  print('[Settings] 选择站点: $site');
                   await logger.i('Settings', 'UI操作: 切换站点 -> $site');
+                  appState.changeSite(site);
+                  print('[Settings] 站点已切换, currentSite=${appState.currentSite}');
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('已切换到 $site')),
                   );

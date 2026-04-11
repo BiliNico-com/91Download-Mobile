@@ -33,6 +33,11 @@ class _BatchPageState extends State<BatchPage> {
   Widget build(BuildContext context) {
     return Consumer<AppState>(
       builder: (context, appState, _) {
+        // 记录批量页面状态
+        Future.microtask(() {
+          logger.d('Batch', 'build: isSiteSelected=${appState.isSiteSelected}, currentSite=${appState.currentSite}');
+        });
+        
         // 检查是否已选择站点
         if (!appState.isSiteSelected) {
           return _buildNoSiteSelected();
@@ -149,7 +154,10 @@ class _BatchPageState extends State<BatchPage> {
                 )),
                 Spacer(),
                 FilledButton(
-                  onPressed: _isLoading ? null : _loadVideos,
+                  onPressed: _isLoading ? null : () async {
+                    print('[Batch] 加载按钮被点击');
+                    await _loadVideos();
+                  },
                   child: _isLoading 
                     ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                     : Text('加载'),
@@ -285,6 +293,9 @@ class _BatchPageState extends State<BatchPage> {
   }
 
   Future<void> _loadVideos() async {
+    print('[Batch] _loadVideos 开始执行');
+    print('[Batch] _isLoading=$_isLoading, _selectedType=$_selectedType');
+    
     await logger.i('Batch', 'UI操作: 点击加载按钮, 类型=$_selectedType, 页码=$_pageStart-$_pageEnd');
     
     setState(() {
@@ -292,9 +303,11 @@ class _BatchPageState extends State<BatchPage> {
       _status = '加载中...';
       _videos.clear();
     });
+    print('[Batch] 状态已更新: _isLoading=$_isLoading, _status=$_status');
     
     final appState = context.read<AppState>();
     final crawler = appState.crawler;
+    print('[Batch] crawler=${crawler != null ? "存在" : "null"}, currentSite=${appState.currentSite}');
     
     if (crawler == null) {
       await logger.e('Batch', '爬虫为空, 请先选择站点');
@@ -307,8 +320,10 @@ class _BatchPageState extends State<BatchPage> {
     
     final videos = <VideoInfo>[];
     for (var p = _pageStart; p <= _pageEnd; p++) {
+      print('[Batch] 开始加载第 $p 页');
       await logger.i('Batch', '网络请求: 加载第 $p 页');
       final list = await crawler.getVideoList(_selectedType, p);
+      print('[Batch] 第 $p 页返回 ${list.length} 个视频');
       videos.addAll(list);
     }
     
@@ -320,6 +335,7 @@ class _BatchPageState extends State<BatchPage> {
       _isLoading = false;
       _status = '就绪';
     });
+    print('[Batch] 加载完成, _videos.length=${_videos.length}');
   }
 
   Future<void> _startDownload() async {
