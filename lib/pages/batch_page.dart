@@ -733,13 +733,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         ? 8.0 
         : kToolbarHeight + MediaQuery.of(context).padding.top + 8;
     
-    // 使用MediaQuery动态计算预览图尺寸
-    // 宽度：屏幕宽度的45%（crossAxisCount: 2，所以每个占50%，改为45%留出间距）
-    // 高度：按16:9比例缩放
-    final screenWidth = MediaQuery.of(context).size.width;
-    final itemWidth = screenWidth * 0.45;  // 45%宽度
-    final itemHeight = itemWidth * 9 / 16; // 16:9比例
-    final childAspectRatio = itemWidth / itemHeight;
+    // 使用固定高度，宽度保持50%（一排2个），只缩小高度让一屏显示更多行
+    // childAspectRatio = 宽度 / 高度，值越小高度越矮
+    // 原16:9比例(0.5625)太高，改为0.45（约2.2:1，更扁的比例）
+    const double childAspectRatio = 0.45;  // 固定扁比例，宽度:高度 = 0.45:1
     
     return Column(
       children: [
