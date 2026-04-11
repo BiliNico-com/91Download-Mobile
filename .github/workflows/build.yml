@@ -151,6 +151,5 @@ jobs:
         files: build/app/outputs/flutter-apk/app-release.apk
         draft: false
         prerelease: true
-        fail_on_error: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
