@@ -682,7 +682,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                 // 时长标签（右下角，在标题上方，在毛玻璃之上）
                 if (video.duration != null)
                   Positioned(
-                    bottom: 35,
+                    bottom: 40,
                     right: 8,
                     child: Container(
                       padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
