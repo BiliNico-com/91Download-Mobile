@@ -55,12 +55,14 @@ class VideoInfo {
 
 /// 作者信息模型
 class AuthorInfo {
-  final String name;
-  final String? avatar;
-  final int videoCount;
-  final String profileUrl;
+  final String id;      // 作者ID（URL参数）
+  final String name;    // 作者名称
+  final String? avatar; // 头像URL
+  final int videoCount; // 视频数量
+  final String profileUrl; // 作者主页URL
 
   AuthorInfo({
+    required this.id,
     required this.name,
     this.avatar,
     this.videoCount = 0,
@@ -69,6 +71,7 @@ class AuthorInfo {
 
   factory AuthorInfo.fromJson(Map<String, dynamic> json) {
     return AuthorInfo(
+      id: json['id'] ?? '',
       name: json['name'] ?? '',
       avatar: json['avatar'],
       videoCount: json['videoCount'] ?? 0,

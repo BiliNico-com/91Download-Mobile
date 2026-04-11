@@ -456,6 +456,7 @@ class CrawlerCore {
         if (!seenNames.contains(namePart)) {
           seenNames.add(namePart);
           authors.add(AuthorInfo(
+            id: authorParam,
             name: namePart.isNotEmpty ? namePart : authorParam,
             videoCount: count,
             profileUrl: '$baseUrl/user.htm?author=$authorParam',
@@ -467,6 +468,44 @@ class CrawlerCore {
       return authors;
     } catch (e) {
       await logger.log('Crawler', '搜索作者失败: $e');
+      return [];
+    }
+  }
+
+  // ==================== 作者主页 ====================
+
+  /// 获取作者视频列表
+  Future<List<VideoInfo>> getAuthorVideos(String authorId, {int page = 1}) async {
+    String url;
+    if (_siteType == "porn91") {
+      // porn91 作者主页URL格式
+      url = '$baseUrl/author.php?author=$authorId&page=$page';
+    } else {
+      // original CMS
+      if (page == 1) {
+        url = '$baseUrl/user.htm?author=$authorId';
+      } else {
+        url = '$baseUrl/user-$page.htm?author=$authorId';
+      }
+    }
+    
+    await logger.log('Crawler', '网络请求: 获取作者视频 $url (siteType=$_siteType)');
+    
+    try {
+      final resp = await _dio.get(url);
+      final html = resp.data.toString();
+      
+      List<VideoInfo> videos;
+      if (_siteType == "porn91") {
+        videos = _parseVideoListPorn91(html);
+      } else {
+        videos = _parseVideoListOriginal(html);
+      }
+      
+      await logger.log('Crawler', '获取作者视频完成, 返回 ${videos.length} 个');
+      return videos;
+    } catch (e) {
+      await logger.log('Crawler', '获取作者视频失败: $e');
       return [];
     }
   }

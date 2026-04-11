@@ -31,6 +31,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   bool _showBackToTop = false;
   bool _showSettings = true;  // 是否显示设置区域
   double _lastScrollOffset = 0;  // 上次滚动位置
+  double _appBarOpacity = 1.0;  // AppBar透明度
   
   @override
   bool get wantKeepAlive => true;  // 保持页面状态
@@ -53,6 +54,12 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     final showBtn = _scrollController.offset > 500;
     if (showBtn != _showBackToTop) {
       setState(() => _showBackToTop = showBtn);
+    }
+    
+    // 计算AppBar透明度
+    final opacity = 1.0 - (_scrollController.offset / 200).clamp(0.0, 0.85);
+    if (opacity != _appBarOpacity) {
+      setState(() => _appBarOpacity = opacity);
     }
     
     // 滚动时隐藏/显示设置区域
@@ -182,6 +189,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       builder: (context, appState, _) {
         return Scaffold(
           appBar: AppBar(
+            backgroundColor: Theme.of(context).scaffoldBackgroundColor.withOpacity(_appBarOpacity),
+            elevation: _appBarOpacity < 0.5 ? 0 : 4,
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -191,6 +200,16 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
               ],
             ),
             actions: [
+              // 设置区域隐藏时显示设置按钮
+              if (!_showSettings)
+                IconButton(
+                  icon: Icon(Icons.settings),
+                  onPressed: () {
+                    setState(() => _showSettings = true);
+                    _scrollToTop();
+                  },
+                  tooltip: '设置',
+                ),
               // 已选数量（居中显示）
               if (_selectedIds.isNotEmpty)
                 Container(

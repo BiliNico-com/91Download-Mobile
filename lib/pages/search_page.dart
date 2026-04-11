@@ -26,10 +26,19 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   String _lastKeyword = '';
   String _sortBy = 'default';  // default, new, hot
   
+  // 作者主页模式相关
+  bool _isAuthorPageMode = false;  // 是否在作者主页模式
+  String _currentAuthorId = '';    // 当前作者ID
+  String _currentAuthorName = '';  // 当前作者名称
+  List<VideoInfo> _authorVideos = [];  // 作者视频列表
+  int _authorCurrentPage = 0;
+  bool _authorHasMore = true;
+  
   // 滚动控制
   final ScrollController _scrollController = ScrollController();
   bool _showPageIndicator = false;
   bool _showBackToTop = false;
+  double _appBarOpacity = 1.0;  // AppBar透明度
   
   // 设置区域收缩控制（参考批量页面）
   bool _showSettings = true;  // 是否显示搜索区域
@@ -61,6 +70,12 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       });
     }
     
+    // 计算AppBar透明度
+    final opacity = 1.0 - (_scrollController.offset / 200).clamp(0.0, 0.85);
+    if (opacity != _appBarOpacity) {
+      setState(() => _appBarOpacity = opacity);
+    }
+    
     // 滚动时隐藏/显示设置区域（搜索部分）
     final currentOffset = _scrollController.offset;
     if (currentOffset > _lastScrollOffset && currentOffset > 100) {
@@ -78,8 +93,12 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     
     // 自动加载更多
     if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-      if (!_isLoading && _hasMore && _results.isNotEmpty && !_isAuthorMode) {
-        _loadMore();
+      if (!_isLoading && !_isAuthorMode) {
+        if (_isAuthorPageMode && _authorHasMore) {
+          _loadMoreAuthorVideos();
+        } else if (!_isAuthorPageMode && _hasMore && _results.isNotEmpty) {
+          _loadMore();
+        }
       }
     }
   }
@@ -112,20 +131,100 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     setState(() => _isLoading = false);
   }
 
+  /// 加载更多作者视频
+  Future<void> _loadMoreAuthorVideos() async {
+    if (!_authorHasMore || _isLoading || _currentAuthorId.isEmpty) return;
+    
+    final appState = context.read<AppState>();
+    final crawler = appState.crawler;
+    if (crawler == null) return;
+    
+    setState(() => _isLoading = true);
+    _authorCurrentPage++;
+    
+    final newVideos = await crawler.getAuthorVideos(_currentAuthorId, page: _authorCurrentPage);
+    
+    if (newVideos.isEmpty) {
+      _authorHasMore = false;
+    } else {
+      setState(() {
+        _authorVideos.addAll(newVideos);
+      });
+    }
+    
+    setState(() => _isLoading = false);
+  }
+
+  /// 退出作者主页模式
+  void _exitAuthorPageMode() {
+    if (_isAuthorPageMode) {
+      setState(() {
+        _isAuthorPageMode = false;
+        _authorVideos.clear();
+        _authorCurrentPage = 0;
+        _authorHasMore = true;
+      });
+    }
+  }
+
+  /// 进入作者主页模式
+  Future<void> _enterAuthorPageMode(AuthorInfo author) async {
+    setState(() {
+      _isAuthorPageMode = true;
+      _currentAuthorId = author.id;
+      _currentAuthorName = author.name;
+      _authorVideos.clear();
+      _authorCurrentPage = 0;
+      _authorHasMore = true;
+    });
+    await _loadMoreAuthorVideos();
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);  // 必须调用
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('搜索'),
-            Text('通过关键词搜索并下载视频',
-                style: TextStyle(fontSize: 12, color: Colors.grey)),
-          ],
-        ),
+    
+    return WillPopScope(
+      onWillPop: () async {
+        // 作者主页模式下拦截返回键
+        if (_isAuthorPageMode) {
+          _exitAuthorPageMode();
+          return false;  // 不退出页面
+        }
+        return true;  // 正常返回
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Theme.of(context).scaffoldBackgroundColor.withOpacity(_appBarOpacity),
+          elevation: _appBarOpacity < 0.5 ? 0 : 4,
+          title: _isAuthorPageMode 
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('作者: $_currentAuthorName'),
+                  Text('点击作者主页查看视频',
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('搜索'),
+                  Text('通过关键词搜索并下载视频',
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ],
+              ),
         actions: [
+          // 搜索区域隐藏时显示搜索按钮
+          if (!_showSettings)
+            IconButton(
+              icon: Icon(Icons.search),
+              onPressed: () {
+                setState(() => _showSettings = true);
+                _scrollToTop();
+              },
+              tooltip: '搜索',
+            ),
           // 已选数量（居中显示）
           if (_selectedIds.isNotEmpty)
             Container(
@@ -212,13 +311,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           Expanded(
             child: Stack(
               children: [
-                _isLoading && _results.isEmpty
+                _isLoading && (_results.isEmpty && _authorVideos.isEmpty)
                     ? Center(child: CircularProgressIndicator())
-                    : _isAuthorMode
+                    : _isAuthorMode && !_isAuthorPageMode
                         ? _buildAuthorResults()
                         : _buildVideoResults(),
                 
-                // 悬浮按钮组（页码在上，回顶部按钮在下）
+                // 悬浮按钮组（页码在上，返回按钮在中间，回顶部按钮在下）
                 Consumer<AppState>(
                   builder: (context, appState, _) {
                     if (!_showPageIndicator || !appState.showBackToTop) {
@@ -239,8 +338,29 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                             ? CrossAxisAlignment.start 
                             : CrossAxisAlignment.end,
                         children: [
+                          // 返回搜索按钮（仅作者主页模式）
+                          if (_isAuthorPageMode)
+                            GestureDetector(
+                              onTap: _exitAuthorPageMode,
+                              child: Container(
+                                margin: EdgeInsets.only(bottom: 8),
+                                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue,
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.arrow_back, color: Colors.white, size: 16),
+                                    SizedBox(width: 4),
+                                    Text('返回搜索', style: TextStyle(color: Colors.white, fontSize: 12)),
+                                  ],
+                                ),
+                              ),
+                            ),
                           // 悬浮页码显示
-                          if (_currentPage > 0 && !_isAuthorMode)
+                          if (!_isAuthorPageMode && _currentPage > 0 && !_isAuthorMode)
                             Container(
                               margin: EdgeInsets.only(bottom: 8),
                               padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -250,6 +370,20 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                               ),
                               child: Text(
                                 '第 $_currentPage 页',
+                                style: TextStyle(color: Colors.white, fontSize: 12),
+                              ),
+                            ),
+                          // 作者页码显示
+                          if (_isAuthorPageMode && _authorCurrentPage > 0)
+                            Container(
+                              margin: EdgeInsets.only(bottom: 8),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.black87,
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Text(
+                                '第 $_authorCurrentPage 页',
                                 style: TextStyle(color: Colors.white, fontSize: 12),
                               ),
                             ),
@@ -404,16 +538,6 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     );
   }
 
-  void _toggleSelection(String id) {
-    setState(() {
-      if (_selectedIds.contains(id)) {
-        _selectedIds.remove(id);
-      } else {
-        _selectedIds.add(id);
-      }
-    });
-  }
-
   void _toggleAll() {
     setState(() {
       if (_selectedIds.length == _results.length) {
@@ -511,23 +635,141 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     final appState = context.read<AppState>();
     final isListMode = appState.videoDisplayMode == 'list';
     
-    if (_results.isEmpty) {
+    // 作者主页模式使用 _authorVideos，普通模式使用 _results
+    final videos = _isAuthorPageMode ? _authorVideos : _results;
+    final hasMore = _isAuthorPageMode ? _authorHasMore : _hasMore;
+    
+    if (videos.isEmpty) {
+      if (_isAuthorPageMode) {
+        return Center(child: Text('加载中...', style: TextStyle(color: Colors.grey)));
+      }
       return Center(child: Text('输入关键词搜索', style: TextStyle(color: Colors.grey)));
     }
     
-    return isListMode ? _buildVideoListResults() : _buildVideoGridResults();
+    // 返回支持分页的视频列表组件
+    return _VideoResultsWidget(
+      videos: videos,
+      selectedIds: _selectedIds,
+      hasMore: hasMore,
+      isListMode: isListMode,
+      scrollController: _scrollController,
+      onToggleSelection: _toggleSelection,
+      onLoadMore: _isAuthorPageMode ? _loadMoreAuthorVideos : _loadMore,
+    );
   }
   
-  /// 列表模式显示视频结果
-  Widget _buildVideoListResults() {
+  void _toggleSelection(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  /// 作者搜索结果
+  Widget _buildAuthorResults() {
+    if (_authorResults.isEmpty) {
+      return Center(child: Text('输入作者名搜索', style: TextStyle(color: Colors.grey)));
+    }
+    
+    return ListView.builder(
+      controller: _scrollController,
+      padding: EdgeInsets.all(8),
+      itemCount: _authorResults.length,
+      itemBuilder: (context, index) {
+        final author = _authorResults[index];
+        return Card(
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundImage: author.avatar != null ? NetworkImage(author.avatar!) : null,
+              child: author.avatar == null ? Icon(Icons.person) : null,
+            ),
+            title: Text(author.name),
+            subtitle: Text(author.videoCount > 0 ? '视频数: ${author.videoCount}' : '点击查看视频'),
+            trailing: Icon(Icons.chevron_right),
+            onTap: () => _enterAuthorPageMode(author),
+          ),
+        );
+      },
+    );
+  }
+  
+  /// 下载选中的视频
+  Future<void> _download() async {
+    if (_selectedIds.isEmpty) return;
+    
+    final appState = context.read<AppState>();
+    
+    // 获取选中的视频（支持作者主页模式）
+    final currentVideos = _isAuthorPageMode ? _authorVideos : _results;
+    final selectedVideos = currentVideos.where((v) => _selectedIds.contains(v.id)).toList();
+    
+    if (selectedVideos.isEmpty) return;
+    
+    // 添加到下载管理器
+    for (final video in selectedVideos) {
+      appState.downloadManager.addTask(video);
+    }
+    
+    // 显示提示
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已添加 ${selectedVideos.length} 个视频到下载队列'),
+          action: SnackBarAction(
+            label: '查看',
+            onPressed: () {
+              // 切换到下载页面（索引2）
+              appState.navigateToPage?.call(2);
+            },
+          ),
+        ),
+      );
+    }
+    
+    // 清空选择
+    setState(() {
+      _selectedIds.clear();
+    });
+  }
+}
+
+/// 视频结果组件（支持列表/网格模式）
+class _VideoResultsWidget extends StatelessWidget {
+  final List<VideoInfo> videos;
+  final Set<String> selectedIds;
+  final bool hasMore;
+  final bool isListMode;
+  final ScrollController scrollController;
+  final Function(String) onToggleSelection;
+  final VoidCallback? onLoadMore;
+
+  _VideoResultsWidget({
+    required this.videos,
+    required this.selectedIds,
+    required this.hasMore,
+    required this.isListMode,
+    required this.scrollController,
+    required this.onToggleSelection,
+    this.onLoadMore,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return isListMode ? _buildListView(context) : _buildGridView(context);
+  }
+
+  Widget _buildListView(BuildContext context) {
     return Consumer<AppState>(
       builder: (context, appState, _) {
         return ListView.builder(
-          controller: _scrollController,
+          controller: scrollController,
           padding: EdgeInsets.all(8),
-          itemCount: _results.length + (_hasMore ? 1 : 0),
+          itemCount: videos.length + (hasMore ? 1 : 0),
           itemBuilder: (context, index) {
-            if (index == _results.length) {
+            if (index == videos.length) {
               return Center(
                 child: Padding(
                   padding: EdgeInsets.all(16),
@@ -536,11 +778,11 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               );
             }
             
-            final video = _results[index];
-            final selected = _selectedIds.contains(video.id);
+            final video = videos[index];
+            final selected = selectedIds.contains(video.id);
             
             return GestureDetector(
-              onTap: () => _toggleSelection(video.id),
+              onTap: () => onToggleSelection(video.id),
               child: Card(
                 child: Padding(
                   padding: EdgeInsets.all(12),
@@ -642,13 +884,12 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       },
     );
   }
-  
-  /// 大图模式显示视频结果
-  Widget _buildVideoGridResults() {
+
+  Widget _buildGridView(BuildContext context) {
     return Consumer<AppState>(
       builder: (context, appState, _) {
         return GridView.builder(
-          controller: _scrollController,
+          controller: scrollController,
           padding: EdgeInsets.all(8),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
@@ -656,9 +897,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
             crossAxisSpacing: 8,
             mainAxisSpacing: 8,
           ),
-          itemCount: _results.length + (_hasMore ? 1 : 0),
+          itemCount: videos.length + (hasMore ? 1 : 0),
           itemBuilder: (context, index) {
-            if (index == _results.length) {
+            if (index == videos.length) {
               return Center(
                 child: Padding(
                   padding: EdgeInsets.all(16),
@@ -667,11 +908,11 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               );
             }
             
-            final video = _results[index];
-            final selected = _selectedIds.contains(video.id);
+            final video = videos[index];
+            final selected = selectedIds.contains(video.id);
             
             return GestureDetector(
-              onTap: () => _toggleSelection(video.id),
+              onTap: () => onToggleSelection(video.id),
               child: Card(
                 clipBehavior: Clip.antiAlias,
                 color: selected ? Colors.blue.withOpacity(0.2) : null,
@@ -767,75 +1008,5 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         );
       },
     );
-  }
-
-  /// 作者搜索结果
-  Widget _buildAuthorResults() {
-    if (_authorResults.isEmpty) {
-      return Center(child: Text('输入作者名搜索', style: TextStyle(color: Colors.grey)));
-    }
-    
-    return ListView.builder(
-      controller: _scrollController,
-      padding: EdgeInsets.all(8),
-      itemCount: _authorResults.length,
-      itemBuilder: (context, index) {
-        final author = _authorResults[index];
-        return Card(
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundImage: author.avatar != null ? NetworkImage(author.avatar!) : null,
-              child: author.avatar == null ? Icon(Icons.person) : null,
-            ),
-            title: Text(author.name),
-            subtitle: Text(author.videoCount > 0 ? '视频数: ${author.videoCount}' : '点击查看视频'),
-            trailing: Icon(Icons.chevron_right),
-            onTap: () {
-              // TODO: 跳转到作者视频列表
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('作者: ${author.name}')),
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
-  
-  /// 下载选中的视频
-  Future<void> _download() async {
-    if (_selectedIds.isEmpty) return;
-    
-    final appState = context.read<AppState>();
-    
-    // 获取选中的视频
-    final selectedVideos = _results.where((v) => _selectedIds.contains(v.id)).toList();
-    
-    
-    // 添加到下载管理器
-    for (final video in selectedVideos) {
-      appState.downloadManager.addTask(video);
-    }
-    
-    // 显示提示
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('已添加 ${selectedVideos.length} 个视频到下载队列'),
-          action: SnackBarAction(
-            label: '查看',
-            onPressed: () {
-              // 切换到下载页面（索引2）
-              appState.navigateToPage?.call(2);
-            },
-          ),
-        ),
-      );
-    }
-    
-    // 清空选择
-    setState(() {
-      _selectedIds.clear();
-    });
   }
 }
