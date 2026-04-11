@@ -417,84 +417,110 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   
   /// 列表模式显示视频结果
   Widget _buildVideoListResults() {
-    final appState = context.read<AppState>();
-    
-    return ListView.builder(
-      controller: _scrollController,
-      padding: EdgeInsets.all(8),
-      itemCount: _results.length + (_hasMore ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index == _results.length) {
-          return Center(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: CircularProgressIndicator(),
-            ),
-          );
-        }
-        
-        final video = _results[index];
-        final selected = _selectedIds.contains(video.id);
-        
-        return GestureDetector(
-          onTap: () => _toggleSelection(video.id),
-          child: Card(
-            child: Padding(
-              padding: EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  // 缩略图
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      width: 120, 
-                      height: 80,
-                      color: Colors.grey[800],
-                      child: video.cover != null
-                        ? Stack(
-                            children: [
-                              Center(
-                                child: Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Icon(Icons.video_file, size: 32, color: Colors.white54)),
-                              ),
-                              // 毛玻璃模糊遮罩
-                              if (appState.privacyMode)
-                                Positioned.fill(
-                                  child: ClipRect(
-                                    child: BackdropFilter(
-                                      filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                                      child: Container(
-                                        color: Colors.black.withOpacity(0.3),
+    return Consumer<AppState>(
+      builder: (context, appState, _) {
+        return ListView.builder(
+          controller: _scrollController,
+          padding: EdgeInsets.all(8),
+          itemCount: _results.length + (_hasMore ? 1 : 0),
+          itemBuilder: (context, index) {
+            if (index == _results.length) {
+              return Center(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: CircularProgressIndicator(),
+                ),
+              );
+            }
+            
+            final video = _results[index];
+            final selected = _selectedIds.contains(video.id);
+            
+            return GestureDetector(
+              onTap: () => _toggleSelection(video.id),
+              child: Card(
+                child: Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      // 缩略图 + 时长 + 选中标记
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          width: 120, 
+                          height: 80,
+                          color: Colors.grey[800],
+                          child: video.cover != null
+                            ? Stack(
+                                children: [
+                                  Center(
+                                    child: Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Icon(Icons.video_file, size: 32, color: Colors.white54)),
+                                  ),
+                                  // 毛玻璃模糊遮罩
+                                  if (appState.privacyMode)
+                                    Positioned.fill(
+                                      child: ClipRect(
+                                        child: BackdropFilter(
+                                          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                                          child: Container(
+                                            color: Colors.black.withOpacity(0.3),
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ),
-                            ],
-                          )
-                        : Icon(Icons.video_file, size: 32, color: Colors.white54),
-                    ),
-                  ),
-                  SizedBox(width: 12),
-                  // 信息 - 按图3标准：第一行视频名称+作者，第二行时长
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // 第一行：视频名称 - 作者
-                        Row(
+                                  // 选中标记（左上角）
+                                  if (selected)
+                                    Positioned(
+                                      top: 4,
+                                      left: 4,
+                                      child: Container(
+                                        padding: EdgeInsets.all(2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.blue,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(Icons.check, size: 12, color: Colors.white),
+                                      ),
+                                    ),
+                                  // 时长标签（右下角）
+                                  if (video.duration != null)
+                                    Positioned(
+                                      bottom: 4,
+                                      right: 4,
+                                      child: Container(
+                                        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black87,
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          video.duration!,
+                                          style: TextStyle(color: Colors.white, fontSize: 10),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              )
+                            : Icon(Icons.video_file, size: 32, color: Colors.white54),
+                        ),
+                      ),
+                      SizedBox(width: 12),
+                      // 信息：视频名称 - 作者
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(
-                              child: Text(
-                                video.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                              ),
+                            Text(
+                              video.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                             ),
                             if (video.author != null && video.author!.isNotEmpty) ...[
-                              SizedBox(width: 8),
+                              SizedBox(height: 4),
                               Text(
-                                '- ${video.author}',
+                                video.author!,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(fontSize: 12, color: Colors.grey),
@@ -502,25 +528,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                             ],
                           ],
                         ),
-                        // 第二行：时长
-                        if (video.duration != null) ...[
-                          SizedBox(height: 4),
-                          Text(
-                            video.duration!,
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ],
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  // 选中图标
-                  selected 
-                    ? Icon(Icons.check_circle, color: Colors.blue)
-                    : Icon(Icons.circle_outlined, color: Colors.grey),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
