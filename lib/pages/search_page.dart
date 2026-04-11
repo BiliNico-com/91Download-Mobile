@@ -143,21 +143,27 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
             ),
           // 全选勾选框（添加背景避免被毛玻璃覆盖）
           if (_selectedIds.isNotEmpty)
-            Container(
-              margin: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-              decoration: BoxDecoration(
-                color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.85),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: IconButton(
-                icon: Icon(
-                  _selectedIds.length == _results.length 
-                    ? Icons.check_box 
-                    : Icons.check_box_outline_blank,
-                  color: Colors.blue,
+            GestureDetector(
+              onTap: _toggleAll,
+              child: Container(
+                margin: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                padding: EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: _selectedIds.length == _results.length 
+                      ? Colors.blue 
+                      : Theme.of(context).scaffoldBackgroundColor.withOpacity(0.85),
+                  borderRadius: BorderRadius.circular(8),
+                  border: _selectedIds.length == _results.length 
+                      ? null 
+                      : Border.all(color: Colors.blue, width: 2),
                 ),
-                onPressed: _toggleAll,
-                tooltip: _selectedIds.length == _results.length ? '取消全选' : '全选',
+                child: Icon(
+                  Icons.check,
+                  color: _selectedIds.length == _results.length 
+                      ? Colors.white 
+                      : Colors.blue,
+                  size: 20,
+                ),
               ),
             ),
           // 就绪按钮
@@ -212,7 +218,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                         ? _buildAuthorResults()
                         : _buildVideoResults(),
                 
-                // 悬浮按钮组（左下角或右下角：页码+回顶部）
+                // 悬浮按钮组（页码在上，回顶部按钮在下）
                 Consumer<AppState>(
                   builder: (context, appState, _) {
                     if (!_showPageIndicator || !appState.showBackToTop) {
@@ -222,13 +228,16 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                       bottom: 16,
                       left: appState.backToTopPosition == 'left' ? 16 : null,
                       right: appState.backToTopPosition == 'right' ? 16 : null,
-                      child: Row(
+                      child: Column(
                         mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: appState.backToTopPosition == 'left' 
+                            ? CrossAxisAlignment.start 
+                            : CrossAxisAlignment.end,
                         children: [
                           // 悬浮页码显示
                           if (_currentPage > 0 && !_isAuthorMode)
                             Container(
-                              margin: EdgeInsets.only(right: 8),
+                              margin: EdgeInsets.only(bottom: 8),
                               padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                               decoration: BoxDecoration(
                                 color: Colors.black87,
