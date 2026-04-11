@@ -961,8 +961,8 @@ class _VideoResultsWidget extends StatelessWidget {
     
     // 使用固定高度，宽度保持50%（一排2个），只缩小高度让一屏显示更多行
     // childAspectRatio = 宽度 / 高度，值越大高度越小（更扁）
-    // 原16:9比例(0.5625)高度较大，改为0.7让高度更小
-    const double childAspectRatio = 0.7;  // 更扁的比例，一屏显示更多行
+    // 原16:9比例(0.5625)高度较大，改为0.85让高度更小
+    const double childAspectRatio = 0.85;  // 更扁的比例，一屏显示更多行
     
     return Consumer<AppState>(
       builder: (context, appState, _) {
