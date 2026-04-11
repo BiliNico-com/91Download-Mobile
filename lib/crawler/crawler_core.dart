@@ -132,7 +132,6 @@ class CrawlerCore {
     
     try {
       final resp = await _dio.get(url);
-      await logger.d('Crawler', '响应状态: ${resp.statusCode}, 长度: ${resp.data.toString().length}');
       
       final html = resp.data.toString();
       
@@ -403,7 +402,6 @@ class CrawlerCore {
     
     try {
       final resp = await _dio.get(url);
-      await logger.d('Crawler', '搜索响应状态: ${resp.statusCode}');
       final html = resp.data.toString();
       
       // 根据站点类型选择解析方法
@@ -425,11 +423,9 @@ class CrawlerCore {
   /// 搜索作者
   Future<List<AuthorInfo>> searchAuthors(String keyword) async {
     final url = '$baseUrl/search_result.php?search_id=${Uri.encodeComponent(keyword)}&search_type=author';
-    await logger.i('Crawler', '网络请求: 搜索作者 $url');
     
     try {
       final resp = await _dio.get(url);
-      await logger.d('Crawler', '搜索作者响应状态: ${resp.statusCode}');
       final html = resp.data.toString();
       
       final authors = <AuthorInfo>[];
@@ -457,7 +453,6 @@ class CrawlerCore {
         }
       }
       
-      await logger.i('Crawler', '搜索作者完成, 结果数: ${authors.length}');
       return authors;
     } catch (e) {
       await logger.e('Crawler', '搜索作者失败: $e');
@@ -470,20 +465,13 @@ class CrawlerCore {
   /// 获取视频详情（m3u8地址等）
   Future<VideoInfo?> getVideoDetail(VideoInfo video) async {
     try {
-      await logger.i('Crawler', '========== 开始获取视频详情 ==========');
-      await logger.i('Crawler', '视频URL: ${video.url}');
-      await logger.i('Crawler', '站点类型: $_siteType');
       
       final resp = await _dio.get(video.url);
       final html = resp.data.toString();
-      await logger.d('Crawler', '页面响应状态: ${resp.statusCode}');
-      await logger.d('Crawler', '页面长度: ${html.length} 字节');
       
       // 记录 HTML 片段用于调试
       if (html.length < 2000) {
-        await logger.d('Crawler', '完整HTML: $html');
       } else {
-        await logger.d('Crawler', 'HTML前500字符: ${html.substring(0, 500)}');
       }
       
       String? videoUrl;
@@ -491,39 +479,30 @@ class CrawlerCore {
       
       // ===== porn91 专用策略 =====
       if (_siteType == "porn91") {
-        await logger.d('Crawler', '[Porn91策略] 尝试提取视频URL...');
         
         // 策略 A: strencode2("%3c%73%6f...") — URL 编码的 <source> 标签
-        await logger.d('Crawler', '[策略A] 查找 strencode2 编码...');
         final strencodeMatch = RegExp(r'''strencode2\(["'](%[0-9a-fA-F]{2}[^"']+)["']\)''').firstMatch(html);
         if (strencodeMatch != null) {
           try {
             final encoded = strencodeMatch.group(1)!;
-            await logger.d('Crawler', '[策略A] 找到编码: ${encoded.substring(0, encoded.length > 50 ? 50 : encoded.length)}...');
             final decoded = Uri.decodeComponent(encoded);
-            await logger.d('Crawler', '[策略A] 解码成功, 长度: ${decoded.length}');
-            await logger.d('Crawler', '[策略A] 解码内容前200字符: ${decoded.substring(0, decoded.length > 200 ? 200 : decoded.length)}');
             
             // 从解码后的 HTML 中提取 src 属性
             final srcMatch = RegExp(r'''src=["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)["']''', caseSensitive: false).firstMatch(decoded);
             if (srcMatch != null) {
               videoUrl = srcMatch.group(1)?.replaceAll('&amp;', '&');
               extractionMethod = 'strencode2解码';
-              await logger.i('Crawler', '[策略A成功] 从 strencode2 提取视频: $videoUrl');
             } else {
-              await logger.w('Crawler', '[策略A] 解码后未找到视频URL');
             }
           } catch (e) {
             await logger.e('Crawler', '[策略A] strencode2 解码失败: $e');
           }
         } else {
-          await logger.w('Crawler', '[策略A] 未找到 strencode2 编码');
         }
         
         // 策略 B: 直接查找 <source> 标签
         // 注意：页面可能有多个 source，第一个可能是广告，需要匹配视频ID
         if (videoUrl == null) {
-          await logger.d('Crawler', '[策略B] 查找 <source> 标签...');
           
           // 从封面URL提取视频ID（如 https://.../thumb/1192622.jpg -> 1192622）
           String? videoId;
@@ -531,26 +510,22 @@ class CrawlerCore {
             final idMatch = RegExp(r'/(\d+)\.jpe?g').firstMatch(video.cover!);
             if (idMatch != null) {
               videoId = idMatch.group(1);
-              await logger.d('Crawler', '[策略B] 从封面提取视频ID: $videoId');
             }
           }
           
           final sourcePattern = RegExp(r'''<source[^>]+src=["']([^"']+)["']''', caseSensitive: false);
           final sourceMatches = sourcePattern.allMatches(html).toList();
-          await logger.d('Crawler', '[策略B] 找到 ${sourceMatches.length} 个 <source> 标签');
           
           // 优先匹配视频ID的source，其次取最后一个source（通常第一个是广告）
           for (var i = 0; i < sourceMatches.length; i++) {
             final match = sourceMatches[i];
             final src = match.group(1)?.replaceAll('&amp;', '&') ?? '';
-            await logger.d('Crawler', '[策略B] 检查第 ${i+1} 个source: $src');
             
             if (src.contains('.mp4') || src.contains('.m3u8')) {
               // 如果有视频ID，优先匹配包含该ID的URL
               if (videoId != null && src.contains(videoId)) {
                 videoUrl = src;
                 extractionMethod = 'source标签(ID匹配)';
-                await logger.i('Crawler', '[策略B成功] 从 <source> 提取视频(ID匹配): $videoUrl');
                 break;  // 找到匹配的，立即退出
               }
               // 否则记录为候选（取最后一个）
@@ -562,13 +537,11 @@ class CrawlerCore {
           }
           
           if (videoUrl != null) {
-            await logger.i('Crawler', '[策略B成功] 最终选择: $videoUrl');
           }
         }
         
         // 策略 C: 查找内嵌 JavaScript 中的视频 URL
         if (videoUrl == null) {
-          await logger.d('Crawler', '[策略C] 查找 JavaScript 内嵌URL...');
           final jsPatterns = [
             r'''\.(?:mp4|m3u8)["']?\s*;''',  // 简化匹配
             r'''["']https?://[^"']+\.(?:mp4|m3u8)[^"']*["']''',
@@ -577,12 +550,10 @@ class CrawlerCore {
           for (final pattern in jsPatterns) {
             final match = RegExp(pattern, caseSensitive: false).firstMatch(html);
             if (match != null) {
-              await logger.d('Crawler', '[策略C] 找到候选: ${match.group(0)}');
               final urlMatch = RegExp(r'''https?://[^"'\s]+\.(?:mp4|m3u8)[^"'\s]*''').firstMatch(match.group(0)!);
               if (urlMatch != null) {
                 videoUrl = urlMatch.group(0);
                 extractionMethod = 'JS内嵌';
-                await logger.i('Crawler', '[策略C成功] 从 JS 提取: $videoUrl');
                 break;
               }
             }
@@ -592,14 +563,12 @@ class CrawlerCore {
       
       // ===== 通用策略 (original CMS) =====
       if (videoUrl == null) {
-        await logger.d('Crawler', '[通用策略] 开始通用URL提取...');
         
         // 策略1: 从 <source> 标签提取 m3u8
         final sourceMatch = RegExp(r'''<source[^>]+src="([^"]+\.m3u8[^"]*)"''', caseSensitive: false).firstMatch(html);
         if (sourceMatch != null) {
           videoUrl = sourceMatch.group(1);
           extractionMethod = 'source-m3u8';
-          await logger.i('Crawler', '[通用策略1成功] 从 <source> 发现 m3u8: $videoUrl');
         }
         
         // 策略2: 搜索任何 .m3u8 URL
@@ -608,7 +577,6 @@ class CrawlerCore {
           if (m3u8Match != null) {
             videoUrl = m3u8Match.group(1);
             extractionMethod = '通用m3u8正则';
-            await logger.i('Crawler', '[通用策略2成功] 从通用正则发现 m3u8: $videoUrl');
           }
         }
         
@@ -623,7 +591,6 @@ class CrawlerCore {
             if (match != null) {
               videoUrl = match.group(1);
               extractionMethod = 'JS变量';
-              await logger.i('Crawler', '[通用策略3成功] 从 JS 变量发现 m3u8: $videoUrl');
               break;
             }
           }
@@ -665,10 +632,6 @@ class CrawlerCore {
           }
         }
         
-        await logger.i('Crawler', '========== 视频详情获取成功 ==========');
-        await logger.i('Crawler', '提取方式: $extractionMethod');
-        await logger.i('Crawler', '视频URL: $videoUrl');
-        await logger.i('Crawler', '作者: $author, 时长: $duration');
         
         return VideoInfo(
           id: video.id,
@@ -684,11 +647,9 @@ class CrawlerCore {
       await logger.e('Crawler', '========== 视频详情获取失败 ==========');
       await logger.e('Crawler', '所有策略均未能提取到视频URL');
       // 输出更多调试信息
-      await logger.e('Crawler', 'HTML样例(中间1000字符): ${html.substring(html.length > 5000 ? 2500 : html.length > 1000 ? 500 : 0, html.length > 5000 ? 3500 : html.length)}');
       return null;
     } catch (e, stack) {
       await logger.e('Crawler', '获取视频详情异常: $e');
-      await logger.e('Crawler', '堆栈: $stack');
       return null;
     }
   }

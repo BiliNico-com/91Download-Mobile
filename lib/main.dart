@@ -8,8 +8,6 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   // 初始化日志
-  await logger.init(false);
-  await logger.i('Main', '应用启动');
   
   runApp(const MyApp());
 }

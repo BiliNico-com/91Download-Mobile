@@ -32,7 +32,6 @@ class _MainPageState extends State<MainPage> {
     _pageController = PageController();
     // 记录初始页面
     Future.microtask(() {
-      logger.i('MainPage', '应用启动, 初始页面: ${_pageNames[_currentIndex]}');
     });
   }
   

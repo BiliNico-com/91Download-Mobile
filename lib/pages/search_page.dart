@@ -98,7 +98,6 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     setState(() => _isLoading = true);
     _currentPage++;
     
-    await logger.i('Search', '加载更多: 第 $_currentPage 页, 排序: $_sortBy');
     
     final newResults = await crawler.searchVideos(_lastKeyword, page: _currentPage, sort: _sortBy);
     
@@ -405,7 +404,6 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       _selectedIds.clear();
     });
     
-    await logger.i('Search', '跳转到第 $page 页');
     
     final results = await crawler.searchVideos(_lastKeyword, page: page, sort: _sortBy);
     
@@ -429,7 +427,6 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     final appState = context.read<AppState>();
     final crawler = appState.crawler;
     if (crawler == null) {
-      await logger.w('Search', '爬虫为空, 请先选择站点');
       setState(() {
         _status = '请先选择站点';
       });
@@ -454,9 +451,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     
     if (_isAuthorMode) {
       // 搜索作者
-      await logger.d('Search', '开始搜索作者...');
       final authors = await crawler.searchAuthors(_keywordController.text);
-      await logger.i('Search', '作者搜索完成, 结果数: ${authors.length}');
       
       setState(() {
         _authorResults = authors;
@@ -465,9 +460,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       });
     } else {
       // 搜索视频
-      await logger.d('Search', '开始搜索视频...');
       final results = await crawler.searchVideos(_keywordController.text);
-      await logger.i('Search', '视频搜索完成, 结果数: ${results.length}');
       
       setState(() {
         _results = results;
@@ -764,7 +757,6 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
             trailing: Icon(Icons.chevron_right),
             onTap: () {
               // TODO: 跳转到作者视频列表
-              logger.i('Search', '点击作者: ${author.name}');
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text('作者: ${author.name}')),
               );
@@ -784,7 +776,6 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     // 获取选中的视频
     final selectedVideos = _results.where((v) => _selectedIds.contains(v.id)).toList();
     
-    await logger.i('Search', '添加 ${selectedVideos.length} 个视频到下载队列');
     
     // 添加到下载管理器
     for (final video in selectedVideos) {

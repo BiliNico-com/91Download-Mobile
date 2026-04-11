@@ -73,7 +73,6 @@ class _HistoryPageState extends State<HistoryPage> with AutomaticKeepAliveClient
     final crawler = appState.crawler;
     
     if (crawler == null) {
-      await logger.w('History', '爬虫为空, 无法加载历史');
       setState(() {
         _history = [];
         _isLoading = false;
@@ -82,7 +81,6 @@ class _HistoryPageState extends State<HistoryPage> with AutomaticKeepAliveClient
     }
     
     final history = await crawler.getDownloadHistory();
-    await logger.i('History', '加载历史记录: ${history.length} 条');
     
     setState(() {
       _history = history;
@@ -110,7 +108,6 @@ class _HistoryPageState extends State<HistoryPage> with AutomaticKeepAliveClient
     );
     
     if (confirm == true) {
-      await logger.i('History', '确认清空历史记录');
       // TODO: 清空数据库
       _loadHistory();
     }

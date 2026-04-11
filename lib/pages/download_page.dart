@@ -75,7 +75,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   
   /// 下拉刷新回调
   Future<void> _onRefresh() async {
-    await logger.i('DownloadPage', '下拉刷新');
     // 触发重新构建
     setState(() {
       // 强制刷新 UI
@@ -241,7 +240,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
   
   void _batchStart(AppState appState) async {
-    await logger.i('DownloadPage', '批量开始: ${_selectedIds.length} 个任务');
     for (final id in _selectedIds.toList()) {
       final task = appState.downloadManager.downloadingTasks.firstWhere(
         (t) => t.id == id,
@@ -259,7 +257,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
   
   void _batchPause(AppState appState) async {
-    await logger.i('DownloadPage', '批量暂停: ${_selectedIds.length} 个任务');
     for (final id in _selectedIds.toList()) {
       appState.downloadManager.pauseTask(id);
     }
@@ -269,7 +266,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
   
   void _batchStop(AppState appState) async {
-    await logger.i('DownloadPage', '批量停止: ${_selectedIds.length} 个任务');
     for (final id in _selectedIds.toList()) {
       appState.downloadManager.cancelTask(id);
     }
@@ -334,7 +330,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     
     if (result != null) {
       final deleteFile = result['deleteFile'] ?? false;
-      await logger.i('DownloadPage', '批量删除: $count 个任务, deleteFile=$deleteFile');
       
       for (final id in _selectedIds.toList()) {
         if (deleteFile) {
@@ -345,10 +340,8 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
               final file = File(task!.filePath!);
               if (await file.exists()) {
                 await file.delete();
-                await logger.i('DownloadPage', '已删除本地文件: ${task.filePath}');
               }
             } catch (e) {
-              await logger.e('DownloadPage', '删除文件失败: $e');
             }
           }
         }
@@ -449,7 +442,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                           setState(() {
                             _selectedIds.clear();
                           });
-                          logger.i('DownloadPage', '清空已完成记录');
                         },
                         icon: Icon(Icons.delete_sweep, color: Colors.orange),
                         label: Text('清空记录', style: TextStyle(color: Colors.orange)),
@@ -519,7 +511,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     
     if (result != null) {
       final deleteFile = result['deleteFile'] ?? true;
-      await logger.i('DownloadPage', '删除选中: $count 个记录, deleteFile=$deleteFile');
       
       for (final id in _selectedIds.toList()) {
         if (deleteFile) {
@@ -530,10 +521,8 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
               final file = File(task!.filePath!);
               if (await file.exists()) {
                 await file.delete();
-                await logger.i('DownloadPage', '已删除本地文件: ${task.filePath}');
               }
             } catch (e) {
-              await logger.e('DownloadPage', '删除文件失败: $e');
             }
           }
         }
@@ -759,7 +748,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     );
     
     if (result == true) {
-      await logger.i('DownloadPage', '删除任务: ${task.id}');
       appState.downloadManager.cancelTask(task.id);
     }
   }
@@ -842,7 +830,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   
   /// 播放视频
   void _playVideo(DownloadTask task, AppState appState) async {
-    await logger.i('DownloadPage', '播放视频: ${task.video.title}');
     
     if (task.filePath == null || task.filePath!.isEmpty) {
       if (mounted) {
@@ -873,7 +860,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   
   /// 使用内置播放器播放
   Future<void> _playWithInternalPlayer(DownloadTask task) async {
-    await logger.i('DownloadPage', '使用内置播放器');
     
     if (mounted) {
       Navigator.push(
@@ -890,7 +876,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   
   /// 使用外部播放器播放
   Future<void> _playWithExternalPlayer(DownloadTask task) async {
-    await logger.i('DownloadPage', '使用外部播放器');
     
     try {
       // 使用 url_launcher 打开外部播放器
@@ -898,7 +883,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
       // 如果未安装，则回退到内置播放器
       // ignore: depend_on_referenced_packages
       final uri = Uri.file(task.filePath!);
-      await logger.i('DownloadPage', '文件 URI: $uri');
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -909,7 +893,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
       // 由于当前环境可能没有 url_launcher，直接使用内置播放器
       await _playWithInternalPlayer(task);
     } catch (e) {
-      await logger.e('DownloadPage', '打开外部播放器失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('打开失败: $e')),
@@ -927,7 +910,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     try {
       await Share.shareXFiles([XFile(task.filePath!)], text: task.video.title);
     } catch (e) {
-      await logger.e('DownloadPage', '分享失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('分享失败: $e')),
@@ -985,7 +967,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   
   Future<void> _initializePlayer() async {
     try {
-      await logger.i('VideoPlayer', '初始化播放器: ${widget.filePath}');
       
       // 使用文件路径初始化 VideoPlayerController
       _videoPlayerController = VideoPlayerController.file(File(widget.filePath));
@@ -1023,7 +1004,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         });
       }
     } catch (e) {
-      await logger.e('VideoPlayer', '初始化失败: $e');
       if (mounted) {
         setState(() {
           _hasError = true;

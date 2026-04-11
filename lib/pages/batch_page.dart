@@ -92,7 +92,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     setState(() => _isLoading = true);
     
     _currentPage++;
-    await logger.i('Batch', '自动加载更多: 第 $_currentPage 页');
     
     final newVideos = await crawler.getVideoList(_selectedType, _currentPage);
     
@@ -139,7 +138,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       builder: (context, appState, _) {
         // 记录批量页面状态
         Future.microtask(() {
-          logger.d('Batch', 'build: isSiteSelected=${appState.isSiteSelected}, currentSite=${appState.currentSite}');
         });
         
         // 检查是否已选择站点
@@ -155,7 +153,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   Widget _buildNoSiteSelected() {
     // 记录用户看到了"请先选择站点"提示
     Future.microtask(() {
-      logger.w('Batch', '当前未选择站点, 显示提示界面');
     });
     
     return Scaffold(
@@ -770,7 +767,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     print('[Batch] crawler=${crawler != null ? "存在" : "null"}, currentSite=${appState.currentSite}');
     
     if (crawler == null) {
-      await logger.e('Batch', '爬虫为空, 请先选择站点');
       setState(() {
         _isLoading = false;
         _status = '请先选择站点';
@@ -781,13 +777,11 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     final videos = <VideoInfo>[];
     for (var p = _pageStart; p <= _pageEnd; p++) {
       print('[Batch] 开始加载第 $p 页');
-      await logger.i('Batch', '网络请求: 加载第 $p 页');
       final list = await crawler.getVideoList(_selectedType, p);
       print('[Batch] 第 $p 页返回 ${list.length} 个视频');
       videos.addAll(list);
     }
     
-    await logger.i('Batch', '加载完成, 共 ${videos.length} 个视频');
     
     setState(() {
       _videos = videos;
@@ -806,7 +800,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     // 获取选中的视频
     final selectedVideos = _videos.where((v) => _selectedIds.contains(v.id)).toList();
     
-    await logger.i('Batch', '添加 ${selectedVideos.length} 个视频到下载队列');
     
     // 添加到下载管理器
     for (final video in selectedVideos) {

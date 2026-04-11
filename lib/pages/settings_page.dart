@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -16,9 +15,6 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClientMixin {
-  Timer? _logRefreshTimer;
-  static String _logContent = '';  // 改为static，跨页面保持
-  
   @override
   bool get wantKeepAlive => true;  // 保持状态
   
@@ -27,42 +23,12 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     super.initState();
     Future.microtask(() {
       context.read<AppState>().init();
-      // 自动开启日志刷新和滚动
-      _startAutoRefresh();
     });
   }
   
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // 每次回到设置页时，都刷新一次日志（从文件读取）
-    _refreshLog();
-  }
-  
-  @override
-  void dispose() {
-    _logRefreshTimer?.cancel();
-    super.dispose();
-  }
-  
-  // 启动自动刷新日志
-  void _startAutoRefresh() {
-    _logRefreshTimer?.cancel();
-    _logRefreshTimer = Timer.periodic(Duration(milliseconds: 500), (_) {
-      _refreshLog();
-    });
-    // 立即刷新一次
-    _refreshLog();
-  }
-  
-  // 刷新日志内容
-  Future<void> _refreshLog() async {
-    final content = await logger.getLogContent();
-    if (mounted) {
-      setState(() {
-        _logContent = content;
-      });
-    }
   }
 
   @override
@@ -259,9 +225,6 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         return;
       }
     } catch (e) {
-      if (logger.enableNetworkLog) {
-        await logger.w('Settings', 'file_picker 不可用: $e');
-      }
     }
     
     // 如果 file_picker 失败，显示手动输入对话框
@@ -558,29 +521,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _refreshLog,
-                      icon: Icon(Icons.refresh, size: 18),
-                      label: Text('刷新日志'),
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
                       onPressed: _exportLog,
                       icon: Icon(Icons.share, size: 18),
                       label: Text('分享日志'),
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _saveLog(appState.downloadDir),
-                      icon: Icon(Icons.save, size: 18),
-                      label: Text('保存日志'),
                     ),
                   ),
                   SizedBox(width: 8),
@@ -596,27 +539,13 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   ),
                 ],
               ),
-              // 日志显示区域（自动刷新滚动）
-              SizedBox(height: 12),
-              Container(
-                constraints: BoxConstraints(minHeight: 200, maxHeight: 350),
-                padding: EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: _LogScrollView(logContent: _logContent),
-              ),
             ],
           ],
         ),
       ),
     );
   }
-  
-  /// 日志滚动视图（自动滚动到最新）
-  static final ScrollController _logScrollController = ScrollController();
-  
+
   Widget _buildAboutSection() {
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -658,27 +587,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       return;
     }
     
-    await Share.share(content, subject: '91Download Debug Log');
-  }
-  
-  Future<void> _saveLog(String downloadDir) async {
-    if (downloadDir.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('下载目录未初始化')),
-      );
-      return;
-    }
-    
-    final savedPath = await logger.saveToDirectory(downloadDir);
-    if (savedPath != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('日志已保存到: $savedPath')),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存日志失败')),
-      );
-    }
+    await Share.share(content, subject: '91Download Network Log');
   }
   
   Future<void> _clearLog() async {
@@ -699,64 +608,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     
     if (confirm == true) {
       await logger.clearLogs();
-      setState(() {
-        _logContent = '';
-      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('日志已清空')),
       );
     }
-  }
-}
-
-/// 日志滚动视图组件（自动滚动到最新内容）
-class _LogScrollView extends StatefulWidget {
-  final String logContent;
-  
-  const _LogScrollView({required this.logContent});
-  
-  @override
-  State<_LogScrollView> createState() => _LogScrollViewState();
-}
-
-class _LogScrollViewState extends State<_LogScrollView> {
-  static final ScrollController _controller = ScrollController();
-  String _lastContent = '';
-  
-  @override
-  void didUpdateWidget(_LogScrollView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // 当日志内容更新时，自动滚动到底部
-    if (widget.logContent != _lastContent && widget.logContent.isNotEmpty) {
-      _lastContent = widget.logContent;
-      // 延迟执行滚动，确保内容已渲染
-      Future.delayed(Duration(milliseconds: 50), () {
-        if (_controller.hasClients) {
-          _controller.animateTo(
-            _controller.position.maxScrollExtent,
-            duration: Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    }
-  }
-  
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-  
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      controller: _controller,
-      reverse: false, // 最新日志在底部
-      child: SelectableText(
-        widget.logContent.isEmpty ? '暂无日志' : widget.logContent,
-        style: TextStyle(fontSize: 10, color: Colors.green, fontFamily: 'monospace'),
-      ),
-    );
   }
 }

@@ -155,7 +155,6 @@ class DownloadManager extends ChangeNotifier {
     if (_crawler == null || _downloadDir.isEmpty) {
       task.status = DownloadStatus.failed;
       task.error = '未配置爬虫或下载目录';
-      await logger.e('DownloadManager', '未配置爬虫或下载目录: crawler=${_crawler != null}, dir=$_downloadDir');
       notifyListeners();
       return;
     }
@@ -167,29 +166,23 @@ class DownloadManager extends ChangeNotifier {
     task.downloadSpeed = 0.0;
     notifyListeners();
     
-    await logger.i('DownloadManager', '开始下载: ${task.video.title}');
-    await logger.d('DownloadManager', '视频URL: ${task.video.url}');
     
     try {
       // 1. 获取视频详情（m3u8地址）
-      await logger.d('DownloadManager', '获取视频详情...');
       final detail = await _crawler!.getVideoDetail(task.video);
       
       if (detail == null || detail.m3u8Url == null) {
         task.status = DownloadStatus.failed;
         task.error = '无法获取视频地址';
         notifyListeners();
-        await logger.e('DownloadManager', '获取视频地址失败');
         return;
       }
       
-      await logger.i('DownloadManager', '获取到 m3u8 地址: ${detail.m3u8Url}');
       
       // 2. 下载视频
       // 清理文件名中的非法字符
       final safeTitle = task.video.title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
       final savePath = '$_downloadDir/$safeTitle.mp4';
-      await logger.i('DownloadManager', '保存路径: $savePath');
       
       // 设置进度回调
       _crawler!.onProgress = (progress, msg) {
@@ -211,19 +204,16 @@ class DownloadManager extends ChangeNotifier {
         task.progress = 1.0;
         task.progressText = '下载完成';
         task.downloadSpeed = 0.0;
-        await logger.i('DownloadManager', '下载完成: ${task.video.title}');
       } else {
         task.status = DownloadStatus.failed;
         task.error = '下载失败';
         task.downloadSpeed = 0.0;
-        await logger.e('DownloadManager', '下载失败');
       }
       
     } catch (e) {
       task.status = DownloadStatus.failed;
       task.error = e.toString();
       task.downloadSpeed = 0.0;
-      await logger.e('DownloadManager', '下载异常: $e');
     }
     
     notifyListeners();

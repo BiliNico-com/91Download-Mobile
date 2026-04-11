@@ -11,9 +11,6 @@ class Logger {
   File? _logFile;
   String? _logPath;
   
-  // 网络日志开关
-  bool enableNetworkLog = true;
-  
   bool get enabled => _enabled;
   String? get logPath => _logPath;
   
@@ -30,13 +27,12 @@ class Logger {
       }
       
       final now = DateTime.now();
-      final fileName = 'debug_${DateFormat('yyyyMMdd_HHmmss').format(now)}.log';
+      final fileName = 'network_${DateFormat('yyyyMMdd_HHmmss').format(now)}.log';
       _logFile = File('${logDir.path}/$fileName');
       _logPath = _logFile!.path;
       
-      await _logFile!.writeAsString('=== 91Download Debug Log ===\n');
-      await _logFile!.writeAsString('启动时间: ${now.toString()}\n', mode: FileMode.append);
-      await _logFile!.writeAsString('设备: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}\n\n', mode: FileMode.append);
+      await _logFile!.writeAsString('=== 91Download Network Log ===\n');
+      await _logFile!.writeAsString('启动时间: ${now.toString()}\n\n', mode: FileMode.append);
     } catch (e) {
       print('Logger init failed: $e');
     }
@@ -50,13 +46,12 @@ class Logger {
     _enabled = enable;
   }
   
-  // 写入日志
-  Future<void> log(String tag, String message, {String level = 'INFO', bool isNetwork = false}) async {
-    // 网络日志检查开关
-    if (isNetwork && !enableNetworkLog) return;
+  // 写入网络日志
+  Future<void> log(String tag, String message) async {
+    if (!_enabled) return;
     
     final timestamp = DateFormat('HH:mm:ss.SSS').format(DateTime.now());
-    final line = '[$timestamp][$level][$tag] $message\n';
+    final line = '[$timestamp][$tag] $message\n';
     
     // 控制台输出
     print(line.trim());
@@ -71,37 +66,12 @@ class Logger {
     }
   }
   
-  // 便捷方法 - 普通日志
-  Future<void> d(String tag, String message) => log(tag, message, level: 'DEBUG');
-  Future<void> i(String tag, String message) => log(tag, message, level: 'INFO');
-  Future<void> w(String tag, String message) => log(tag, message, level: 'WARN');
-  Future<void> e(String tag, String message) => log(tag, message, level: 'ERROR');
-  
-  // 便捷方法 - 网络日志
-  Future<void> network(String tag, String message, {String level = 'INFO'}) => 
-      log(tag, message, level: level, isNetwork: true);
-  
   // 获取日志内容
   Future<String> getLogContent() async {
     if (_logFile == null || !await _logFile!.exists()) {
       return '暂无日志';
     }
     return await _logFile!.readAsString();
-  }
-  
-  // 获取所有日志文件
-  Future<List<File>> getAllLogFiles() async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final logDir = Directory('${dir.path}/logs');
-      if (!await logDir.exists()) return [];
-      
-      final files = await logDir.list().where((f) => f.path.endsWith('.log')).cast<File>().toList();
-      files.sort((a, b) => b.path.compareTo(a.path)); // 最新的在前
-      return files;
-    } catch (e) {
-      return [];
-    }
   }
   
   // 清空日志
@@ -122,16 +92,14 @@ class Logger {
   // 保存日志到指定目录
   Future<String?> saveToDirectory(String targetDir) async {
     if (_logFile == null || !await _logFile!.exists()) {
-      print('Logger: 日志文件不存在');
       return null;
     }
     
     try {
       final content = await _logFile!.readAsString();
       final now = DateTime.now();
-      final fileName = '91Download_log_${DateFormat('yyyyMMdd_HHmmss').format(now)}.txt';
+      final fileName = 'network_log_${DateFormat('yyyyMMdd_HHmmss').format(now)}.txt';
       
-      // 确保目标目录存在
       final dir = Directory(targetDir);
       if (!await dir.exists()) {
         await dir.create(recursive: true);
@@ -139,10 +107,9 @@ class Logger {
       
       final targetFile = File('$targetDir/$fileName');
       await targetFile.writeAsString(content);
-      print('Logger: 日志已保存到 ${targetFile.path}');
       return targetFile.path;
     } catch (e) {
-      print('Save log to directory failed: $e');
+      print('Save log failed: $e');
       return null;
     }
   }
