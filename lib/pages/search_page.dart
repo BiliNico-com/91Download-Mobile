@@ -565,15 +565,40 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     ),
                   ),
                 ),
+                // 时长标签
+                if (video.duration != null)
+                  Positioned(
+                    bottom: 4,
+                    right: 4,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        video.duration!,
+                        style: TextStyle(color: Colors.white, fontSize: 10),
+                      ),
+                    ),
+                  ),
+                // 选中标记
                 if (selected)
                   Positioned(
-                    top: 8,
-                    right: 8,
-                    child: Icon(Icons.check_circle, color: Colors.blue),
+                    top: 4,
+                    left: 4,
+                    child: Container(
+                      padding: EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.blue,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.check, color: Colors.white, size: 16),
+                    ),
                   ),
               ],
-            ),
-          ),
+            )
+          )
         );
       },
     );

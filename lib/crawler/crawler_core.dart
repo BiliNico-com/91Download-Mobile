@@ -265,13 +265,18 @@ class CrawlerCore {
       if (seenIds.contains(videoId)) continue;
       seenIds.add(videoId);
       
-      // 提取封面
+      // 提取封面（支持HTML实体编码 &#39; 和普通引号）
       String? cover;
-      final coverMatch = RegExp(r'''background-image:\s*url\(['"]([^'"]+)['"]\)''').firstMatch(container);
+      final coverMatch = RegExp(r'background-image:\s*url\(([^)]+)\)').firstMatch(container);
       if (coverMatch != null) {
-        cover = coverMatch.group(1)!;
-        if (!cover.startsWith('http')) {
-          cover = '$baseUrl/$cover';
+        var coverUrl = coverMatch.group(1)!.trim();
+        // 去掉引号（包括HTML实体编码）
+        coverUrl = coverUrl.replaceAll('&#39;', '').replaceAll('&apos;', '');
+        coverUrl = coverUrl.replaceAll(RegExp(r'''['"]'''), '');
+        if (coverUrl.startsWith('http')) {
+          cover = coverUrl;
+        } else if (coverUrl.isNotEmpty) {
+          cover = '$baseUrl/$coverUrl';
         }
       }
       
@@ -318,30 +323,45 @@ class CrawlerCore {
     
     // 策略2: 简单链接格式（兜底）
     if (videos.isEmpty) {
+      // 支持HTML实体编码的封面URL
       final pattern2 = RegExp(
-        r'''<a[^>]*href="(video-(\d+)\.htm)"[^>]*>\s*<div[^>]*style="[^"]*background-image:\s*url\(['"]([^'"]+)['"]\)[^"]*"\s*title=\s*"([^"]*)"''',
+        r'''<a[^>]*href="[^"]*video-(\d+)\.htm[^"]*"[^>]*>.*?background-image:\s*url\(([^)]+)\)''',
         caseSensitive: false,
+        dotAll: true,
       );
       
       for (final match in pattern2.allMatches(html)) {
-        final videoHref = match.group(1)!;
-        final videoId = match.group(2)!;
-        var cover = match.group(3)!;
-        final title = match.group(4)!.trim();
+        final videoId = match.group(1)!;
+        var coverUrl = match.group(2)!.trim();
         
-        if (!cover.startsWith('http')) {
-          cover = '$baseUrl/$cover';
+        // 去掉引号和HTML实体编码
+        coverUrl = coverUrl.replaceAll('&#39;', '').replaceAll('&apos;', '');
+        coverUrl = coverUrl.replaceAll(RegExp(r'''['"]'''), '');
+        
+        String? cover;
+        if (coverUrl.startsWith('http')) {
+          cover = coverUrl;
+        } else if (coverUrl.isNotEmpty) {
+          cover = '$baseUrl/$coverUrl';
         }
         
         if (seenIds.contains(videoId)) continue;
         seenIds.add(videoId);
         
-        // 尝试从上下文提取时长和作者
-        String? duration;
-        String? author;
+        // 提取标题
+        String? title;
         final pos = match.end;
         final blockEnd = pos + 500 < html.length ? pos + 500 : html.length;
         final block = html.substring(pos, blockEnd);
+        final titleMatch = RegExp(r'title="([^"]+)"').firstMatch(html.substring(match.start, match.end + 500));
+        if (titleMatch != null) {
+          title = titleMatch.group(1)!.trim();
+        }
+        if (title == null) continue;
+        
+        // 尝试从上下文提取时长和作者
+        String? duration;
+        String? author;
         
         final durationMatch = RegExp(r'<var[^>]*class="[^"]*duration[^"]*"[^>]*>([^<]+)</var>').firstMatch(block);
         if (durationMatch != null) {
@@ -355,7 +375,7 @@ class CrawlerCore {
         
         videos.add(VideoInfo(
           id: videoId,
-          url: '$baseUrl/$videoHref',
+          url: '$baseUrl/video-$videoId.htm',
           title: title,
           cover: cover,
           author: author,
