@@ -174,13 +174,21 @@ class _SearchPageState extends State<SearchPage> {
   Future<void> _search() async {
     if (_keywordController.text.isEmpty) return;
     
+    final appState = context.read<AppState>();
+    final crawler = appState.crawler;
+    if (crawler == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('请先在设置页选择站点')),
+      );
+      return;
+    }
+    
     setState(() {
       _isLoading = true;
       _results.clear();
     });
     
-    final appState = context.read<AppState>();
-    final results = await appState.crawler.searchVideos(_keywordController.text);
+    final results = await crawler.searchVideos(_keywordController.text);
     
     setState(() {
       _results = results;

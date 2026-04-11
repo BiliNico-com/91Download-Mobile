@@ -65,7 +65,17 @@ class _HistoryPageState extends State<HistoryPage> {
 
   Future<void> _loadHistory() async {
     final appState = context.read<AppState>();
-    final history = await appState.crawler.getDownloadHistory();
+    final crawler = appState.crawler;
+    
+    if (crawler == null) {
+      setState(() {
+        _history = [];
+        _isLoading = false;
+      });
+      return;
+    }
+    
+    final history = await crawler.getDownloadHistory();
     
     setState(() {
       _history = history;
