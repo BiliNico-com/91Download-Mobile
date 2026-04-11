@@ -510,11 +510,14 @@ class CrawlerCore {
             final idMatch = RegExp(r'/(\d+)\.jpe?g').firstMatch(video.cover!);
             if (idMatch != null) {
               videoId = idMatch.group(1);
+              await logger.log('Crawler', '从封面提取视频ID: $videoId');
             }
           }
           
           final sourcePattern = RegExp(r'''<source[^>]+src=["']([^"']+)["']''', caseSensitive: false);
           final sourceMatches = sourcePattern.allMatches(html).toList();
+          
+          await logger.log('Crawler', '找到 ${sourceMatches.length} 个source标签');
           
           // 优先匹配视频ID的source，其次取最后一个source（通常第一个是广告）
           for (var i = 0; i < sourceMatches.length; i++) {
@@ -526,12 +529,14 @@ class CrawlerCore {
               if (videoId != null && src.contains(videoId)) {
                 videoUrl = src;
                 extractionMethod = 'source标签(ID匹配)';
+                await logger.log('Crawler', 'source[$i] ID匹配成功: $src');
                 break;  // 找到匹配的，立即退出
               }
               // 否则记录为候选（取最后一个）
               if (videoUrl == null || i == sourceMatches.length - 1) {
                 videoUrl = src;
                 extractionMethod = 'source标签';
+                await logger.log('Crawler', 'source[$i] 作为候选: $src');
               }
             }
           }
@@ -632,6 +637,10 @@ class CrawlerCore {
           }
         }
         
+        await logger.log('Crawler', '视频详情获取成功: ID=${video.id}');
+        await logger.log('Crawler', '封面URL: ${video.cover}');
+        await logger.log('Crawler', '视频URL: $videoUrl');
+        await logger.log('Crawler', '提取方式: $extractionMethod');
         
         return VideoInfo(
           id: video.id,

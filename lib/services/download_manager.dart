@@ -166,23 +166,30 @@ class DownloadManager extends ChangeNotifier {
     task.downloadSpeed = 0.0;
     notifyListeners();
     
+    await logger.log('Download', '开始下载: ${task.video.title}');
+    await logger.log('Download', '视频ID: ${task.video.id}, 封面: ${task.video.cover}');
     
     try {
       // 1. 获取视频详情（m3u8地址）
+      await logger.log('Download', '获取视频详情...');
       final detail = await _crawler!.getVideoDetail(task.video);
       
       if (detail == null || detail.m3u8Url == null) {
+        await logger.log('Download', '获取视频地址失败: detail=$detail');
         task.status = DownloadStatus.failed;
         task.error = '无法获取视频地址';
         notifyListeners();
         return;
       }
       
+      await logger.log('Download', '获取到视频地址: ${detail.m3u8Url}');
       
       // 2. 下载视频
       // 清理文件名中的非法字符
       final safeTitle = task.video.title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
       final savePath = '$_downloadDir/$safeTitle.mp4';
+      
+      await logger.log('Download', '保存路径: $savePath');
       
       // 设置进度回调
       _crawler!.onProgress = (progress, msg) {
@@ -199,18 +206,21 @@ class DownloadManager extends ChangeNotifier {
       final success = await _crawler!.downloadVideo(detail, savePath);
       
       if (success) {
+        await logger.log('Download', '下载完成: ${task.video.title}');
         task.status = DownloadStatus.completed;
         task.filePath = savePath;
         task.progress = 1.0;
         task.progressText = '下载完成';
         task.downloadSpeed = 0.0;
       } else {
+        await logger.log('Download', '下载失败: ${task.video.title}');
         task.status = DownloadStatus.failed;
         task.error = '下载失败';
         task.downloadSpeed = 0.0;
       }
       
     } catch (e) {
+      await logger.log('Download', '下载异常: $e');
       task.status = DownloadStatus.failed;
       task.error = e.toString();
       task.downloadSpeed = 0.0;
