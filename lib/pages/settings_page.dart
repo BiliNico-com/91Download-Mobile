@@ -668,17 +668,14 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       return;
     }
     
-    print('准备保存日志到: $downloadDir');
-    print('日志文件路径: ${logger.logPath}');
-    
-    final savedPath = await logger.saveToDirectory(downloadDir);
+    final (savedPath, error) = await logger.saveToDirectoryWithError(downloadDir);
     if (savedPath != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('日志已保存到: $savedPath')),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存日志失败: $downloadDir')),
+        SnackBar(content: Text('保存失败: $error')),
       );
     }
   }

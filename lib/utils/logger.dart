@@ -168,11 +168,10 @@ class Logger {
     }
   }
   
-  // 保存日志到指定目录
-  Future<String?> saveToDirectory(String targetDir) async {
+  // 保存日志到指定目录，返回 (路径, 错误信息)
+  Future<(String?, String?)> saveToDirectoryWithError(String targetDir) async {
     if (_logFile == null || !await _logFile!.exists()) {
-      print('Save log failed: log file not found, path=$_logPath');
-      return null;
+      return (null, '日志文件不存在: ${_logPath ?? "未初始化"}');
     }
     
     try {
@@ -180,12 +179,9 @@ class Logger {
       final now = DateTime.now();
       final fileName = 'network_log_${DateFormat('yyyyMMdd_HHmmss').format(now)}.txt';
       
-      print('Saving log to: $targetDir');
-      
       // 确保目录存在
       final dir = Directory(targetDir);
       if (!await dir.exists()) {
-        print('Creating directory: $targetDir');
         await dir.create(recursive: true);
       }
       
@@ -195,12 +191,9 @@ class Logger {
           : '$targetDir/$fileName';
       final targetFile = File(targetPath);
       await targetFile.writeAsString(content);
-      print('Log saved to: $targetPath');
-      return targetFile.path;
-    } catch (e, stackTrace) {
-      print('Save log failed: $e');
-      print('StackTrace: $stackTrace');
-      return null;
+      return (targetFile.path, null);
+    } catch (e) {
+      return (null, '写入失败: $e');
     }
   }
 }
