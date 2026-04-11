@@ -3,7 +3,7 @@ import 'batch_page.dart';
 import 'search_page.dart';
 import 'history_page.dart';
 import 'settings_page.dart';
-import 'utils/logger.dart';
+import '../utils/logger.dart';
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
