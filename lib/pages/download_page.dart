@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'dart:io';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
-import '../models/video_info.dart';
+import '../models/video_info.dart' show VideoInfo;
 import '../utils/logger.dart';
 
 class DownloadPage extends StatefulWidget {

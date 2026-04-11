@@ -410,8 +410,8 @@ class CrawlerCore {
       // 策略3: 从 JavaScript 变量提取
       if (m3u8Url == null) {
         final jsPatterns = [
-          r'(?:video_url|sourceUrl|videoUrl|m3u8_url|file)\s*=\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
-          r'(?:video_url|sourceUrl|videoUrl|m3u8_url|file)\s*=\s*["\'](https?://[^"\']+)["\']',
+          r'''(?:video_url|sourceUrl|videoUrl|m3u8_url|file)\s*=\s*["']([^"']+\.m3u8[^"']*)["']''',
+          r'''(?:video_url|sourceUrl|videoUrl|m3u8_url|file)\s*=\s*["'](https?://[^"']+)["']''',
         ];
         for (final pattern in jsPatterns) {
           final match = RegExp(pattern, caseSensitive: false).firstMatch(html);
