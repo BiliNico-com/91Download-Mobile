@@ -320,6 +320,9 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   }
 
   Widget _buildVideoGrid() {
+    final appState = context.read<AppState>();
+    final isListMode = appState.videoDisplayMode == 'list';
+    
     if (_isLoading && _videos.isEmpty) {
       return Center(child: CircularProgressIndicator());
     }
@@ -337,6 +340,107 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       );
     }
     
+    // 根据模式选择显示方式
+    return isListMode ? _buildListView() : _buildGridView();
+  }
+  
+  /// 列表模式
+  Widget _buildListView() {
+    return ListView.builder(
+      controller: _scrollController,
+      padding: EdgeInsets.all(8),
+      itemCount: _videos.length + (_hasMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index == _videos.length) {
+          return Center(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+        
+        final video = _videos[index];
+        final isSelected = _selectedIds.contains(video.id);
+        
+        return GestureDetector(
+          onTap: () async {
+            final action = isSelected ? '取消选择' : '选择';
+            await logger.d('Batch', 'UI操作: $action视频 [${video.title}]');
+            setState(() {
+              if (isSelected) {
+                _selectedIds.remove(video.id);
+              } else {
+                _selectedIds.add(video.id);
+              }
+            });
+          },
+          child: Card(
+            color: isSelected ? Colors.blue.withOpacity(0.2) : null,
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  // 缩略图
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: video.cover != null
+                      ? Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 120, height: 80,
+                            color: Colors.grey[800],
+                            child: Icon(Icons.play_circle, size: 32, color: Colors.white54),
+                          ))
+                      : Container(
+                          width: 120, height: 80,
+                          color: Colors.grey[800],
+                          child: Icon(Icons.play_circle, size: 32, color: Colors.white54),
+                        ),
+                  ),
+                  SizedBox(width: 12),
+                  // 信息
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          video.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                        ),
+                        if (video.author != null && video.author!.isNotEmpty) ...[
+                          SizedBox(height: 4),
+                          Text(
+                            '作者: ${video.author}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                        if (video.duration != null) ...[
+                          SizedBox(height: 4),
+                          Text(
+                            '时长: ${video.duration}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  // 选中图标
+                  isSelected 
+                    ? Icon(Icons.check_circle, color: Colors.blue)
+                    : Icon(Icons.circle_outlined, color: Colors.grey),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+  
+  /// 大图模式
+  Widget _buildGridView() {
     return GridView.builder(
       controller: _scrollController,
       padding: EdgeInsets.all(8),
@@ -379,24 +483,62 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: video.cover != null
-                    ? Image.network(video.cover!, fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          color: Colors.grey[800],
-                          child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
-                        ))
-                    : Container(
-                        color: Colors.grey[800],
-                        child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
+                  child: Stack(
+                    children: [
+                      // 封面
+                      Positioned.fill(
+                        child: video.cover != null
+                          ? Image.network(video.cover!, fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                color: Colors.grey[800],
+                                child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
+                              ))
+                          : Container(
+                              color: Colors.grey[800],
+                              child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
+                            ),
                       ),
+                      // 时长标签
+                      if (video.duration != null)
+                        Positioned(
+                          bottom: 4,
+                          right: 4,
+                          child: Container(
+                            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black87,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              video.duration!,
+                              style: TextStyle(color: Colors.white, fontSize: 10),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
                 Padding(
                   padding: EdgeInsets.all(8),
-                  child: Text(
-                    video.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        video.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      if (video.author != null && video.author!.isNotEmpty) ...[
+                        SizedBox(height: 2),
+                        Text(
+                          video.author!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 10, color: Colors.grey),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ],

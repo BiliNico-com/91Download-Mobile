@@ -398,6 +398,65 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               },
             ),
             Divider(),
+            // 视频显示模式切换
+            Row(
+              children: [
+                Icon(Icons.view_module, size: 20, color: Colors.blue),
+                SizedBox(width: 8),
+                Text('视频显示模式', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ChoiceChip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.grid_view, size: 16),
+                        SizedBox(width: 4),
+                        Text('大图'),
+                      ],
+                    ),
+                    selected: appState.videoDisplayMode == 'grid',
+                    onSelected: (selected) {
+                      if (selected) {
+                        appState.setVideoDisplayMode('grid');
+                        logger.i('Settings', 'UI操作: 切换到大图模式');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('已切换到大图模式')),
+                        );
+                      }
+                    },
+                  ),
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: ChoiceChip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.list, size: 16),
+                        SizedBox(width: 4),
+                        Text('列表'),
+                      ],
+                    ),
+                    selected: appState.videoDisplayMode == 'list',
+                    onSelected: (selected) {
+                      if (selected) {
+                        appState.setVideoDisplayMode('list');
+                        logger.i('Settings', 'UI操作: 切换到列表模式');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('已切换到列表模式')),
+                        );
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            Divider(),
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.info_outline, color: Colors.grey),

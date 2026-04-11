@@ -518,10 +518,16 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
   
   String _formatTitle(VideoInfo video) {
-    if (video.title.length > 30) {
-      return '${video.title.substring(0, 30)}...';
+    String title = video.title;
+    // 添加作者信息
+    if (video.author != null && video.author!.isNotEmpty) {
+      title = '$title - ${video.author}';
     }
-    return video.title;
+    // 截断过长的标题
+    if (title.length > 40) {
+      return '${title.substring(0, 40)}...';
+    }
+    return title;
   }
   
   String _formatTime(DateTime? time) {

@@ -174,10 +174,92 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   
   /// 构建视频搜索结果
   Widget _buildVideoResults() {
+    final appState = context.read<AppState>();
+    final isListMode = appState.videoDisplayMode == 'list';
+    
     if (_results.isEmpty) {
       return Center(child: Text('输入关键词搜索', style: TextStyle(color: Colors.grey)));
     }
     
+    return isListMode ? _buildVideoListResults() : _buildVideoGridResults();
+  }
+  
+  /// 列表模式显示视频结果
+  Widget _buildVideoListResults() {
+    return ListView.builder(
+      padding: EdgeInsets.all(8),
+      itemCount: _results.length,
+      itemBuilder: (context, index) {
+        final video = _results[index];
+        final selected = _selectedIds.contains(video.id);
+        
+        return GestureDetector(
+          onTap: () => _toggleSelection(video.id),
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  // 缩略图
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: video.cover != null
+                      ? Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 120, height: 80,
+                            color: Colors.grey[800],
+                            child: Icon(Icons.video_file, size: 32, color: Colors.white54),
+                          ))
+                      : Container(
+                          width: 120, height: 80,
+                          color: Colors.grey[800],
+                          child: Icon(Icons.video_file, size: 32, color: Colors.white54),
+                        ),
+                  ),
+                  SizedBox(width: 12),
+                  // 信息
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          video.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                        ),
+                        if (video.author != null && video.author!.isNotEmpty) ...[
+                          SizedBox(height: 4),
+                          Text(
+                            '作者: ${video.author}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                        if (video.duration != null) ...[
+                          SizedBox(height: 4),
+                          Text(
+                            '时长: ${video.duration}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  // 选中图标
+                  selected 
+                    ? Icon(Icons.check_circle, color: Colors.blue)
+                    : Icon(Icons.circle_outlined, color: Colors.grey),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+  
+  /// 大图模式显示视频结果
+  Widget _buildVideoGridResults() {
     return GridView.builder(
       padding: EdgeInsets.all(8),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -212,11 +294,24 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                         end: Alignment.topCenter,
                       ),
                     ),
-                    child: Text(
-                      video.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: Colors.white),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          video.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: Colors.white),
+                        ),
+                        if (video.author != null && video.author!.isNotEmpty)
+                          Text(
+                            video.author!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 10, color: Colors.white70),
+                          ),
+                      ],
                     ),
                   ),
                 ),
