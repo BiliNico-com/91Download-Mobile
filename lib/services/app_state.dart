@@ -46,14 +46,26 @@ class AppState extends ChangeNotifier {
   CrawlerCore? _crawler;
   
   // 下载管理器
-  final DownloadManager downloadManager = DownloadManager();
+  late final DownloadManager _downloadManager;
+  
+  DownloadManager get downloadManager => _downloadManager;
+  
+  AppState() {
+    // 监听下载管理器的变化并转发通知
+    _downloadManager = DownloadManager()..addListener(_onDownloadManagerChanged);
+  }
+  
+  void _onDownloadManagerChanged() {
+    // 转发下载管理器的通知
+    notifyListeners();
+  }
 
   CrawlerCore? get crawler {
     if (currentSite == null) return null;
     _crawler ??= CrawlerCore(baseUrl: currentSite!);
     // 设置下载管理器
     if (_crawler != null && downloadDir.isNotEmpty) {
-      downloadManager.setup(_crawler!, downloadDir);
+      _downloadManager.setup(_crawler!, downloadDir);
     }
     return _crawler;
   }
@@ -218,5 +230,11 @@ class AppState extends ChangeNotifier {
   void togglePrivacyMode() {
     privacyMode = !privacyMode;
     notifyListeners();
+  }
+  
+  @override
+  void dispose() {
+    _downloadManager.removeListener(_onDownloadManagerChanged);
+    super.dispose();
   }
 }

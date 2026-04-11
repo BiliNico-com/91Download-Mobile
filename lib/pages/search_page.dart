@@ -168,23 +168,61 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               padding: EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  // 排序选择
-                  Text('排序: ', style: TextStyle(fontSize: 12)),
-                  DropdownButton<String>(
-                    value: _sortBy,
-                    isDense: true,
-                    items: [
-                      DropdownMenuItem(value: 'default', child: Text('默认')),
-                      DropdownMenuItem(value: 'new', child: Text('最新')),
-                      DropdownMenuItem(value: 'hot', child: Text('最热')),
-                    ],
-                    onChanged: (v) {
-                      if (v != null && v != _sortBy) {
-                        setState(() => _sortBy = v);
-                        if (_lastKeyword.isNotEmpty) {
-                          _search();
-                        }
+                  // 全选按钮
+                  if (_results.isNotEmpty)
+                    TextButton(
+                      onPressed: _toggleAll,
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: Size(0, 32),
+                      ),
+                      child: Text(_selectedIds.length == _results.length ? '取消全选' : '全选'),
+                    ),
+                  Spacer(),
+                  // 就绪状态
+                  if (_selectedIds.isNotEmpty)
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        '已选 ${_selectedIds.length} 个',
+                        style: TextStyle(fontSize: 12, color: Colors.blue),
+                      ),
+                    ),
+                  SizedBox(width: 8),
+                  // 排序选择（仅 original CMS 支持）
+                  Consumer<AppState>(
+                    builder: (context, appState, _) {
+                      final siteType = appState.crawler?.siteType ?? 'original';
+                      if (siteType == 'porn91') {
+                        return SizedBox.shrink();  // porn91 不支持排序
                       }
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('排序: ', style: TextStyle(fontSize: 12)),
+                          DropdownButton<String>(
+                            value: _sortBy,
+                            isDense: true,
+                            items: [
+                              DropdownMenuItem(value: 'default', child: Text('默认')),
+                              DropdownMenuItem(value: 'new', child: Text('最新')),
+                              DropdownMenuItem(value: 'hot', child: Text('最热')),
+                            ],
+                            onChanged: (v) {
+                              if (v != null && v != _sortBy) {
+                                setState(() => _sortBy = v);
+                                if (_lastKeyword.isNotEmpty) {
+                                  _search();
+                                }
+                              }
+                            },
+                          ),
+                        ],
+                      );
                     },
                   ),
                   Spacer(),
@@ -235,16 +273,27 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                         ? _buildAuthorResults()
                         : _buildVideoResults(),
                 
-                // 回顶部按钮
+                // 悬浮下载按钮
+                if (_selectedIds.isNotEmpty)
+                  Positioned(
+                    bottom: 16,
+                    right: 16,
+                    child: FloatingActionButton.extended(
+                      onPressed: _download,
+                      icon: Icon(Icons.download),
+                      label: Text('下载 (${_selectedIds.length})'),
+                    ),
+                  ),
+                
+                // 回顶部按钮（固定在左下角）
                 Consumer<AppState>(
                   builder: (context, appState, _) {
                     if (!_showBackToTop || !appState.showBackToTop) {
                       return SizedBox.shrink();
                     }
                     return Positioned(
-                      bottom: 80,
-                      left: appState.backToTopPosition == 'left' ? 16 : null,
-                      right: appState.backToTopPosition == 'right' ? 16 : null,
+                      bottom: 16,
+                      left: 16,
                       child: FloatingActionButton(
                         mini: true,
                         onPressed: _scrollToTop,
@@ -253,15 +302,12 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     );
                   },
                 ),
-                // 悬浮页码显示（在回顶部上方）
+                // 悬浮页码显示（左上角）
                 if (_showPageIndicator && _currentPage > 0 && !_isAuthorMode)
-                  Consumer<AppState>(
-                    builder: (context, appState, _) {
-                      return Positioned(
-                        bottom: 140,
-                        left: appState.backToTopPosition == 'left' ? 16 : null,
-                        right: appState.backToTopPosition == 'right' ? 16 : null,
-                        child: Container(
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Container(
                       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         color: Colors.black87,
@@ -272,33 +318,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                         style: TextStyle(color: Colors.white, fontSize: 12),
                       ),
                     ),
-                      );
-                    },
                   ),
-              ],
             ),
           ),
-          
-          // 底部操作栏
-          if (_results.isNotEmpty)
-            Container(
-              padding: EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  // 只有选中了视频才显示全选按钮
-                  if (_selectedIds.isNotEmpty)
-                    TextButton(
-                      onPressed: _toggleAll,
-                      child: Text('全选'),
-                    ),
-                  Spacer(),
-                  FilledButton(
-                    onPressed: _selectedIds.isEmpty ? null : _download,
-                    child: Text('下载 (${_selectedIds.length})'),
-                  ),
-                ],
-              ),
-            ),
         ],
       ),
     );

@@ -42,6 +42,9 @@ class CrawlerCore {
     _siteType = CrawlerConfig.detectSiteType(baseUrl);
     print('[Crawler] 站点类型检测: domain=${Uri.parse(baseUrl).host}, type=$_siteType');
   }
+  
+  /// 获取站点类型
+  String get siteType => _siteType;
 
   void _initDio() {
     _dio.options = BaseOptions(
