@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -13,7 +14,9 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  Timer? _logRefreshTimer;
   String _logContent = '';
+  bool _autoRefresh = false;
   
   @override
   void initState() {
@@ -21,6 +24,40 @@ class _SettingsPageState extends State<SettingsPage> {
     Future.microtask(() {
       context.read<AppState>().init();
     });
+  }
+  
+  @override
+  void dispose() {
+    _logRefreshTimer?.cancel();
+    super.dispose();
+  }
+  
+  // 启动自动刷新日志
+  void _startAutoRefresh() {
+    _autoRefresh = true;
+    _logRefreshTimer?.cancel();
+    _logRefreshTimer = Timer.periodic(Duration(milliseconds: 500), (_) {
+      _refreshLog();
+    });
+    // 立即刷新一次
+    _refreshLog();
+  }
+  
+  // 停止自动刷新
+  void _stopAutoRefresh() {
+    _autoRefresh = false;
+    _logRefreshTimer?.cancel();
+    _logRefreshTimer = null;
+  }
+  
+  // 刷新日志内容
+  Future<void> _refreshLog() async {
+    final content = await logger.getLogContent();
+    if (mounted) {
+      setState(() {
+        _logContent = content;
+      });
+    }
   }
 
   @override
@@ -227,13 +264,33 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             if (appState.debugMode) ...[
               SizedBox(height: 8),
+              // 实时日志开关
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('实时日志'),
+                subtitle: Text(_autoRefresh ? '每0.5秒自动刷新' : '点击下方按钮刷新'),
+                value: _autoRefresh,
+                onChanged: (v) {
+                  if (v) {
+                    _startAutoRefresh();
+                    logger.i('Settings', 'UI操作: 开启实时日志');
+                  } else {
+                    _stopAutoRefresh();
+                    logger.i('Settings', 'UI操作: 关闭实时日志');
+                  }
+                },
+              ),
+              SizedBox(height: 8),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _loadLog,
-                      icon: Icon(Icons.visibility, size: 18),
-                      label: Text('查看日志'),
+                      onPressed: () async {
+                        await _refreshLog();
+                        await logger.i('Settings', 'UI操作: 手动刷新日志');
+                      },
+                      icon: Icon(Icons.refresh, size: 18),
+                      label: Text('刷新日志'),
                     ),
                   ),
                   SizedBox(width: 8),
@@ -269,23 +326,23 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ],
               ),
-              if (_logContent.isNotEmpty) ...[
-                SizedBox(height: 12),
-                Container(
-                  height: 200,
-                  padding: EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: SingleChildScrollView(
-                    child: Text(
-                      _logContent,
-                      style: TextStyle(fontSize: 10, color: Colors.green, fontFamily: 'monospace'),
-                    ),
+              // 日志显示区域
+              SizedBox(height: 12),
+              Container(
+                constraints: BoxConstraints(minHeight: 100, maxHeight: 300),
+                padding: EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: SingleChildScrollView(
+                  reverse: true, // 最新日志在底部
+                  child: Text(
+                    _logContent.isEmpty ? '暂无日志，开启实时日志或点击刷新' : _logContent,
+                    style: TextStyle(fontSize: 10, color: Colors.green, fontFamily: 'monospace'),
                   ),
                 ),
-              ],
+              ),
             ],
           ],
         ),
@@ -311,21 +368,13 @@ class _SettingsPageState extends State<SettingsPage> {
             SizedBox(height: 12),
             Text('91Download 移动端', style: TextStyle(fontSize: 14)),
             SizedBox(height: 4),
-            Text('版本: v1.0.2', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            Text('版本: v1.0.3', style: TextStyle(fontSize: 12, color: Colors.grey)),
             SizedBox(height: 8),
             Text('视频下载工具移动端版本', style: TextStyle(fontSize: 12, color: Colors.grey)),
           ],
         ),
       ),
     );
-  }
-  
-  Future<void> _loadLog() async {
-    await logger.i('Settings', 'UI操作: 点击查看日志');
-    final content = await logger.getLogContent();
-    setState(() {
-      _logContent = content;
-    });
   }
   
   Future<void> _exportLog() async {
