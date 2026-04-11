@@ -28,6 +28,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   // 滚动控制
   final ScrollController _scrollController = ScrollController();
   bool _showBackToTop = false;
+  bool _showSettings = true;  // 是否显示设置区域
+  double _lastScrollOffset = 0;  // 上次滚动位置
   
   @override
   bool get wantKeepAlive => true;  // 保持页面状态
@@ -51,6 +53,21 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     if (showBtn != _showBackToTop) {
       setState(() => _showBackToTop = showBtn);
     }
+    
+    // 滚动时隐藏/显示设置区域
+    final currentOffset = _scrollController.offset;
+    if (currentOffset > _lastScrollOffset && currentOffset > 100) {
+      // 向下滚动，隐藏设置区域
+      if (_showSettings) {
+        setState(() => _showSettings = false);
+      }
+    } else if (currentOffset < _lastScrollOffset || currentOffset < 100) {
+      // 向上滚动或接近顶部，显示设置区域
+      if (!_showSettings) {
+        setState(() => _showSettings = true);
+      }
+    }
+    _lastScrollOffset = currentOffset;
     
     // 自动加载更多
     if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
@@ -205,29 +222,16 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
             children: [
               Column(
                 children: [
-                  _buildSettings(),
+                  // 设置区域（可收缩）
+                  AnimatedContainer(
+                    duration: Duration(milliseconds: 200),
+                    height: _showSettings ? null : 0,
+                    child: _showSettings ? _buildSettings() : SizedBox.shrink(),
+                  ),
                   Expanded(child: _buildVideoGrid()),
                   _buildBottomBar(),
                 ],
               ),
-              // 悬浮页码显示
-              if (_showBackToTop && _currentPage > 0)
-                Positioned(
-                  bottom: appState.backToTopPosition == 'left' ? 16 : 80,
-                  left: appState.backToTopPosition == 'left' ? null : 16,
-                  right: appState.backToTopPosition == 'left' ? 80 : null,
-                  child: Container(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      '第 $_currentPage 页',
-                      style: TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                  ),
-                ),
               // 回顶部按钮
               if (_showBackToTop && appState.showBackToTop)
                 Positioned(
@@ -238,6 +242,24 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     mini: true,
                     onPressed: _scrollToTop,
                     child: Icon(Icons.arrow_upward),
+                  ),
+                ),
+              // 悬浮页码显示（在回顶部上方）
+              if (_showBackToTop && _currentPage > 0)
+                Positioned(
+                  bottom: 140,
+                  left: appState.backToTopPosition == 'left' ? 16 : null,
+                  right: appState.backToTopPosition == 'right' ? 16 : null,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      '第 $_currentPage 页',
+                      style: TextStyle(color: Colors.white, fontSize: 12),
+                    ),
                   ),
                 ),
             ],
@@ -415,10 +437,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                               if (appState.privacyMode)
                                 Positioned.fill(
                                   child: Container(
-                                    color: Colors.black.withOpacity(0.8),
-                                    child: Center(
-                                      child: Icon(Icons.lock, color: Colors.white54, size: 24),
-                                    ),
+                                    color: Colors.black.withOpacity(0.95),
                                   ),
                                 ),
                             ],
@@ -427,28 +446,38 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     ),
                   ),
                   SizedBox(width: 12),
-                  // 信息
+                  // 信息 - 按图3标准：第一行视频名称+作者，第二行时长
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          video.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                        // 第一行：视频名称 - 作者
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                video.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                              ),
+                            ),
+                            if (video.author != null && video.author!.isNotEmpty) ...[
+                              SizedBox(width: 8),
+                              Text(
+                                '- ${video.author}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 12, color: Colors.grey),
+                              ),
+                            ],
+                          ],
                         ),
-                        if (video.author != null && video.author!.isNotEmpty) ...[
-                          SizedBox(height: 4),
-                          Text(
-                            '作者: ${video.author}',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ],
+                        // 第二行：时长
                         if (video.duration != null) ...[
                           SizedBox(height: 4),
                           Text(
-                            '时长: ${video.duration}',
+                            video.duration!,
                             style: TextStyle(fontSize: 12, color: Colors.grey),
                           ),
                         ],
@@ -564,10 +593,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                       if (appState.privacyMode)
                         Positioned.fill(
                           child: Container(
-                            color: Colors.black.withOpacity(0.8),
-                            child: Center(
-                              child: Icon(Icons.lock, color: Colors.white54, size: 48),
-                            ),
+                            color: Colors.black.withOpacity(0.95),
                           ),
                         ),
                     ],

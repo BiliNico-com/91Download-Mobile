@@ -28,6 +28,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   // 滚动控制
   final ScrollController _scrollController = ScrollController();
   bool _showPageIndicator = false;
+  bool _showBackToTop = false;
   
   @override
   bool get wantKeepAlive => true;  // 保持页面状态
@@ -46,10 +47,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   }
   
   void _onScroll() {
-    // 显示页码指示器
-    final showIndicator = _scrollController.offset > 100;
+    // 显示页码指示器和回顶部按钮
+    final showIndicator = _scrollController.offset > 300;
     if (showIndicator != _showPageIndicator) {
-      setState(() => _showPageIndicator = showIndicator);
+      setState(() {
+        _showPageIndicator = showIndicator;
+        _showBackToTop = showIndicator;
+      });
     }
     
     // 自动加载更多
@@ -58,6 +62,10 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         _loadMore();
       }
     }
+  }
+  
+  void _scrollToTop() {
+    _scrollController.animateTo(0, duration: Duration(milliseconds: 300), curve: Curves.easeOut);
   }
   
   Future<void> _loadMore() async {
@@ -70,9 +78,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     setState(() => _isLoading = true);
     _currentPage++;
     
-    await logger.i('Search', '加载更多: 第 $_currentPage 页');
+    await logger.i('Search', '加载更多: 第 $_currentPage 页, 排序: $_sortBy');
     
-    final newResults = await crawler.searchVideos(_lastKeyword, page: _currentPage);
+    final newResults = await crawler.searchVideos(_lastKeyword, page: _currentPage, sort: _sortBy);
     
     if (newResults.isEmpty) {
       _hasMore = false;
@@ -226,10 +234,21 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                         ? _buildAuthorResults()
                         : _buildVideoResults(),
                 
-                // 悬浮页码显示
-                if (_showPageIndicator && _currentPage > 0 && !_isAuthorMode)
+                // 回顶部按钮
+                if (_showBackToTop)
                   Positioned(
                     bottom: 80,
+                    right: 16,
+                    child: FloatingActionButton(
+                      mini: true,
+                      onPressed: _scrollToTop,
+                      child: Icon(Icons.arrow_upward),
+                    ),
+                  ),
+                // 悬浮页码显示（在回顶部上方）
+                if (_showPageIndicator && _currentPage > 0 && !_isAuthorMode)
+                  Positioned(
+                    bottom: 140,
                     right: 16,
                     child: Container(
                       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -385,6 +404,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   
   /// 列表模式显示视频结果
   Widget _buildVideoListResults() {
+    final appState = context.read<AppState>();
+    
     return ListView.builder(
       controller: _scrollController,
       padding: EdgeInsets.all(8),
@@ -417,36 +438,57 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                       height: 80,
                       color: Colors.grey[800],
                       child: video.cover != null
-                        ? Center(
-                            child: Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Icon(Icons.video_file, size: 32, color: Colors.white54)),
+                        ? Stack(
+                            children: [
+                              Center(
+                                child: Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Icon(Icons.video_file, size: 32, color: Colors.white54)),
+                              ),
+                              // 模糊遮罩
+                              if (appState.privacyMode)
+                                Positioned.fill(
+                                  child: Container(
+                                    color: Colors.black.withOpacity(0.95),
+                                  ),
+                                ),
+                            ],
                           )
                         : Icon(Icons.video_file, size: 32, color: Colors.white54),
                     ),
                   ),
                   SizedBox(width: 12),
-                  // 信息
+                  // 信息 - 按图3标准：第一行视频名称+作者，第二行时长
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          video.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                        // 第一行：视频名称 - 作者
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                video.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                              ),
+                            ),
+                            if (video.author != null && video.author!.isNotEmpty) ...[
+                              SizedBox(width: 8),
+                              Text(
+                                '- ${video.author}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 12, color: Colors.grey),
+                              ),
+                            ],
+                          ],
                         ),
-                        if (video.author != null && video.author!.isNotEmpty) ...[
-                          SizedBox(height: 4),
-                          Text(
-                            '作者: ${video.author}',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ],
+                        // 第二行：时长
                         if (video.duration != null) ...[
                           SizedBox(height: 4),
                           Text(
-                            '时长: ${video.duration}',
+                            video.duration!,
                             style: TextStyle(fontSize: 12, color: Colors.grey),
                           ),
                         ],
