@@ -44,6 +44,11 @@ class _BatchPageState extends State<BatchPage> {
   }
   
   Widget _buildNoSiteSelected() {
+    // 记录用户看到了"请先选择站点"提示
+    Future.microtask(() {
+      logger.w('Batch', '当前未选择站点, 显示提示界面');
+    });
+    
     return Scaffold(
       appBar: AppBar(
         title: Text('批量爬取'),
