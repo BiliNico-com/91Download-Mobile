@@ -25,6 +25,13 @@ class DownloadTask {
   DateTime startTime;
   DateTime? endTime;
   
+  // 下载速度相关
+  int downloadedBytes = 0;      // 已下载字节数
+  int totalBytes = 0;           // 总字节数
+  double downloadSpeed = 0.0;   // 下载速度 (bytes/s)
+  DateTime? lastUpdateTime;    // 上次更新时间
+  int lastDownloadedBytes = 0; // 上次已下载字节数
+  
   DownloadTask({
     required this.id,
     required this.video,
@@ -34,7 +41,61 @@ class DownloadTask {
     this.error,
     this.filePath,
     DateTime? startTime,
+    this.downloadedBytes = 0,
+    this.totalBytes = 0,
+    this.downloadSpeed = 0.0,
   }) : startTime = startTime ?? DateTime.now();
+  
+  /// 更新下载速度和进度
+  void updateProgressWithSpeed(int downloaded, int total) {
+    final now = DateTime.now();
+    downloadedBytes = downloaded;
+    totalBytes = total;
+    
+    if (lastUpdateTime != null) {
+      final timeDiff = now.difference(lastUpdateTime!).inMilliseconds;
+      if (timeDiff > 0) {
+        final bytesDiff = downloaded - lastDownloadedBytes;
+        // 计算速度 (bytes/s)，避免负数
+        downloadSpeed = bytesDiff > 0 ? (bytesDiff / timeDiff * 1000) : downloadSpeed;
+      }
+    }
+    
+    lastUpdateTime = now;
+    lastDownloadedBytes = downloaded;
+    
+    // 更新进度
+    if (total > 0) {
+      progress = downloaded / total;
+    }
+    
+    // 更新进度文本
+    progressText = '${_formatBytes(downloaded)}/${_formatBytes(total)}';
+    if (downloadSpeed > 0) {
+      progressText += ' (${_formatSpeed(downloadSpeed)})';
+    }
+  }
+  
+  /// 格式化字节数
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+    return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
+  }
+  
+  /// 格式化速度
+  String _formatSpeed(double bytesPerSecond) {
+    if (bytesPerSecond < 1024) return '${bytesPerSecond.toStringAsFixed(0)} B/s';
+    if (bytesPerSecond < 1024 * 1024) return '${(bytesPerSecond / 1024).toStringAsFixed(1)} KB/s';
+    return '${(bytesPerSecond / 1024 / 1024).toStringAsFixed(2)} MB/s';
+  }
+  
+  /// 获取格式化后的速度文本
+  String get speedText {
+    if (downloadSpeed <= 0) return '';
+    return _formatSpeed(downloadSpeed);
+  }
   
   String get statusText {
     switch (status) {
@@ -100,6 +161,10 @@ class DownloadManager extends ChangeNotifier {
     }
     
     task.status = DownloadStatus.downloading;
+    // 重置下载速度相关数据
+    task.lastUpdateTime = DateTime.now();
+    task.lastDownloadedBytes = 0;
+    task.downloadSpeed = 0.0;
     notifyListeners();
     
     await logger.i('DownloadManager', '开始下载: ${task.video.title}');
@@ -129,7 +194,12 @@ class DownloadManager extends ChangeNotifier {
       // 设置进度回调
       _crawler!.onProgress = (progress, msg) {
         task.progress = progress;
-        task.progressText = msg;
+        // 如果是简单的百分比消息，转换为带速度的格式
+        if (msg.isNotEmpty && !msg.contains('/')) {
+          task.progressText = '$msg - ${task.speedText}';
+        } else {
+          task.progressText = msg;
+        }
         notifyListeners();
       };
       
@@ -140,16 +210,19 @@ class DownloadManager extends ChangeNotifier {
         task.filePath = savePath;
         task.progress = 1.0;
         task.progressText = '下载完成';
+        task.downloadSpeed = 0.0;
         await logger.i('DownloadManager', '下载完成: ${task.video.title}');
       } else {
         task.status = DownloadStatus.failed;
         task.error = '下载失败';
+        task.downloadSpeed = 0.0;
         await logger.e('DownloadManager', '下载失败');
       }
       
     } catch (e) {
       task.status = DownloadStatus.failed;
       task.error = e.toString();
+      task.downloadSpeed = 0.0;
       await logger.e('DownloadManager', '下载异常: $e');
     }
     
@@ -182,6 +255,7 @@ class DownloadManager extends ChangeNotifier {
       if (filePath != null) task.filePath = filePath;
       if (status == DownloadStatus.completed || status == DownloadStatus.failed) {
         task.endTime = DateTime.now();
+        task.downloadSpeed = 0.0;
       }
       notifyListeners();
     }
@@ -209,7 +283,7 @@ class DownloadManager extends ChangeNotifier {
     final task = _taskMap[taskId];
     if (task != null && task.status == DownloadStatus.downloading) {
       task.status = DownloadStatus.paused;
-      // TODO: 实现暂停下载逻辑
+      task.downloadSpeed = 0.0;
       notifyListeners();
     }
   }
@@ -218,6 +292,8 @@ class DownloadManager extends ChangeNotifier {
   void resumeTask(String taskId) {
     final task = _taskMap[taskId];
     if (task != null && task.status == DownloadStatus.paused) {
+      task.lastUpdateTime = DateTime.now();
+      task.lastDownloadedBytes = task.downloadedBytes;
       _startDownload(task);
     }
   }
@@ -229,6 +305,9 @@ class DownloadManager extends ChangeNotifier {
       task.status = DownloadStatus.pending;
       task.error = null;
       task.progress = 0;
+      task.downloadedBytes = 0;
+      task.totalBytes = 0;
+      task.downloadSpeed = 0.0;
       _startDownload(task);
     }
   }

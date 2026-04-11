@@ -29,6 +29,12 @@ class AppState extends ChangeNotifier {
   bool showBackToTop = true;
   String backToTopPosition = 'right'; // 'left' 或 'right'
 
+  // 外部播放器设置
+  bool useExternalPlayer = false;
+  
+  // 视频显示模式: 'grid' 大图模式, 'list' 列表模式
+  String videoDisplayMode = 'grid';
+
   // 当前页面索引（用于导航）
   int currentPageIndex = 0;
   Function(int)? navigateToPage;  // 由 MainPage 设置
@@ -184,6 +190,18 @@ class AppState extends ChangeNotifier {
   Future<void> toggleDebug(bool enable) async {
     debugMode = enable;
     await logger.toggle(enable);
+    notifyListeners();
+  }
+
+  // 切换外部播放器
+  void toggleExternalPlayer() {
+    useExternalPlayer = !useExternalPlayer;
+    notifyListeners();
+  }
+
+  // 设置外部播放器
+  void setExternalPlayer(bool enabled) {
+    useExternalPlayer = enabled;
     notifyListeners();
   }
 }

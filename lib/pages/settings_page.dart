@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -100,6 +101,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               
               // 下载目录
               _buildDownloadDirSection(appState),
+              
+              // 播放器设置
+              _buildPlayerSection(appState),
               
               // 权限状态
               _buildPermissionSection(appState),
@@ -211,6 +215,186 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 ],
               ),
             ),
+            SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _selectDownloadDirectory(appState),
+                    icon: Icon(Icons.folder_open, size: 18),
+                    label: Text('选择目录'),
+                  ),
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _openDownloadDirectory(appState.downloadDir),
+                    icon: Icon(Icons.folder_shared, size: 18),
+                    label: Text('打开目录'),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            // 常用下载目录快捷选择
+            Text('快捷目录', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _buildDirChip('Download', '/storage/emulated/0/Download/91Download'),
+                _buildDirChip('Movies', '/storage/emulated/0/Movies'),
+                _buildDirChip('Pictures', '/storage/emulated/0/Pictures'),
+                _buildDirChip('内部存储', '/storage/emulated/0'),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildDirChip(String label, String path) {
+    return ActionChip(
+      label: Text(label, style: TextStyle(fontSize: 12)),
+      avatar: Icon(Icons.folder, size: 16),
+      onPressed: () => _setDownloadDirectory(path),
+    );
+  }
+  
+  void _setDownloadDirectory(String path) async {
+    final appState = context.read<AppState>();
+    try {
+      final dir = Directory(path);
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      appState.setDownloadDir(path);
+      await logger.i('Settings', '设置下载目录: $path');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已设置下载目录: $path')),
+        );
+      }
+    } catch (e) {
+      await logger.e('Settings', '设置下载目录失败: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('设置失败: $e')),
+        );
+      }
+    }
+  }
+  
+  void _selectDownloadDirectory(AppState appState) async {
+    await logger.i('Settings', '点击选择下载目录');
+    
+    // 显示一个对话框让用户输入路径
+    final controller = TextEditingController(text: appState.downloadDir);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('选择下载目录'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('请输入下载目录路径:', style: TextStyle(fontSize: 12)),
+            SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                hintText: '/storage/emulated/0/Download',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              '注意：目录必须存在且有写入权限',
+              style: TextStyle(fontSize: 10, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: Text('确定'),
+          ),
+        ],
+      ),
+    );
+    
+    if (result != null && result.isNotEmpty) {
+      _setDownloadDirectory(result);
+    }
+  }
+  
+  void _openDownloadDirectory(String path) async {
+    if (path.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('下载目录未设置')),
+      );
+      return;
+    }
+    
+    await logger.i('Settings', '打开下载目录: $path');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('目录路径: $path')),
+    );
+  }
+
+  Widget _buildPlayerSection(AppState appState) {
+    return Card(
+      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.play_circle, size: 20, color: Colors.red),
+                SizedBox(width: 8),
+                Text('播放器设置', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            SizedBox(height: 12),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('使用外部播放器'),
+              subtitle: Text(
+                appState.useExternalPlayer 
+                  ? '使用第三方播放器播放视频' 
+                  : '使用内置播放器播放视频',
+              ),
+              value: appState.useExternalPlayer,
+              onChanged: (v) {
+                appState.setExternalPlayer(v);
+                logger.i('Settings', 'UI操作: 切换外部播放器 -> $v');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(v ? '已切换到外部播放器' : '已切换到内置播放器'),
+                  ),
+                );
+              },
+            ),
+            Divider(),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.info_outline, color: Colors.grey),
+              title: Text('播放器说明', style: TextStyle(fontSize: 14)),
+              subtitle: Text(
+                '内置播放器：直接在本应用内播放，支持倍速、进度条控制\n'
+                '外部播放器：调用系统或其他播放器应用播放',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
           ],
         ),
       ),
@@ -302,6 +486,38 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   },
                 ),
               ),
+            Divider(),
+            // 视频显示模式
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('视频显示模式'),
+              subtitle: Text('选择列表或大图模式'),
+              trailing: SegmentedButton<String>(
+                segments: [
+                  ButtonSegment(value: 'list', label: Text('列表')),
+                  ButtonSegment(value: 'grid', label: Text('大图')),
+                ],
+                selected: {appState.videoDisplayMode},
+                onSelectionChanged: (s) {
+                  appState.videoDisplayMode = s.first;
+                  appState.notifyListeners();
+                  logger.i('Settings', 'UI操作: 视频显示模式 -> ${s.first}');
+                },
+              ),
+            ),
+            Divider(),
+            // 外部播放器设置
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('使用外部播放器'),
+              subtitle: Text('用系统播放器打开视频'),
+              value: appState.useExternalPlayer,
+              onChanged: (v) {
+                appState.useExternalPlayer = v;
+                appState.notifyListeners();
+                logger.i('Settings', 'UI操作: 外部播放器 -> $v');
+              },
+            ),
             Divider(),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
@@ -419,9 +635,14 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
             SizedBox(height: 12),
             Text('91Download 移动端', style: TextStyle(fontSize: 14)),
             SizedBox(height: 4),
-            Text('版本: v1.0.3', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            Text('版本: v1.0.4', style: TextStyle(fontSize: 12, color: Colors.grey)),
             SizedBox(height: 8),
             Text('视频下载工具移动端版本', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            SizedBox(height: 8),
+            Text(
+              '支持 91porn、ml0987 等多个站点',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
           ],
         ),
       ),
