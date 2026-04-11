@@ -31,7 +31,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   bool _showBackToTop = false;
   bool _showSettings = true;  // 是否显示设置区域
   double _lastScrollOffset = 0;  // 上次滚动位置
-  double _appBarOpacity = 0.95;  // AppBar透明度（初始半透明）
+  double _appBarOpacity = 0.5;  // AppBar透明度（初始较透明）
   
   @override
   bool get wantKeepAlive => true;  // 保持页面状态
@@ -56,8 +56,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       setState(() => _showBackToTop = showBtn);
     }
     
-    // 计算AppBar透明度（滚动150像素后几乎完全透明）
-    final opacity = (0.95 - _scrollController.offset / 150).clamp(0.1, 0.95);
+    // 计算AppBar透明度（滚动80像素后几乎完全透明）
+    final opacity = (0.5 - _scrollController.offset / 80).clamp(0.0, 0.5);
     if (opacity != _appBarOpacity) {
       setState(() => _appBarOpacity = opacity);
     }

@@ -38,7 +38,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   final ScrollController _scrollController = ScrollController();
   bool _showPageIndicator = false;
   bool _showBackToTop = false;
-  double _appBarOpacity = 0.95;  // AppBar透明度（初始半透明）
+  double _appBarOpacity = 0.5;  // AppBar透明度（初始较透明）
   
   // 设置区域收缩控制（参考批量页面）
   bool _showSettings = true;  // 是否显示搜索区域
@@ -70,8 +70,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       });
     }
     
-    // 计算AppBar透明度（滚动150像素后几乎完全透明）
-    final opacity = (0.95 - _scrollController.offset / 150).clamp(0.1, 0.95);
+    // 计算AppBar透明度（滚动80像素后几乎完全透明）
+    final opacity = (0.5 - _scrollController.offset / 80).clamp(0.0, 0.5);
     if (opacity != _appBarOpacity) {
       setState(() => _appBarOpacity = opacity);
     }
