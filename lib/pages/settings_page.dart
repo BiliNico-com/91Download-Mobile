@@ -18,8 +18,6 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClientMixin {
   Timer? _logRefreshTimer;
   static String _logContent = '';  // 改为static，跨页面保持
-  static bool _enableNetworkLog = true;  // 网络日志开关
-  static bool _enableUIOperationLog = true;  // UI操作日志开关
   
   @override
   bool get wantKeepAlive => true;  // 保持状态
@@ -153,7 +151,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 if (site != null) {
                   // 先记录日志，再执行操作
                   print('[Settings] 选择站点: $site');
-                  if (_enableUIOperationLog) {
+                  if (logger.enableUILog) {
                     await logger.i('Settings', 'UI操作: 切换站点 -> $site');
                   }
                   appState.changeSite(site);
@@ -240,7 +238,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         await dir.create(recursive: true);
       }
       appState.setDownloadDir(path);
-      if (_enableUIOperationLog) {
+      if (logger.enableUILog) {
         await logger.i('Settings', '设置下载目录: $path');
       }
       if (mounted) {
@@ -249,7 +247,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         );
       }
     } catch (e) {
-      if (_enableUIOperationLog) {
+      if (logger.enableUILog) {
         await logger.e('Settings', '设置下载目录失败: $e');
       }
       if (mounted) {
@@ -261,7 +259,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
   
   void _selectDownloadDirectory(AppState appState) async {
-    if (_enableUIOperationLog) {
+    if (logger.enableUILog) {
       await logger.i('Settings', '点击选择下载目录');
     }
     
@@ -274,7 +272,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         return;
       }
     } catch (e) {
-      if (_enableNetworkLog) {
+      if (logger.enableNetworkLog) {
         await logger.w('Settings', 'file_picker 不可用: $e');
       }
     }
@@ -332,7 +330,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       return;
     }
     
-    if (_enableUIOperationLog) {
+    if (logger.enableUILog) {
       await logger.i('Settings', '打开下载目录: $path');
     }
     ScaffoldMessenger.of(context).showSnackBar(
@@ -367,7 +365,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               value: appState.useExternalPlayer,
               onChanged: (v) {
                 appState.setExternalPlayer(v);
-                if (_enableUIOperationLog) {
+                if (logger.enableUILog) {
                   logger.i('Settings', 'UI操作: 切换外部播放器 -> $v');
                 }
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -403,7 +401,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     onSelected: (selected) {
                       if (selected) {
                         appState.setVideoDisplayMode('grid');
-                        if (_enableUIOperationLog) {
+                        if (logger.enableUILog) {
                           logger.i('Settings', 'UI操作: 切换到大图模式');
                         }
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -428,7 +426,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     onSelected: (selected) {
                       if (selected) {
                         appState.setVideoDisplayMode('list');
-                        if (_enableUIOperationLog) {
+                        if (logger.enableUILog) {
                           logger.i('Settings', 'UI操作: 切换到列表模式');
                         }
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -484,7 +482,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               trailing: !appState.permissionGranted
                 ? TextButton(
                     onPressed: () async {
-                      if (_enableUIOperationLog) {
+                      if (logger.enableUILog) {
                         await logger.i('Settings', 'UI操作: 点击授权按钮');
                       }
                       await appState.requestPermissions();
@@ -524,7 +522,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               onChanged: (v) {
                 appState.showBackToTop = v;
                 appState.notifyListeners();
-                if (_enableUIOperationLog) {
+                if (logger.enableUILog) {
                   logger.i('Settings', 'UI操作: 切换回顶部按钮 -> $v');
                 }
               },
@@ -542,7 +540,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   onSelectionChanged: (s) {
                     appState.backToTopPosition = s.first;
                     appState.notifyListeners();
-                    if (_enableUIOperationLog) {
+                    if (logger.enableUILog) {
                       logger.i('Settings', 'UI操作: 回顶部按钮位置 -> ${s.first}');
                     }
                   },
@@ -563,7 +561,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 onSelectionChanged: (s) {
                   appState.videoDisplayMode = s.first;
                   appState.notifyListeners();
-                  if (_enableUIOperationLog) {
+                  if (logger.enableUILog) {
                     logger.i('Settings', 'UI操作: 视频显示模式 -> ${s.first}');
                   }
                 },
@@ -579,7 +577,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               onChanged: (v) {
                 appState.useExternalPlayer = v;
                 appState.notifyListeners();
-                if (_enableUIOperationLog) {
+                if (logger.enableUILog) {
                   logger.i('Settings', 'UI操作: 外部播放器 -> $v');
                 }
               },
@@ -591,7 +589,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               subtitle: Text('开启后将记录运行日志'),
               value: appState.debugMode,
               onChanged: (v) async {
-                if (_enableUIOperationLog) {
+                if (logger.enableUILog) {
                   await logger.i('Settings', 'UI操作: 切换Debug模式 -> $v');
                 }
                 await appState.toggleDebug(v);
@@ -614,27 +612,21 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     Row(
                       children: [
                         Checkbox(
-                          value: _enableNetworkLog,
+                          value: logger.enableNetworkLog,
                           onChanged: (v) {
                             setState(() {
-                              _enableNetworkLog = v ?? true;
+                              logger.enableNetworkLog = v ?? true;
                             });
-                            if (_enableUIOperationLog) {
-                              logger.i('Settings', 'UI操作: 网络日志开关 -> $_enableNetworkLog');
-                            }
                           },
                         ),
                         Text('网络日志'),
                         SizedBox(width: 16),
                         Checkbox(
-                          value: _enableUIOperationLog,
+                          value: logger.enableUILog,
                           onChanged: (v) {
                             setState(() {
-                              _enableUIOperationLog = v ?? true;
+                              logger.enableUILog = v ?? true;
                             });
-                            if (_enableUIOperationLog) {
-                              logger.i('Settings', 'UI操作: UI操作日志开关 -> $_enableUIOperationLog');
-                            }
                           },
                         ),
                         Text('UI操作日志'),
@@ -650,7 +642,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     child: OutlinedButton.icon(
                       onPressed: () async {
                         await _refreshLog();
-                        if (_enableUIOperationLog) {
+                        if (logger.enableUILog) {
                           await logger.i('Settings', 'UI操作: 手动刷新日志');
                         }
                       },
@@ -745,7 +737,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
   
   Future<void> _exportLog() async {
-    if (_enableUIOperationLog) {
+    if (logger.enableUILog) {
       await logger.i('Settings', 'UI操作: 点击分享日志');
     }
     final content = await logger.getLogContent();
@@ -760,7 +752,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
   
   Future<void> _saveLog(String downloadDir) async {
-    if (_enableUIOperationLog) {
+    if (logger.enableUILog) {
       await logger.i('Settings', 'UI操作: 点击保存日志');
     }
     if (downloadDir.isEmpty) {
@@ -775,7 +767,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('日志已保存到: $savedPath')),
       );
-      if (_enableUIOperationLog) {
+      if (logger.enableUILog) {
         await logger.i('Settings', '日志已保存: $savedPath');
       }
     } else {
@@ -786,7 +778,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
   
   Future<void> _clearLog() async {
-    if (_enableUIOperationLog) {
+    if (logger.enableUILog) {
       await logger.i('Settings', 'UI操作: 点击清空日志');
     }
     final confirm = await showDialog<bool>(

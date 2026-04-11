@@ -2,6 +2,13 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:intl/intl.dart';
 
+/// 日志类型
+enum LogType {
+  normal,   // 普通日志，不受开关影响
+  network,  // 网络日志
+  ui,       // UI操作日志
+}
+
 class Logger {
   static final Logger _instance = Logger._internal();
   factory Logger() => _instance;
@@ -10,6 +17,10 @@ class Logger {
   bool _enabled = false;
   File? _logFile;
   String? _logPath;
+  
+  // 日志类型开关
+  bool enableNetworkLog = true;
+  bool enableUILog = true;
   
   bool get enabled => _enabled;
   String? get logPath => _logPath;
@@ -47,34 +58,41 @@ class Logger {
     _enabled = enable;
   }
   
-  // 写入日志
-  Future<void> log(String tag, String message, {String level = 'INFO'}) async {
+  // 写入日志（带类型过滤）
+  Future<void> log(String tag, String message, {String level = 'INFO', LogType type = LogType.normal}) async {
+    // 检查日志类型开关
+    if (type == LogType.network && !enableNetworkLog) return;
+    if (type == LogType.ui && !enableUILog) return;
+    
     final timestamp = DateFormat('HH:mm:ss.SSS').format(DateTime.now());
     final line = '[$timestamp][$level][$tag] $message\n';
     
     // 控制台输出
     print(line.trim());
     
-    // 文件写入 - 总是写入，即使_enabled为false也要写入
+    // 文件写入
     if (_logFile != null) {
       try {
         await _logFile!.writeAsString(line, mode: FileMode.append);
       } catch (e) {
         print('Logger write failed: $e');
       }
-    } else {
-      // 如果日志文件不存在，尝试重新创建
-      if (!_enabled) {
-        print('Logger: 日志未初始化，跳过写入');
-      }
     }
   }
   
-  // 便捷方法
+  // 便捷方法 - 普通日志
   Future<void> d(String tag, String message) => log(tag, message, level: 'DEBUG');
   Future<void> i(String tag, String message) => log(tag, message, level: 'INFO');
   Future<void> w(String tag, String message) => log(tag, message, level: 'WARN');
   Future<void> e(String tag, String message) => log(tag, message, level: 'ERROR');
+  
+  // 便捷方法 - 网络日志
+  Future<void> network(String tag, String message, {String level = 'INFO'}) => 
+      log(tag, message, level: level, type: LogType.network);
+  
+  // 便捷方法 - UI操作日志
+  Future<void> ui(String tag, String message, {String level = 'INFO'}) => 
+      log(tag, message, level: level, type: LogType.ui);
   
   // 获取日志内容
   Future<String> getLogContent() async {
