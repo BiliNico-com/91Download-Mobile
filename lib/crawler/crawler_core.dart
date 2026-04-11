@@ -558,34 +558,25 @@ class CrawlerCore {
         }
         
         // 策略 A: strencode2("%3c%73%6f...") — URL 编码的 <source> 标签
+        // 这是真实视频，优先使用
         final strencodeMatch = RegExp(r'''strencode2\(["'](%[0-9a-fA-F]{2}[^"']+)["']\)''').firstMatch(html);
         if (strencodeMatch != null) {
           try {
             final encoded = strencodeMatch.group(1)!;
             final decoded = Uri.decodeComponent(encoded);
             
-            await logger.log('Crawler', '[策略A] videoId=$videoId, 解码内容前200字符: ${decoded.substring(0, decoded.length > 200 ? 200 : decoded.length)}');
+            await logger.log('Crawler', '[策略A] 解码内容: ${decoded.substring(0, decoded.length > 300 ? 300 : decoded.length)}');
             
-            // 遍历所有解码的 src 属性，优先匹配视频ID
+            // 提取 src 属性
             final srcPattern = RegExp(r'''src=["']([^"']+)["']''', caseSensitive: false);
-            final srcMatches = srcPattern.allMatches(decoded).toList();
+            final srcMatch = srcPattern.firstMatch(decoded);
             
-            await logger.log('Crawler', '[策略A] strencode2解码找到 ${srcMatches.length} 个src标签');
-            
-            // 优先匹配视频ID的source
-            for (var i = 0; i < srcMatches.length; i++) {
-              final src = srcMatches[i].group(1)?.replaceAll('&amp;', '&') ?? '';
-              
+            if (srcMatch != null) {
+              final src = srcMatch.group(1)?.replaceAll('&amp;', '&') ?? '';
               if (src.contains('.mp4') || src.contains('.m3u8')) {
-                await logger.log('Crawler', '[策略A] src[$i]: $src (contains videoId=${src.contains(videoId ?? '')})');
-                // 如果有视频ID，必须匹配包含该ID的URL
-                if (videoId != null && src.contains(videoId)) {
-                  videoUrl = src;
-                  extractionMethod = 'strencode2解码(ID匹配)';
-                  await logger.log('Crawler', '[策略A] src[$i] ID匹配成功: $src');
-                  break;
-                }
-                // 不匹配ID的不返回，继续尝试策略B
+                videoUrl = src;
+                extractionMethod = 'strencode2解码';
+                await logger.log('Crawler', '[策略A] 提取成功: $src');
               }
             }
           } catch (e) {
@@ -593,8 +584,8 @@ class CrawlerCore {
           }
         }
         
-        // 策略 B: 直接查找 <source> 标签
-        // 注意：页面可能有多个 source，第一个可能是广告，需要匹配视频ID
+        // 策略 B: 直接查找 <source> 标签（广告）
+        // 排除已知的广告视频ID（如358999）
         if (videoUrl == null) {
           
           final sourcePattern = RegExp(r'''<source[^>]+src=["']([^"']+)["']''', caseSensitive: false);
@@ -602,32 +593,22 @@ class CrawlerCore {
           
           await logger.log('Crawler', '找到 ${sourceMatches.length} 个source标签');
           
-          String? candidateUrl;
-          
-          // 优先匹配视频ID的source
+          // 排除广告，取第一个非广告的source
           for (var i = 0; i < sourceMatches.length; i++) {
             final match = sourceMatches[i];
             final src = match.group(1)?.replaceAll('&amp;', '&') ?? '';
             
             if (src.contains('.mp4') || src.contains('.m3u8')) {
-              // 如果有视频ID，优先匹配包含该ID的URL
-              if (videoId != null && src.contains(videoId)) {
-                videoUrl = src;
-                extractionMethod = 'source标签(ID匹配)';
-                await logger.log('Crawler', 'source[$i] ID匹配成功: $src');
-                break;  // 找到匹配的，立即退出
+              // 排除已知的广告视频ID
+              if (src.contains('358999')) {
+                await logger.log('Crawler', 'source[$i] 是广告，跳过: $src');
+                continue;
               }
-              // 保存候选（取最后一个）
-              candidateUrl = src;
-              await logger.log('Crawler', 'source[$i] 作为候选: $src');
+              videoUrl = src;
+              extractionMethod = 'source标签';
+              await logger.log('Crawler', 'source[$i] 提取成功: $src');
+              break;
             }
-          }
-          
-          // 如果没有ID匹配，使用候选URL
-          if (videoUrl == null && candidateUrl != null) {
-            videoUrl = candidateUrl;
-            extractionMethod = 'source标签';
-            await logger.log('Crawler', '使用候选URL: $candidateUrl');
           }
         }
         
