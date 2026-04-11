@@ -196,9 +196,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       child: Scaffold(
         extendBodyBehindAppBar: true,  // 让内容延伸到AppBar下方
         appBar: AppBar(
-          backgroundColor: Theme.of(context).scaffoldBackgroundColor.withOpacity(_appBarOpacity),
+          backgroundColor: Colors.black.withOpacity(_appBarOpacity * 0.7),  // 黑色半透明背景
           elevation: 0,  // 始终无阴影，透明效果更好
-          scrolledUnderElevation: 4,  // 滚动时有阴影
+          scrolledUnderElevation: 0,  // 滚动时也无阴影
           // 左侧文字跟随透明度隐藏
           title: Opacity(
             opacity: _appBarOpacity,
