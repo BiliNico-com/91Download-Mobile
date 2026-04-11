@@ -450,8 +450,15 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                           return DropdownMenuItem(value: e.key, child: Text(e.value, style: TextStyle(fontSize: 14)));
                         }).toList(),
                         onChanged: (v) async {
-                          if (v != null) {
-                            setState(() => _selectedType = v);
+                          if (v != null && v != _selectedType) {
+                            setState(() {
+                              _selectedType = v;
+                              _videos.clear();      // 清空旧数据
+                              _selectedIds.clear(); // 清空选中
+                              _loadedPage = 0;      // 重置页码
+                              _hasMore = true;      // 重置还有更多
+                            });
+                            await _loadMore();      // 重新加载新类型
                           }
                         },
                       ),
