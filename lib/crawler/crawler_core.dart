@@ -678,15 +678,25 @@ class CrawlerCore {
       video = detail;
     }
     
+    final videoUrl = video.m3u8Url!;
+    
+    // 检查是否是直接 MP4 链接（porn91 等站点使用）
+    final isDirectMp4 = videoUrl.endsWith('.mp4') || videoUrl.contains('.mp4?');
+    
+    if (isDirectMp4) {
+      // 直接下载 MP4 文件
+      return await _downloadDirectMp4(video, videoUrl, savePath);
+    }
+    
     onLog?.call('开始下载: ${video.title}', 'info');
     
     try {
       // 下载 m3u8 文件
-      final m3u8Resp = await _dio.get(video.m3u8Url!);
+      final m3u8Resp = await _dio.get(videoUrl);
       final m3u8Content = m3u8Resp.data.toString();
       
       // 解析 TS 切片列表
-      final tsUrls = _parseM3u8(m3u8Content, video.m3u8Url!);
+      final tsUrls = _parseM3u8(m3u8Content, videoUrl);
       if (tsUrls.isEmpty) {
         onLog?.call('解析 TS 列表失败', 'error');
         return false;
@@ -795,6 +805,52 @@ class CrawlerCore {
       }
     }
     return false;
+  }
+
+  /// 直接下载 MP4 文件（用于 porn91 等提供直链的站点）
+  Future<bool> _downloadDirectMp4(VideoInfo video, String mp4Url, String savePath) async {
+    onLog?.call('开始下载 MP4: ${video.title}', 'info');
+    onLog?.call('MP4 URL: $mp4Url', 'debug');
+    
+    try {
+      // 获取文件大小
+      final headResp = await _dio.head(mp4Url);
+      final contentLength = int.tryParse(headResp.headers.value('content-length') ?? '0') ?? 0;
+      
+      if (contentLength > 0) {
+        onLog?.call('文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB', 'info');
+      }
+      
+      // 下载文件
+      await _dio.download(
+        mp4Url,
+        savePath,
+        onReceiveProgress: (received, total) {
+          downloaded = received;
+          if (total > 0) {
+            final progress = received / total;
+            final downloadedMB = (received / 1024 / 1024).toStringAsFixed(1);
+            final totalMB = (total / 1024 / 1024).toStringAsFixed(1);
+            onProgress?.call(progress, '$downloadedMB/$totalMB MB');
+          } else if (contentLength > 0) {
+            final progress = received / contentLength;
+            final downloadedMB = (received / 1024 / 1024).toStringAsFixed(1);
+            final totalMB = (contentLength / 1024 / 1024).toStringAsFixed(1);
+            onProgress?.call(progress, '$downloadedMB/$totalMB MB');
+          }
+        },
+      );
+      
+      // 保存到历史记录
+      await _saveToHistory(video, savePath);
+      
+      onLog?.call('下载完成: ${video.title}', 'info');
+      return true;
+      
+    } catch (e) {
+      onLog?.call('下载失败: $e', 'error');
+      return false;
+    }
   }
 
   /// 合并 TS 文件
