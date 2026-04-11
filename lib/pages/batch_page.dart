@@ -674,13 +674,12 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       ),
       itemCount: _videos.length + (_hasMore ? 1 : 0),  // 加载更多指示器
       itemBuilder: (context, index) {
-        // 加载更多指示器
+        // 加载更多指示器（跨整行居中显示）
         if (index == _videos.length) {
-          return Center(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: CircularProgressIndicator(),
-            ),
+          return Container(
+            height: 80,  // 固定高度
+            alignment: Alignment.center,
+            child: CircularProgressIndicator(),
           );
         }
         
@@ -743,7 +742,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                 // 时长标签（右下角，在标题上方，在毛玻璃之上）
                 if (video.duration != null)
                   Positioned(
-                    bottom: 40,
+                    bottom: 50,  // 在标题区域上方
                     right: 8,
                     child: Container(
                       padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
