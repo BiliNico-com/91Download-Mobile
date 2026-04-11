@@ -68,7 +68,6 @@ class _HistoryPageState extends State<HistoryPage> with AutomaticKeepAliveClient
   }
 
   Future<void> _loadHistory() async {
-    await logger.i('History', 'UI操作: 加载下载历史');
     
     final appState = context.read<AppState>();
     final crawler = appState.crawler;
@@ -93,12 +92,10 @@ class _HistoryPageState extends State<HistoryPage> with AutomaticKeepAliveClient
 
   void _openVideo(String? path) async {
     if (path == null) return;
-    await logger.i('History', 'UI操作: 点击打开视频: $path');
     // TODO: 打开视频播放器
   }
 
   Future<void> _clearHistory() async {
-    await logger.i('History', 'UI操作: 点击清空历史');
     
     final confirm = await showDialog<bool>(
       context: context,

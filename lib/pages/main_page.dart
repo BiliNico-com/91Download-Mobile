@@ -54,7 +54,6 @@ class _MainPageState extends State<MainPage> {
   
   // 跳转到指定页面
   void goToPage(int index) {
-    logger.i('MainPage', 'UI操作: 切换页面 -> ${_pageNames[index]}');
     _pageController.animateToPage(
       index,
       duration: Duration(milliseconds: 300),
@@ -68,7 +67,6 @@ class _MainPageState extends State<MainPage> {
       body: PageView(
         controller: _pageController,
         onPageChanged: (index) {
-          logger.i('MainPage', 'UI操作: 滑动切换页面 -> ${_pageNames[index]}');
           setState(() {
             _currentIndex = index;
           });
