@@ -203,6 +203,12 @@ class DownloadManager extends ChangeNotifier {
         notifyListeners();
       };
       
+      // 设置总体进度回调（字节数和速度）
+      _crawler!.onOverallProgress = (downloaded, total) {
+        task.updateProgressWithSpeed(downloaded, total);
+        notifyListeners();
+      };
+      
       final success = await _crawler!.downloadVideo(detail, savePath);
       
       if (success) {

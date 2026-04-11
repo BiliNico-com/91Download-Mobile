@@ -941,124 +941,128 @@ class _VideoResultsWidget extends StatelessWidget {
     
     return Consumer<AppState>(
       builder: (context, appState, _) {
-        return GridView.builder(
-          controller: scrollController,
-          padding: EdgeInsets.only(left: 8, right: 8, top: topPadding, bottom: 8),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            childAspectRatio: 0.75,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-          ),
-          itemCount: videos.length + (hasMore ? 1 : 0),
-          itemBuilder: (context, index) {
-            // 加载更多指示器（跨整行居中显示）
-            if (index == videos.length) {
-              return Container(
-                height: 80,  // 固定高度
-                alignment: Alignment.center,
-                child: CircularProgressIndicator(),
-              );
-            }
-            
-            final video = videos[index];
-            final selected = selectedIds.contains(video.id);
-            
-            return GestureDetector(
-              onTap: () => onToggleSelection(video.id),
-              child: Card(
-                clipBehavior: Clip.antiAlias,
-                color: selected ? Colors.blue.withOpacity(0.2) : null,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    video.cover != null
-                        ? Image.network(video.cover!, fit: BoxFit.cover)
-                        : Icon(Icons.video_file, size: 50, color: Colors.grey),
-                    // 毛玻璃模糊遮罩（仅模糊封面）
-                    if (appState.privacyMode)
-                      Positioned.fill(
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                          child: Container(
-                            color: Colors.black.withOpacity(0.3),
-                          ),
-                        ),
-                      ),
-                    // 选中标记（右上角，在毛玻璃之上）
-                    if (selected)
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: Container(
-                          padding: EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.blue,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(Icons.check, color: Colors.white, size: 16),
-                        ),
-                      ),
-                    // 时长标签（右下角，在标题上方，在毛玻璃之上）
-                    if (video.duration != null)
-                      Positioned(
-                        bottom: 50,  // 在标题区域上方
-                        right: 8,
-                        child: Container(
-                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.black87,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            video.duration!,
-                            style: TextStyle(color: Colors.white, fontSize: 10),
-                          ),
-                        ),
-                      ),
-                    // 标题和作者
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Container(
-                        padding: EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              video.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(color: Colors.white, fontSize: 12),
-                            ),
-                            if (video.author != null && video.author!.isNotEmpty) ...[
-                              SizedBox(height: 2),
-                              Text(
-                                video.author!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: Colors.grey, fontSize: 10),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
+        return Column(
+          children: [
+            Expanded(
+              child: GridView.builder(
+                controller: scrollController,
+                padding: EdgeInsets.only(left: 8, right: 8, top: topPadding, bottom: 0),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  childAspectRatio: 0.75,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
                 ),
-              ),
-            );
-          },
-        );
+                itemCount: videos.length,  // 只包含视频，不包含加载指示器
+                itemBuilder: (context, index) {
+                  final video = videos[index];
+                  final selected = selectedIds.contains(video.id);
+                  
+                  return GestureDetector(
+                    onTap: () => onToggleSelection(video.id),
+                    child: Card(
+                      clipBehavior: Clip.antiAlias,
+                      color: selected ? Colors.blue.withOpacity(0.2) : null,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          video.cover != null
+                              ? Image.network(video.cover!, fit: BoxFit.cover)
+                              : Icon(Icons.video_file, size: 50, color: Colors.grey),
+                          // 毛玻璃模糊遮罩（仅模糊封面）
+                          if (appState.privacyMode)
+                            Positioned.fill(
+                              child: BackdropFilter(
+                                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                                child: Container(
+                                  color: Colors.black.withOpacity(0.3),
+                                ),
+                              ),
+                            ),
+                          // 选中标记（右上角，在毛玻璃之上）
+                          if (selected)
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: Container(
+                                padding: EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(Icons.check, color: Colors.white, size: 16),
+                          ),
+                        ),
+                      // 时长标签（右下角，在标题上方，在毛玻璃之上）
+                      if (video.duration != null)
+                        Positioned(
+                          bottom: 50,  // 在标题区域上方
+                          right: 8,
+                          child: Container(
+                            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black87,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              video.duration!,
+                              style: TextStyle(color: Colors.white, fontSize: 10),
+                            ),
+                          ),
+                        ),
+                      // 标题和作者
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          padding: EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                video.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: Colors.white, fontSize: 12),
+                              ),
+                              if (video.author != null && video.author!.isNotEmpty) ...[
+                                SizedBox(height: 2),
+                                Text(
+                                  video.author!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: Colors.grey, fontSize: 10),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        // 加载更多指示器（整行居中显示）
+        if (hasMore)
+          Container(
+            padding: EdgeInsets.all(16),
+            alignment: Alignment.center,
+            child: CircularProgressIndicator(),
+          ),
+      ],
+      );
       },
     );
   }

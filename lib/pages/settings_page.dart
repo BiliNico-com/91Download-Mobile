@@ -465,8 +465,16 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
+                      onPressed: _manageLogs,
+                      icon: Icon(Icons.folder_open, size: 18),
+                      label: Text('管理日志'),
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
                       onPressed: _clearLog,
-                      icon: Icon(Icons.delete, size: 18, color: Colors.red),
+                      icon: Icon(Icons.delete_sweep, size: 18, color: Colors.red),
                       label: Text('清空日志', style: TextStyle(color: Colors.red)),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.red,
@@ -560,6 +568,66 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     }
   }
   
+  /// 管理日志 - 查看和删除日志文件列表
+  Future<void> _manageLogs() async {
+    final files = await logger.getAllLogFiles();
+    
+    if (!mounted) return;
+    
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('暂无日志文件')),
+      );
+      return;
+    }
+    
+    // 显示日志列表对话框
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => _LogManagerDialog(files: files),
+    );
+    
+    if (result == null || !mounted) return;
+    
+    if (result == 'clear_all') {
+      // 清空所有日志
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('确认清空'),
+          content: Text('确定要删除所有日志文件吗？'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text('取消')),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text('确定', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      );
+      
+      if (confirm == true) {
+        final count = await logger.deleteAllSavedLogs();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('已删除 $count 个日志文件')),
+          );
+        }
+      }
+    } else if (result.startsWith('delete:')) {
+      // 删除单个日志
+      final filePath = result.substring(7);
+      final success = await logger.deleteLogFile(filePath);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(success ? '日志已删除' : '删除失败')),
+        );
+      }
+      // 重新显示列表
+      _manageLogs();
+    }
+  }
+  
   Future<void> _clearLog() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -582,5 +650,127 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         SnackBar(content: Text('日志已清空')),
       );
     }
+  }
+}
+
+/// 日志管理对话框
+class _LogManagerDialog extends StatefulWidget {
+  final List<File> files;
+  
+  _LogManagerDialog({required this.files});
+  
+  @override
+  State<_LogManagerDialog> createState() => _LogManagerDialogState();
+}
+
+class _LogManagerDialogState extends State<_LogManagerDialog> {
+  Set<String> _selectedFiles = {};
+  
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('日志管理'),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 400,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '共 ${widget.files.length} 个日志文件',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+            SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                itemCount: widget.files.length,
+                itemBuilder: (context, index) {
+                  final file = widget.files[index];
+                  final fileName = file.path.split('/').last;
+                  final fileSize = file.lengthSync();
+                  final modifiedTime = file.lastModifiedSync();
+                  final isSelected = _selectedFiles.contains(file.path);
+                  
+                  return ListTile(
+                    dense: true,
+                    leading: Checkbox(
+                      value: isSelected,
+                      onChanged: (value) {
+                        setState(() {
+                          if (value == true) {
+                            _selectedFiles.add(file.path);
+                          } else {
+                            _selectedFiles.remove(file.path);
+                          }
+                        });
+                      },
+                    ),
+                    title: Text(
+                      fileName,
+                      style: TextStyle(fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      '${_formatFileSize(fileSize)} · ${_formatDateTime(modifiedTime)}',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    trailing: IconButton(
+                      icon: Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                      onPressed: () {
+                        Navigator.pop(context, 'delete:${file.path}');
+                      },
+                    ),
+                    onTap: () {
+                      setState(() {
+                        if (isSelected) {
+                          _selectedFiles.remove(file.path);
+                        } else {
+                          _selectedFiles.add(file.path);
+                        }
+                      });
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('取消'),
+        ),
+        if (_selectedFiles.isNotEmpty)
+          TextButton(
+            onPressed: () async {
+              for (final path in _selectedFiles) {
+                await logger.deleteLogFile(path);
+              }
+              if (mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('已删除 ${_selectedFiles.length} 个日志文件')),
+                );
+              }
+            },
+            child: Text('删除选中', style: TextStyle(color: Colors.red)),
+          ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, 'clear_all'),
+          child: Text('清空全部', style: TextStyle(color: Colors.red)),
+        ),
+      ],
+    );
+  }
+  
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+  
+  String _formatDateTime(DateTime dt) {
+    return '${dt.month}/${dt.day} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }

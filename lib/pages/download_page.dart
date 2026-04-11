@@ -613,8 +613,11 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
+                  // 显示已下载/总大小
                   Text(
-                    task.progressText.isNotEmpty ? task.progressText : '${(task.progress * 100).toStringAsFixed(1)}%',
+                    task.progressText.isNotEmpty 
+                        ? task.progressText 
+                        : '${(task.progress * 100).toStringAsFixed(1)}%',
                     style: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                   // 显示下载速度

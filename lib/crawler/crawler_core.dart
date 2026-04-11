@@ -530,6 +530,16 @@ class CrawlerCore {
       // ===== porn91 专用策略 =====
       if (_siteType == "porn91") {
         
+        // 从封面URL提取视频ID（如 https://.../thumb/1192622.jpg -> 1192622）
+        String? videoId;
+        if (video.cover != null && video.cover!.isNotEmpty) {
+          final idMatch = RegExp(r'/(\d+)\.jpe?g').firstMatch(video.cover!);
+          if (idMatch != null) {
+            videoId = idMatch.group(1);
+            await logger.log('Crawler', '从封面提取视频ID: $videoId');
+          }
+        }
+        
         // 策略 A: strencode2("%3c%73%6f...") — URL 编码的 <source> 标签
         final strencodeMatch = RegExp(r'''strencode2\(["'](%[0-9a-fA-F]{2}[^"']+)["']\)''').firstMatch(html);
         if (strencodeMatch != null) {
@@ -537,12 +547,31 @@ class CrawlerCore {
             final encoded = strencodeMatch.group(1)!;
             final decoded = Uri.decodeComponent(encoded);
             
-            // 从解码后的 HTML 中提取 src 属性
-            final srcMatch = RegExp(r'''src=["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)["']''', caseSensitive: false).firstMatch(decoded);
-            if (srcMatch != null) {
-              videoUrl = srcMatch.group(1)?.replaceAll('&amp;', '&');
-              extractionMethod = 'strencode2解码';
-            } else {
+            // 遍历所有解码的 src 属性，优先匹配视频ID
+            final srcPattern = RegExp(r'''src=["']([^"']+)["']''', caseSensitive: false);
+            final srcMatches = srcPattern.allMatches(decoded).toList();
+            
+            await logger.log('Crawler', '[策略A] strencode2解码找到 ${srcMatches.length} 个src标签');
+            
+            // 优先匹配视频ID的source
+            for (var i = 0; i < srcMatches.length; i++) {
+              final src = srcMatches[i].group(1)?.replaceAll('&amp;', '&') ?? '';
+              
+              if (src.contains('.mp4') || src.contains('.m3u8')) {
+                // 如果有视频ID，优先匹配包含该ID的URL
+                if (videoId != null && src.contains(videoId)) {
+                  videoUrl = src;
+                  extractionMethod = 'strencode2解码(ID匹配)';
+                  await logger.log('Crawler', '[策略A] src[$i] ID匹配成功: $src');
+                  break;
+                }
+                // 否则记录为候选（取最后一个）
+                if (videoUrl == null || i == srcMatches.length - 1) {
+                  videoUrl = src;
+                  extractionMethod = 'strencode2解码';
+                  await logger.log('Crawler', '[策略A] src[$i] 作为候选: $src');
+                }
+              }
             }
           } catch (e) {
             await logger.log('Crawler', '[策略A] strencode2 解码失败: $e');
@@ -553,16 +582,6 @@ class CrawlerCore {
         // 策略 B: 直接查找 <source> 标签
         // 注意：页面可能有多个 source，第一个可能是广告，需要匹配视频ID
         if (videoUrl == null) {
-          
-          // 从封面URL提取视频ID（如 https://.../thumb/1192622.jpg -> 1192622）
-          String? videoId;
-          if (video.cover != null && video.cover!.isNotEmpty) {
-            final idMatch = RegExp(r'/(\d+)\.jpe?g').firstMatch(video.cover!);
-            if (idMatch != null) {
-              videoId = idMatch.group(1);
-              await logger.log('Crawler', '从封面提取视频ID: $videoId');
-            }
-          }
           
           final sourcePattern = RegExp(r'''<source[^>]+src=["']([^"']+)["']''', caseSensitive: false);
           final sourceMatches = sourcePattern.allMatches(html).toList();
