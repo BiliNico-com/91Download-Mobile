@@ -184,6 +184,7 @@ class CrawlerCore {
       final playvthumbMatch = CrawlerConfig.playvthumbPattern.firstMatch(wellContent);
       if (playvthumbMatch != null) {
         cover = VideoInfo.buildCoverUrl(playvthumbMatch.group(1)!);
+        print('[Crawler] 从 playvthumb 提取封面: $cover');
       } else {
         // 后备方案：从 img 标签提取封面
         final imgMatch = RegExp(r'<img[^>]*src="([^"]+)"[^>]*>').firstMatch(wellContent);
@@ -196,6 +197,9 @@ class CrawlerCore {
           } else if (imgSrc.isNotEmpty) {
             cover = '$baseUrl$imgSrc';
           }
+          print('[Crawler] 从 img src 提取封面: $cover');
+        } else {
+          print('[Crawler] 封面提取失败: viewkey=$viewkey');
         }
       }
       
