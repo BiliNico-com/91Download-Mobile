@@ -18,7 +18,8 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClientMixin {
   Timer? _logRefreshTimer;
   static String _logContent = '';  // 改为static，跨页面保持
-  static bool _autoRefresh = false;  // 改为static，跨页面保持
+  static bool _enableNetworkLog = true;  // 网络日志开关
+  static bool _enableUIOperationLog = true;  // UI操作日志开关
   
   @override
   bool get wantKeepAlive => true;  // 保持状态
@@ -28,13 +29,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     super.initState();
     Future.microtask(() {
       context.read<AppState>().init();
-      // 如果之前开启了自动刷新，恢复定时器
-      if (_autoRefresh) {
-        _startAutoRefresh();
-      } else {
-        // 自动加载一次日志
-        _refreshLog();
-      }
+      // 自动开启日志刷新和滚动
+      _startAutoRefresh();
     });
   }
   
@@ -53,20 +49,12 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   
   // 启动自动刷新日志
   void _startAutoRefresh() {
-    _autoRefresh = true;
     _logRefreshTimer?.cancel();
     _logRefreshTimer = Timer.periodic(Duration(milliseconds: 500), (_) {
       _refreshLog();
     });
     // 立即刷新一次
     _refreshLog();
-  }
-  
-  // 停止自动刷新
-  void _stopAutoRefresh() {
-    _autoRefresh = false;
-    _logRefreshTimer?.cancel();
-    _logRefreshTimer = null;
   }
   
   // 刷新日志内容
@@ -165,7 +153,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 if (site != null) {
                   // 先记录日志，再执行操作
                   print('[Settings] 选择站点: $site');
-                  await logger.i('Settings', 'UI操作: 切换站点 -> $site');
+                  if (_enableUIOperationLog) {
+                    await logger.i('Settings', 'UI操作: 切换站点 -> $site');
+                  }
                   appState.changeSite(site);
                   print('[Settings] 站点已切换, currentSite=${appState.currentSite}');
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -250,14 +240,18 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         await dir.create(recursive: true);
       }
       appState.setDownloadDir(path);
-      await logger.i('Settings', '设置下载目录: $path');
+      if (_enableUIOperationLog) {
+        await logger.i('Settings', '设置下载目录: $path');
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('已设置下载目录: $path')),
         );
       }
     } catch (e) {
-      await logger.e('Settings', '设置下载目录失败: $e');
+      if (_enableUIOperationLog) {
+        await logger.e('Settings', '设置下载目录失败: $e');
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('设置失败: $e')),
@@ -267,7 +261,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
   
   void _selectDownloadDirectory(AppState appState) async {
-    await logger.i('Settings', '点击选择下载目录');
+    if (_enableUIOperationLog) {
+      await logger.i('Settings', '点击选择下载目录');
+    }
     
     // 尝试使用 file_picker 选择目录
     try {
@@ -278,7 +274,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         return;
       }
     } catch (e) {
-      await logger.w('Settings', 'file_picker 不可用: $e');
+      if (_enableNetworkLog) {
+        await logger.w('Settings', 'file_picker 不可用: $e');
+      }
     }
     
     // 如果 file_picker 失败，显示手动输入对话框
@@ -334,7 +332,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       return;
     }
     
-    await logger.i('Settings', '打开下载目录: $path');
+    if (_enableUIOperationLog) {
+      await logger.i('Settings', '打开下载目录: $path');
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('目录路径: $path')),
     );
@@ -367,7 +367,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               value: appState.useExternalPlayer,
               onChanged: (v) {
                 appState.setExternalPlayer(v);
-                logger.i('Settings', 'UI操作: 切换外部播放器 -> $v');
+                if (_enableUIOperationLog) {
+                  logger.i('Settings', 'UI操作: 切换外部播放器 -> $v');
+                }
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(v ? '已切换到外部播放器' : '已切换到内置播放器'),
@@ -401,7 +403,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     onSelected: (selected) {
                       if (selected) {
                         appState.setVideoDisplayMode('grid');
-                        logger.i('Settings', 'UI操作: 切换到大图模式');
+                        if (_enableUIOperationLog) {
+                          logger.i('Settings', 'UI操作: 切换到大图模式');
+                        }
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('已切换到大图模式')),
                         );
@@ -424,7 +428,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     onSelected: (selected) {
                       if (selected) {
                         appState.setVideoDisplayMode('list');
-                        logger.i('Settings', 'UI操作: 切换到列表模式');
+                        if (_enableUIOperationLog) {
+                          logger.i('Settings', 'UI操作: 切换到列表模式');
+                        }
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('已切换到列表模式')),
                         );
@@ -478,7 +484,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               trailing: !appState.permissionGranted
                 ? TextButton(
                     onPressed: () async {
-                      await logger.i('Settings', 'UI操作: 点击授权按钮');
+                      if (_enableUIOperationLog) {
+                        await logger.i('Settings', 'UI操作: 点击授权按钮');
+                      }
                       await appState.requestPermissions();
                     },
                     child: Text('授权'),
@@ -516,7 +524,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               onChanged: (v) {
                 appState.showBackToTop = v;
                 appState.notifyListeners();
-                logger.i('Settings', 'UI操作: 切换回顶部按钮 -> $v');
+                if (_enableUIOperationLog) {
+                  logger.i('Settings', 'UI操作: 切换回顶部按钮 -> $v');
+                }
               },
             ),
             if (appState.showBackToTop)
@@ -532,7 +542,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   onSelectionChanged: (s) {
                     appState.backToTopPosition = s.first;
                     appState.notifyListeners();
-                    logger.i('Settings', 'UI操作: 回顶部按钮位置 -> ${s.first}');
+                    if (_enableUIOperationLog) {
+                      logger.i('Settings', 'UI操作: 回顶部按钮位置 -> ${s.first}');
+                    }
                   },
                 ),
               ),
@@ -551,7 +563,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 onSelectionChanged: (s) {
                   appState.videoDisplayMode = s.first;
                   appState.notifyListeners();
-                  logger.i('Settings', 'UI操作: 视频显示模式 -> ${s.first}');
+                  if (_enableUIOperationLog) {
+                    logger.i('Settings', 'UI操作: 视频显示模式 -> ${s.first}');
+                  }
                 },
               ),
             ),
@@ -565,7 +579,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               onChanged: (v) {
                 appState.useExternalPlayer = v;
                 appState.notifyListeners();
-                logger.i('Settings', 'UI操作: 外部播放器 -> $v');
+                if (_enableUIOperationLog) {
+                  logger.i('Settings', 'UI操作: 外部播放器 -> $v');
+                }
               },
             ),
             Divider(),
@@ -575,27 +591,57 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               subtitle: Text('开启后将记录运行日志'),
               value: appState.debugMode,
               onChanged: (v) async {
-                await logger.i('Settings', 'UI操作: 切换Debug模式 -> $v');
+                if (_enableUIOperationLog) {
+                  await logger.i('Settings', 'UI操作: 切换Debug模式 -> $v');
+                }
                 await appState.toggleDebug(v);
               },
             ),
             if (appState.debugMode) ...[
               SizedBox(height: 8),
-              // 实时日志开关
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text('实时日志'),
-                subtitle: Text(_autoRefresh ? '每0.5秒自动刷新' : '点击下方按钮刷新'),
-                value: _autoRefresh,
-                onChanged: (v) {
-                  if (v) {
-                    _startAutoRefresh();
-                    logger.i('Settings', 'UI操作: 开启实时日志');
-                  } else {
-                    _stopAutoRefresh();
-                    logger.i('Settings', 'UI操作: 关闭实时日志');
-                  }
-                },
+              // 日志类型过滤复选框
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('日志过滤', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: _enableNetworkLog,
+                          onChanged: (v) {
+                            setState(() {
+                              _enableNetworkLog = v ?? true;
+                            });
+                            if (_enableUIOperationLog) {
+                              logger.i('Settings', 'UI操作: 网络日志开关 -> $_enableNetworkLog');
+                            }
+                          },
+                        ),
+                        Text('网络日志'),
+                        SizedBox(width: 16),
+                        Checkbox(
+                          value: _enableUIOperationLog,
+                          onChanged: (v) {
+                            setState(() {
+                              _enableUIOperationLog = v ?? true;
+                            });
+                            if (_enableUIOperationLog) {
+                              logger.i('Settings', 'UI操作: UI操作日志开关 -> $_enableUIOperationLog');
+                            }
+                          },
+                        ),
+                        Text('UI操作日志'),
+                      ],
+                    ),
+                  ],
+                ),
               ),
               SizedBox(height: 8),
               Row(
@@ -604,7 +650,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     child: OutlinedButton.icon(
                       onPressed: () async {
                         await _refreshLog();
-                        await logger.i('Settings', 'UI操作: 手动刷新日志');
+                        if (_enableUIOperationLog) {
+                          await logger.i('Settings', 'UI操作: 手动刷新日志');
+                        }
                       },
                       icon: Icon(Icons.refresh, size: 18),
                       label: Text('刷新日志'),
@@ -643,22 +691,16 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   ),
                 ],
               ),
-              // 日志显示区域
+              // 日志显示区域（自动刷新滚动）
               SizedBox(height: 12),
               Container(
-                constraints: BoxConstraints(minHeight: 100, maxHeight: 300),
+                constraints: BoxConstraints(minHeight: 200, maxHeight: 350),
                 padding: EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: Colors.black,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: SingleChildScrollView(
-                  reverse: true, // 最新日志在底部
-                  child: Text(
-                    _logContent.isEmpty ? '暂无日志，开启实时日志或点击刷新' : _logContent,
-                    style: TextStyle(fontSize: 10, color: Colors.green, fontFamily: 'monospace'),
-                  ),
-                ),
+                child: _LogScrollView(logContent: _logContent),
               ),
             ],
           ],
@@ -666,7 +708,10 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       ),
     );
   }
-
+  
+  /// 日志滚动视图（自动滚动到最新）
+  static final ScrollController _logScrollController = ScrollController();
+  
   Widget _buildAboutSection() {
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -685,7 +730,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
             SizedBox(height: 12),
             Text('91Download 移动端', style: TextStyle(fontSize: 14)),
             SizedBox(height: 4),
-            Text('版本: v1.0.4', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            Text('版本: v1.0.5', style: TextStyle(fontSize: 12, color: Colors.grey)),
             SizedBox(height: 8),
             Text('视频下载工具移动端版本', style: TextStyle(fontSize: 12, color: Colors.grey)),
             SizedBox(height: 8),
@@ -700,7 +745,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
   
   Future<void> _exportLog() async {
-    await logger.i('Settings', 'UI操作: 点击分享日志');
+    if (_enableUIOperationLog) {
+      await logger.i('Settings', 'UI操作: 点击分享日志');
+    }
     final content = await logger.getLogContent();
     if (content.isEmpty || content == '暂无日志') {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -713,7 +760,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
   
   Future<void> _saveLog(String downloadDir) async {
-    await logger.i('Settings', 'UI操作: 点击保存日志');
+    if (_enableUIOperationLog) {
+      await logger.i('Settings', 'UI操作: 点击保存日志');
+    }
     if (downloadDir.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('下载目录未初始化')),
@@ -726,7 +775,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('日志已保存到: $savedPath')),
       );
-      await logger.i('Settings', '日志已保存: $savedPath');
+      if (_enableUIOperationLog) {
+        await logger.i('Settings', '日志已保存: $savedPath');
+      }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('保存日志失败')),
@@ -735,7 +786,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
   
   Future<void> _clearLog() async {
-    await logger.i('Settings', 'UI操作: 点击清空日志');
+    if (_enableUIOperationLog) {
+      await logger.i('Settings', 'UI操作: 点击清空日志');
+    }
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -760,5 +813,57 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         SnackBar(content: Text('日志已清空')),
       );
     }
+  }
+}
+
+/// 日志滚动视图组件（自动滚动到最新内容）
+class _LogScrollView extends StatefulWidget {
+  final String logContent;
+  
+  const _LogScrollView({required this.logContent});
+  
+  @override
+  State<_LogScrollView> createState() => _LogScrollViewState();
+}
+
+class _LogScrollViewState extends State<_LogScrollView> {
+  static final ScrollController _controller = ScrollController();
+  String _lastContent = '';
+  
+  @override
+  void didUpdateWidget(_LogScrollView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 当日志内容更新时，自动滚动到底部
+    if (widget.logContent != _lastContent && widget.logContent.isNotEmpty) {
+      _lastContent = widget.logContent;
+      // 延迟执行滚动，确保内容已渲染
+      Future.delayed(Duration(milliseconds: 50), () {
+        if (_controller.hasClients) {
+          _controller.animateTo(
+            _controller.position.maxScrollExtent,
+            duration: Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+  }
+  
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      controller: _controller,
+      reverse: false, // 最新日志在底部
+      child: SelectableText(
+        widget.logContent.isEmpty ? '暂无日志' : widget.logContent,
+        style: TextStyle(fontSize: 10, color: Colors.green, fontFamily: 'monospace'),
+      ),
+    );
   }
 }

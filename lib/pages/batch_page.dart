@@ -101,7 +101,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     } else {
       setState(() {
         _videos.addAll(newVideos);
-        // 不再自动全选
       });
     }
     
@@ -208,13 +207,23 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                 tooltip: appState.privacyMode ? '取消模糊' : '模糊预览图',
               ),
               SizedBox(width: 8),
+              // 就绪状态
               Container(
+                margin: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
                 padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.2),
+                  color: _status == '就绪' ? Colors.green.withOpacity(0.2) : Colors.orange.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Text(_status, style: TextStyle(color: Colors.green)),
+                child: Center(
+                  child: Text(
+                    _status,
+                    style: TextStyle(
+                      color: _status == '就绪' ? Colors.green : Colors.orange,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
               ),
               SizedBox(width: 8),
             ],
@@ -233,34 +242,37 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   _buildBottomBar(),
                 ],
               ),
-              // 回顶部按钮
+              // 回顶部按钮和页码显示（在批量页保持原有位置，功能与搜索页一致）
               if (_showBackToTop && appState.showBackToTop)
                 Positioned(
                   bottom: 80,
                   left: appState.backToTopPosition == 'left' ? 16 : null,
                   right: appState.backToTopPosition == 'right' ? 16 : null,
-                  child: FloatingActionButton(
-                    mini: true,
-                    onPressed: _scrollToTop,
-                    child: Icon(Icons.arrow_upward),
-                  ),
-                ),
-              // 悬浮页码显示（在回顶部上方）
-              if (_showBackToTop && _currentPage > 0)
-                Positioned(
-                  bottom: 140,
-                  left: appState.backToTopPosition == 'left' ? 16 : null,
-                  right: appState.backToTopPosition == 'right' ? 16 : null,
-                  child: Container(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      '第 $_currentPage 页',
-                      style: TextStyle(color: Colors.white, fontSize: 12),
-                    ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 悬浮页码显示
+                      if (_currentPage > 0)
+                        Container(
+                          margin: EdgeInsets.only(bottom: 8),
+                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.black87,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Text(
+                            '第 $_currentPage 页',
+                            style: TextStyle(color: Colors.white, fontSize: 12),
+                          ),
+                        ),
+                      // 回顶部按钮
+                      FloatingActionButton(
+                        mini: true,
+                        heroTag: 'batch_back_to_top',
+                        onPressed: _scrollToTop,
+                        child: Icon(Icons.arrow_upward),
+                      ),
+                    ],
                   ),
                 ),
             ],
@@ -549,93 +561,102 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
             });
           },
           child: Card(
+            clipBehavior: Clip.antiAlias,
             color: isSelected ? Colors.blue.withOpacity(0.2) : null,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Stack(
+              fit: StackFit.expand,
               children: [
-                Expanded(
-                  child: Stack(
-                    children: [
-                      // 封面
-                      Positioned.fill(
-                        child: video.cover != null
-                          ? Image.network(video.cover!, fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                color: Colors.grey[800],
-                                child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
-                              ))
-                          : Container(
-                              color: Colors.grey[800],
-                              child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
-                            ),
+                // 封面
+                Positioned.fill(
+                  child: video.cover != null
+                    ? Image.network(video.cover!, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: Colors.grey[800],
+                          child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
+                        ))
+                    : Container(
+                        color: Colors.grey[800],
+                        child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
                       ),
-                      // 时长标签
-                      if (video.duration != null)
-                        Positioned(
-                          bottom: 4,
-                          right: 4,
-                          child: Container(
-                            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.black87,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              video.duration!,
-                              style: TextStyle(color: Colors.white, fontSize: 10),
-                            ),
-                          ),
-                        ),
-                      // 选中标记
-                      if (isSelected)
-                        Positioned(
-                          top: 4,
-                          right: 4,
-                          child: Container(
-                            padding: EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: Colors.blue,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(Icons.check, color: Colors.white, size: 16),
-                          ),
-                        ),
-                      // 毛玻璃模糊遮罩
-                      if (appState.privacyMode)
-                        Positioned.fill(
-                          child: ClipRect(
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                              child: Container(
-                                color: Colors.black.withOpacity(0.3),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
                 ),
-                Padding(
-                  padding: EdgeInsets.all(8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        video.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12),
+                // 时长标签
+                if (video.duration != null)
+                  Positioned(
+                    bottom: 50,
+                    right: 4,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(4),
                       ),
-                      if (video.author != null && video.author!.isNotEmpty) ...[
-                        SizedBox(height: 2),
-                        Text(
-                          video.author!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 10, color: Colors.grey),
+                      child: Text(
+                        video.duration!,
+                        style: TextStyle(color: Colors.white, fontSize: 10),
+                      ),
+                    ),
+                  ),
+                // 选中标记
+                if (isSelected)
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: Container(
+                      padding: EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.blue,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.check, color: Colors.white, size: 16),
+                    ),
+                  ),
+                // 毛玻璃模糊遮罩
+                if (appState.privacyMode)
+                  Positioned.fill(
+                    child: ClipRect(
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                        child: Container(
+                          color: Colors.black.withOpacity(0.3),
                         ),
+                      ),
+                    ),
+                  ),
+                // 标题和作者
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          video.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                        if (video.author != null && video.author!.isNotEmpty) ...[
+                          SizedBox(height: 2),
+                          Text(
+                            video.author!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: Colors.grey, fontSize: 10),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ],
@@ -650,33 +671,69 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     return Container(
       padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.grey[900],
-        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
-      ),
-      child: Row(
-        children: [
-          // 只有选中了视频才显示全选按钮
-          if (_selectedIds.isNotEmpty)
-            TextButton(
-              onPressed: () async {
-                final isAllSelected = _selectedIds.length == _videos.length;
-                await logger.i('Batch', 'UI操作: ${isAllSelected ? "取消全选" : "全选"}');
-                setState(() {
-                  if (isAllSelected) {
-                    _selectedIds.clear();
-                  } else {
-                    _selectedIds = _videos.map((v) => v.id).toSet();
-                  }
-                });
-              },
-              child: Text(_selectedIds.length == _videos.length ? '取消全选' : '全选'),
-            ),
-          Spacer(),
-          FilledButton(
-            onPressed: _selectedIds.isEmpty ? null : _startDownload,
-            child: Text('下载 (${_selectedIds.length})'),
+        color: Theme.of(context).cardColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 4,
+            offset: Offset(0, -2),
           ),
         ],
+      ),
+      child: SafeArea(
+        child: Row(
+          children: [
+            // 只有选中了视频才显示全选按钮（与搜索页一致）
+            if (_selectedIds.isNotEmpty)
+              TextButton(
+                onPressed: () async {
+                  final isAllSelected = _selectedIds.length == _videos.length;
+                  await logger.i('Batch', 'UI操作: ${isAllSelected ? "取消全选" : "全选"}');
+                  setState(() {
+                    if (isAllSelected) {
+                      _selectedIds.clear();
+                    } else {
+                      _selectedIds = _videos.map((v) => v.id).toSet();
+                    }
+                  });
+                },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _selectedIds.length == _videos.length 
+                        ? Icons.check_box 
+                        : Icons.check_box_outline_blank,
+                      size: 18,
+                    ),
+                    SizedBox(width: 4),
+                    Text(_selectedIds.length == _videos.length ? '取消全选' : '全选'),
+                  ],
+                ),
+              ),
+            Spacer(),
+            // 已选数量提示
+            if (_selectedIds.isNotEmpty)
+              Container(
+                margin: EdgeInsets.only(right: 12),
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '已选 ${_selectedIds.length} 个',
+                  style: TextStyle(fontSize: 12, color: Colors.blue),
+                ),
+              ),
+            // 下载按钮（与搜索页一致）
+            FilledButton.icon(
+              onPressed: _selectedIds.isEmpty ? null : _startDownload,
+              icon: Icon(Icons.download),
+              label: Text('下载 (${_selectedIds.length})'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -685,11 +742,14 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     print('[Batch] _loadVideos 开始执行');
     print('[Batch] _isLoading=$_isLoading, _selectedType=$_selectedType');
     
+    setState(() {
+      _status = '加载中...';
+    });
+    
     await logger.i('Batch', 'UI操作: 点击加载按钮, 类型=$_selectedType, 页码=$_pageStart-$_pageEnd');
     
     setState(() {
       _isLoading = true;
-      _status = '加载中...';
       _videos.clear();
     });
     print('[Batch] 状态已更新: _isLoading=$_isLoading, _status=$_status');
@@ -722,7 +782,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       _videos = videos;
       _selectedIds.clear();  // 默认不全选
       _isLoading = false;
-      _status = '就绪';
+      _status = videos.isEmpty ? '无结果' : '就绪';
       _currentPage = _pageEnd;  // 记录当前页码
       _hasMore = videos.length == (_pageEnd - _pageStart + 1) * 24;  // 假设每页24个
     });

@@ -129,7 +129,19 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                         }
                       });
                     },
-                    child: Text(_selectedIds.length == tasks.length ? '取消全选' : '全选'),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _selectedIds.length == tasks.length 
+                            ? Icons.check_box 
+                            : Icons.check_box_outline_blank,
+                          size: 18,
+                        ),
+                        SizedBox(width: 4),
+                        Text(_selectedIds.length == tasks.length ? '取消全选' : '全选'),
+                      ],
+                    ),
                   ),
                   Spacer(),
                   if (_selectedIds.isNotEmpty)
@@ -154,7 +166,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                 ),
               ),
             ),
-            // 底部批量操作栏
+            // 底部批量操作栏（与搜索页一致）
             if (_selectedIds.isNotEmpty)
               Container(
                 padding: EdgeInsets.all(16),
@@ -168,34 +180,36 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                     ),
                   ],
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildActionButton(
-                      icon: Icons.play_arrow,
-                      label: '开始',
-                      color: Colors.green,
-                      onPressed: () => _batchStart(appState),
-                    ),
-                    _buildActionButton(
-                      icon: Icons.pause,
-                      label: '暂停',
-                      color: Colors.orange,
-                      onPressed: () => _batchPause(appState),
-                    ),
-                    _buildActionButton(
-                      icon: Icons.stop,
-                      label: '停止',
-                      color: Colors.red,
-                      onPressed: () => _batchStop(appState),
-                    ),
-                    _buildActionButton(
-                      icon: Icons.delete,
-                      label: '删除',
-                      color: Colors.red,
-                      onPressed: () => _batchDelete(appState),
-                    ),
-                  ],
+                child: SafeArea(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildActionButton(
+                        icon: Icons.play_arrow,
+                        label: '开始',
+                        color: Colors.green,
+                        onPressed: () => _batchStart(appState),
+                      ),
+                      _buildActionButton(
+                        icon: Icons.pause,
+                        label: '暂停',
+                        color: Colors.orange,
+                        onPressed: () => _batchPause(appState),
+                      ),
+                      _buildActionButton(
+                        icon: Icons.stop,
+                        label: '停止',
+                        color: Colors.red,
+                        onPressed: () => _batchStop(appState),
+                      ),
+                      _buildActionButton(
+                        icon: Icons.delete,
+                        label: '删除',
+                        color: Colors.red,
+                        onPressed: () => _batchDeleteWithConfirm(appState),
+                      ),
+                    ],
+                  ),
                 ),
               ),
           ],
@@ -264,14 +278,86 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     });
   }
   
-  void _batchDelete(AppState appState) async {
-    await logger.i('DownloadPage', '批量删除: ${_selectedIds.length} 个任务');
-    for (final id in _selectedIds.toList()) {
-      appState.downloadManager.cancelTask(id);
+  /// 批量删除（带确认对话框，询问是否删除本地文件）
+  void _batchDeleteWithConfirm(AppState appState) async {
+    final count = _selectedIds.length;
+    
+    final result = await showDialog<Map<String, bool>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('确认删除'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('确定要删除选中的 $count 个任务吗？'),
+            SizedBox(height: 16),
+            StatefulBuilder(
+              builder: (context, setDialogState) {
+                bool deleteFile = false;
+                return Row(
+                  children: [
+                    Checkbox(
+                      value: deleteFile,
+                      onChanged: (v) {
+                        setDialogState(() {
+                          deleteFile = v ?? false;
+                        });
+                      },
+                    ),
+                    Expanded(
+                      child: Text('同时删除本地文件', style: TextStyle(fontSize: 14)),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              // 获取复选框状态
+              final checkbox = context.findAncestorStateOfType<State>();
+              final deleteFile = checkbox != null;
+              Navigator.pop(context, {'deleteFile': deleteFile});
+            },
+            child: Text('确定', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    
+    if (result != null) {
+      final deleteFile = result['deleteFile'] ?? false;
+      await logger.i('DownloadPage', '批量删除: $count 个任务, deleteFile=$deleteFile');
+      
+      for (final id in _selectedIds.toList()) {
+        if (deleteFile) {
+          // 删除任务和本地文件
+          final task = appState.downloadManager.getTask(id);
+          if (task?.filePath != null) {
+            try {
+              final file = File(task!.filePath!);
+              if (await file.exists()) {
+                await file.delete();
+                await logger.i('DownloadPage', '已删除本地文件: ${task.filePath}');
+              }
+            } catch (e) {
+              await logger.e('DownloadPage', '删除文件失败: $e');
+            }
+          }
+        }
+        appState.downloadManager.cancelTask(id);
+      }
+      setState(() {
+        _selectedIds.clear();
+      });
     }
-    setState(() {
-      _selectedIds.clear();
-    });
   }
   
   Widget _buildCompletedTab() {
@@ -311,13 +397,32 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                           }
                         });
                       },
-                      child: Text(_selectedIds.length == tasks.length ? '取消全选' : '全选'),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _selectedIds.length == tasks.length 
+                              ? Icons.check_box 
+                              : Icons.check_box_outline_blank,
+                            size: 18,
+                          ),
+                          SizedBox(width: 4),
+                          Text(_selectedIds.length == tasks.length ? '取消全选' : '全选'),
+                        ],
+                      ),
                     ),
                     Spacer(),
                     if (_selectedIds.isNotEmpty)
                       TextButton(
-                        onPressed: () => _deleteSelected(appState),
-                        child: Text('删除 (${_selectedIds.length})', style: TextStyle(color: Colors.red)),
+                        onPressed: () => _deleteSelectedWithConfirm(appState),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.delete, size: 18, color: Colors.red),
+                            SizedBox(width: 4),
+                            Text('删除 (${_selectedIds.length})', style: TextStyle(color: Colors.red)),
+                          ],
+                        ),
                       ),
                   ],
                 ),
@@ -338,14 +443,16 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                 child: Row(
                   children: [
                     Expanded(
-                      child: OutlinedButton(
+                      child: OutlinedButton.icon(
                         onPressed: () {
                           appState.downloadManager.clearCompleted();
                           setState(() {
                             _selectedIds.clear();
                           });
+                          logger.i('DownloadPage', '清空已完成记录');
                         },
-                        child: Text('清空记录'),
+                        icon: Icon(Icons.delete_sweep, color: Colors.orange),
+                        label: Text('清空记录', style: TextStyle(color: Colors.orange)),
                       ),
                     ),
                   ],
@@ -356,6 +463,86 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
         );
       },
     );
+  }
+  
+  /// 删除选中任务（带确认对话框，询问是否删除本地文件）
+  void _deleteSelectedWithConfirm(AppState appState) async {
+    final count = _selectedIds.length;
+    
+    final result = await showDialog<Map<String, bool>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('确认删除'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('确定要删除选中的 $count 个下载记录吗？'),
+            SizedBox(height: 16),
+            StatefulBuilder(
+              builder: (context, setDialogState) {
+                bool deleteFile = true;  // 默认勾选删除文件
+                return Row(
+                  children: [
+                    Checkbox(
+                      value: deleteFile,
+                      onChanged: (v) {
+                        setDialogState(() {
+                          deleteFile = v ?? true;
+                        });
+                      },
+                    ),
+                    Expanded(
+                      child: Text('同时删除本地文件', style: TextStyle(fontSize: 14)),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              // 获取复选框状态（通过查找Checkbox的状态）
+              Navigator.pop(context, {'deleteFile': true});
+            },
+            child: Text('确定', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    
+    if (result != null) {
+      final deleteFile = result['deleteFile'] ?? true;
+      await logger.i('DownloadPage', '删除选中: $count 个记录, deleteFile=$deleteFile');
+      
+      for (final id in _selectedIds.toList()) {
+        if (deleteFile) {
+          // 删除本地文件
+          final task = appState.downloadManager.getTask(id);
+          if (task?.filePath != null) {
+            try {
+              final file = File(task!.filePath!);
+              if (await file.exists()) {
+                await file.delete();
+                await logger.i('DownloadPage', '已删除本地文件: ${task.filePath}');
+              }
+            } catch (e) {
+              await logger.e('DownloadPage', '删除文件失败: $e');
+            }
+          }
+        }
+        appState.downloadManager.cancelTask(id);
+      }
+      setState(() {
+        _selectedIds.clear();
+      });
+    }
   }
   
   Widget _buildDownloadTaskItem(DownloadTask task, bool selected, AppState appState) {
@@ -476,17 +663,26 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           ],
         ),
       ),
-    ),
     );
   }
   
   Widget _buildTaskControls(DownloadTask task, AppState appState) {
     switch (task.status) {
       case DownloadStatus.pending:
-        return IconButton(
-          icon: Icon(Icons.play_arrow, color: Colors.green),
-          onPressed: () => appState.downloadManager.startTask(task.id),
-          tooltip: '开始',
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(Icons.play_arrow, color: Colors.green),
+              onPressed: () => appState.downloadManager.startTask(task.id),
+              tooltip: '开始',
+            ),
+            IconButton(
+              icon: Icon(Icons.delete, color: Colors.red),
+              onPressed: () => _deleteTaskWithConfirm(task, appState),
+              tooltip: '删除',
+            ),
+          ],
         );
       case DownloadStatus.downloading:
         return Row(
@@ -505,19 +701,65 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           ],
         );
       case DownloadStatus.paused:
-        return IconButton(
-          icon: Icon(Icons.play_arrow, color: Colors.green),
-          onPressed: () => appState.downloadManager.resumeTask(task.id),
-          tooltip: '继续',
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(Icons.play_arrow, color: Colors.green),
+              onPressed: () => appState.downloadManager.resumeTask(task.id),
+              tooltip: '继续',
+            ),
+            IconButton(
+              icon: Icon(Icons.delete, color: Colors.red),
+              onPressed: () => _deleteTaskWithConfirm(task, appState),
+              tooltip: '删除',
+            ),
+          ],
         );
       case DownloadStatus.failed:
-        return IconButton(
-          icon: Icon(Icons.refresh, color: Colors.blue),
-          onPressed: () => appState.downloadManager.retryTask(task.id),
-          tooltip: '重试',
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(Icons.refresh, color: Colors.blue),
+              onPressed: () => appState.downloadManager.retryTask(task.id),
+              tooltip: '重试',
+            ),
+            IconButton(
+              icon: Icon(Icons.delete, color: Colors.red),
+              onPressed: () => _deleteTaskWithConfirm(task, appState),
+              tooltip: '删除',
+            ),
+          ],
         );
       default:
         return SizedBox.shrink();
+    }
+  }
+  
+  /// 单个任务删除（带确认对话框）
+  void _deleteTaskWithConfirm(DownloadTask task, AppState appState) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('确认删除'),
+        content: Text('确定要删除任务"${_formatTitle(task.video)}"吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('确定', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    
+    if (result == true) {
+      await logger.i('DownloadPage', '删除任务: ${task.id}');
+      appState.downloadManager.cancelTask(task.id);
     }
   }
   
@@ -691,16 +933,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
         );
       }
     }
-  }
-  
-  void _deleteSelected(AppState appState) async {
-    await logger.i('DownloadPage', '删除选中的 ${_selectedIds.length} 个任务');
-    for (final id in _selectedIds.toList()) {
-      appState.downloadManager.cancelTask(id);
-    }
-    setState(() {
-      _selectedIds.clear();
-    });
   }
   
   String _formatTitle(VideoInfo video) {
