@@ -734,9 +734,9 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         : kToolbarHeight + MediaQuery.of(context).padding.top + 8;
     
     // 使用固定高度，宽度保持50%（一排2个），只缩小高度让一屏显示更多行
-    // childAspectRatio = 宽度 / 高度，值越小高度越矮
-    // 原16:9比例(0.5625)太高，改为0.45（约2.2:1，更扁的比例）
-    const double childAspectRatio = 0.45;  // 固定扁比例，宽度:高度 = 0.45:1
+    // childAspectRatio = 宽度 / 高度，值越大高度越小（更扁）
+    // 原16:9比例(0.5625)高度较大，改为0.7让高度更小
+    const double childAspectRatio = 0.7;  // 更扁的比例，一屏显示更多行
     
     return Column(
       children: [
