@@ -560,15 +560,9 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   /// 列表模式
   Widget _buildListView() {
     final appState = context.read<AppState>();
-    // 顶部padding：AppBar高度 + 状态栏高度（因为内容延伸到AppBar下方）
-    // 如果设置区域显示，则不需要额外padding（设置区域已经有了）
-    final topPadding = _showSettings 
-        ? 8.0 
-        : kToolbarHeight + MediaQuery.of(context).padding.top + 8;
     
     return ListView.builder(
-      controller: _scrollController,
-      padding: EdgeInsets.only(left: 8, right: 8, top: topPadding, bottom: 8),
+      padding: EdgeInsets.all(8),
       itemCount: _videos.length,
       itemBuilder: (context, index) {
         final video = _videos[index];
@@ -687,156 +681,133 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   /// 大图模式（网格视图）
   Widget _buildGridView() {
     final appState = context.read<AppState>();
-    // 顶部padding：AppBar高度 + 状态栏高度（因为内容延伸到AppBar下方）
-    // 如果设置区域显示，则不需要额外padding（设置区域已经有了）
-    final topPadding = _showSettings 
-        ? 8.0 
-        : kToolbarHeight + MediaQuery.of(context).padding.top + 8;
+    const double childAspectRatio = 0.85;
     
-    // 使用固定高度，宽度保持50%（一排2个），只缩小高度让一屏显示更多行
-    // childAspectRatio = 宽度 / 高度，值越大高度越小（更扁）
-    // 原16:9比例(0.5625)高度较大，改为0.85让高度更小
-    const double childAspectRatio = 0.85;  // 更扁的比例，一屏显示更多行
-    
-    return Column(
-      children: [
-        Expanded(
-          child: GridView.builder(
-            controller: _scrollController,
-            padding: EdgeInsets.only(left: 8, right: 8, top: topPadding, bottom: 0),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              childAspectRatio: childAspectRatio,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-            ),
-            itemCount: _videos.length,
-            itemBuilder: (context, index) {
-              final video = _videos[index];
-              final isSelected = _selectedIds.contains(video.id);
-              
-              return GestureDetector(
-                onTap: () {
-                  setState(() {
-                    if (isSelected) {
-                      _selectedIds.remove(video.id);
-                    } else {
-                      _selectedIds.add(video.id);
-                    }
-                  });
-                },
-                child: Card(
-                  clipBehavior: Clip.antiAlias,
-                  color: isSelected ? Colors.blue.withOpacity(0.2) : null,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      // 封面
-                      Positioned.fill(
-                        child: video.cover != null
-                          ? Image.network(video.cover!, fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                color: Colors.grey[800],
-                                child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
-                              ))
-                          : Container(
-                              color: Colors.grey[800],
-                              child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
-                            ),
+    return GridView.builder(
+      padding: EdgeInsets.all(8),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: childAspectRatio,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+      ),
+      itemCount: _videos.length,
+      itemBuilder: (context, index) {
+        final video = _videos[index];
+        final isSelected = _selectedIds.contains(video.id);
+        
+        return GestureDetector(
+          onTap: () {
+            setState(() {
+              if (isSelected) {
+                _selectedIds.remove(video.id);
+              } else {
+                _selectedIds.add(video.id);
+              }
+            });
+          },
+          child: Card(
+            clipBehavior: Clip.antiAlias,
+            color: isSelected ? Colors.blue.withOpacity(0.2) : null,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // 封面
+                Positioned.fill(
+                  child: video.cover != null
+                    ? Image.network(video.cover!, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: Colors.grey[800],
+                          child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
+                        ))
+                    : Container(
+                        color: Colors.grey[800],
+                        child: Icon(Icons.play_circle, size: 48, color: Colors.white54),
                       ),
-                      // 毛玻璃模糊遮罩（仅模糊封面）
-                      if (appState.privacyMode)
-                        Positioned.fill(
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                            child: Container(
-                              color: Colors.black.withOpacity(0.3),
-                            ),
-                          ),
-                        ),
-                      // 选中标记（右上角，在毛玻璃之上）
-                      if (isSelected)
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: Container(
-                            padding: EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: Colors.blue,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(Icons.check, color: Colors.white, size: 16),
-                          ),
-                        ),
-                      // 时长标签（右下角，在标题上方，在毛玻璃之上）
-                      if (video.duration != null)
-                        Positioned(
-                          bottom: 50,  // 在标题区域上方
-                          right: 8,
-                          child: Container(
-                            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.black87,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              video.duration!,
-                              style: TextStyle(color: Colors.white, fontSize: 10),
-                            ),
-                          ),
-                        ),
-                      // 标题和作者
-                      Positioned(
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        child: Container(
-                          padding: EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                video.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: Colors.white, fontSize: 12),
-                              ),
-                              if (video.author != null && video.author!.isNotEmpty) ...[
-                                SizedBox(height: 2),
-                                Text(
-                                  video.author!,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(color: Colors.grey, fontSize: 10),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
+                ),
+                // 毛玻璃模糊遮罩（仅模糊封面）
+                if (appState.privacyMode)
+                  Positioned.fill(
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                      child: Container(
+                        color: Colors.black.withOpacity(0.3),
                       ),
-                    ],
+                    ),
+                  ),
+                // 选中标记（右上角，在毛玻璃之上）
+                if (isSelected)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.blue,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.check, color: Colors.white, size: 16),
+                    ),
+                  ),
+                // 时长标签（右下角，在标题上方）
+                if (video.duration != null)
+                  Positioned(
+                    bottom: 50,
+                    right: 8,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        video.duration!,
+                        style: TextStyle(color: Colors.white, fontSize: 10),
+                      ),
+                    ),
+                  ),
+                // 标题和作者
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          video.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                        if (video.author != null && video.author!.isNotEmpty) ...[
+                          SizedBox(height: 2),
+                          Text(
+                            video.author!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: Colors.grey, fontSize: 10),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
-              );
-            },
+              ],
+            ),
           ),
-        ),
-        // 加载更多指示器（仅在加载下一页时显示）
-        if (_isLoading && _videos.isNotEmpty)
-          Container(
-            padding: EdgeInsets.all(16),
-            alignment: Alignment.center,
-            child: CircularProgressIndicator(),
-          ),
-      ],
+        );
+      },
     );
   }
 
