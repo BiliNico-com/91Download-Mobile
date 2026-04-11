@@ -123,12 +123,12 @@ class CrawlerCore {
     final urlPattern = listTypes[listType];
     
     if (urlPattern == null) {
-      await logger.e('Crawler', '未知的列表类型: $listType (siteType=$_siteType)');
+      await logger.log('Crawler', '未知的列表类型: $listType (siteType=$_siteType)');
       throw Exception('未知的列表类型: $listType');
     }
     
     final url = '$baseUrl/${urlPattern.replaceAll('{page}', page.toString())}';
-    await logger.i('Crawler', '网络请求: GET $url (siteType=$_siteType)');
+    await logger.log('Crawler', '网络请求: GET $url (siteType=$_siteType)');
     
     try {
       final resp = await _dio.get(url);
@@ -143,11 +143,11 @@ class CrawlerCore {
         videos = _parseVideoListOriginal(html);
       }
       
-      await logger.i('Crawler', '解析完成, 返回 ${videos.length} 个视频');
+      await logger.log('Crawler', '解析完成, 返回 ${videos.length} 个视频');
       return videos;
       
     } catch (e) {
-      await logger.e('Crawler', '获取视频列表失败: $e');
+      await logger.log('Crawler', '获取视频列表失败: $e');
       return [];
     }
   }
@@ -398,7 +398,7 @@ class CrawlerCore {
   Future<List<VideoInfo>> searchVideos(String keyword, {int page = 1, String sort = "new"}) async {
     // 根据站点类型构建搜索URL
     final url = CrawlerConfig.buildSearchUrl(baseUrl, _siteType, keyword, page: page, sort: sort);
-    await logger.i('Crawler', '网络请求: 搜索视频 $url (siteType=$_siteType)');
+    await logger.log('Crawler', '网络请求: 搜索视频 $url (siteType=$_siteType)');
     
     try {
       final resp = await _dio.get(url);
@@ -412,10 +412,10 @@ class CrawlerCore {
         videos = _parseVideoListOriginal(html);
       }
       
-      await logger.i('Crawler', '搜索完成, 返回 ${videos.length} 个结果');
+      await logger.log('Crawler', '搜索完成, 返回 ${videos.length} 个结果');
       return videos;
     } catch (e) {
-      await logger.e('Crawler', '搜索失败: $e');
+      await logger.log('Crawler', '搜索失败: $e');
       return [];
     }
   }
@@ -455,7 +455,7 @@ class CrawlerCore {
       
       return authors;
     } catch (e) {
-      await logger.e('Crawler', '搜索作者失败: $e');
+      await logger.log('Crawler', '搜索作者失败: $e');
       return [];
     }
   }
@@ -495,7 +495,7 @@ class CrawlerCore {
             } else {
             }
           } catch (e) {
-            await logger.e('Crawler', '[策略A] strencode2 解码失败: $e');
+            await logger.log('Crawler', '[策略A] strencode2 解码失败: $e');
           }
         } else {
         }
@@ -653,12 +653,12 @@ class CrawlerCore {
         );
       }
       
-      await logger.e('Crawler', '========== 视频详情获取失败 ==========');
-      await logger.e('Crawler', '所有策略均未能提取到视频URL');
+      await logger.log('Crawler', '========== 视频详情获取失败 ==========');
+      await logger.log('Crawler', '所有策略均未能提取到视频URL');
       // 输出更多调试信息
       return null;
     } catch (e, stack) {
-      await logger.e('Crawler', '获取视频详情异常: $e');
+      await logger.log('Crawler', '获取视频详情异常: $e');
       return null;
     }
   }
