@@ -26,12 +26,20 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   @override
   bool get wantKeepAlive => true;  // 保持页面状态
   
-  // porn91 站点的列表类型
+  // porn91 站点的列表类型（完整12个分类）
   static const _typeNamesPorn91 = {
     'list': '视频',
+    'ori': '91原创',
     'hot': '当前最热',
     'topm': '本月最热',
-    'ori': '91原创',
+    'top': '每月最热',
+    'longer': '10分钟以上',
+    'long': '20分钟以上',
+    'rf': '本月收藏',
+    'tf': '最近加精',
+    'hd': '高清',
+    'mf': '本月讨论',
+    'md': '收藏最多',
   };
   
   // original 站点的列表类型

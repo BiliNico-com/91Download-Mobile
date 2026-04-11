@@ -6,6 +6,7 @@ import 'dart:io';
 import '../crawler/crawler_core.dart';
 import '../models/video_info.dart';
 import '../utils/logger.dart';
+import 'download_manager.dart';
 
 class AppState extends ChangeNotifier {
   // 站点配置 - 默认为空，用户必须选择
@@ -17,22 +18,25 @@ class AppState extends ChangeNotifier {
   
   // Debug模式
   bool debugMode = false;
-  
+
   // 实时日志开关
   bool realtimeLogEnabled = false;
-  
+
   // 主题
   bool isDarkMode = true;
-  
+
   // 爬虫实例
   CrawlerCore? _crawler;
   
+  // 下载管理器
+  final DownloadManager downloadManager = DownloadManager();
+
   CrawlerCore? get crawler {
     if (currentSite == null) return null;
     _crawler ??= CrawlerCore(baseUrl: currentSite!);
     return _crawler;
   }
-  
+
   // 初始化 - 请求权限并设置默认下载目录
   Future<void> init() async {
     await logger.init(debugMode);
@@ -41,7 +45,7 @@ class AppState extends ChangeNotifier {
     await initDownloadDir();
     await logger.i('AppState', '初始化完成, 权限: $permissionGranted, 下载目录: $downloadDir');
   }
-  
+
   // 请求存储权限 - 适配 Android 13+ 的细粒度媒体权限
   Future<bool> requestPermissions() async {
     if (Platform.isAndroid) {
@@ -91,7 +95,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     return permissionGranted;
   }
-  
+
   // 初始化下载目录
   Future<void> initDownloadDir() async {
     await logger.i('AppState', '开始初始化下载目录');
@@ -141,29 +145,29 @@ class AppState extends ChangeNotifier {
     await logger.i('AppState', '下载目录初始化完成: $downloadDir');
     notifyListeners();
   }
-  
+
   // 检查站点是否已选择
   bool get isSiteSelected => currentSite != null && currentSite!.isNotEmpty;
-  
+
   // 切换站点
   void changeSite(String site) {
     currentSite = site;
     _crawler?.changeSite(site);
     notifyListeners();
   }
-  
+
   // 切换主题
   void toggleTheme() {
     isDarkMode = !isDarkMode;
     notifyListeners();
   }
-  
+
   // 设置下载目录
   void setDownloadDir(String dir) {
     downloadDir = dir;
     notifyListeners();
   }
-  
+
   // 切换Debug模式
   Future<void> toggleDebug(bool enable) async {
     debugMode = enable;
