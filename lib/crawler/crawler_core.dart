@@ -143,7 +143,6 @@ class CrawlerCore {
         videos = _parseVideoListOriginal(html);
       }
       
-      await logger.log('Crawler', '解析完成, 返回 ${videos.length} 个视频');
       return videos;
       
     } catch (e) {
@@ -250,7 +249,6 @@ class CrawlerCore {
       ));
     }
     
-    logger.log('Crawler', '解析到 ${videos.length} 个视频');
     return videos;
   }
   
@@ -432,7 +430,6 @@ class CrawlerCore {
         videos = _parseVideoListOriginal(html);
       }
       
-      await logger.log('Crawler', '搜索完成, 返回 ${videos.length} 个结果');
       return videos;
     } catch (e) {
       await logger.log('Crawler', '搜索失败: $e');
@@ -484,7 +481,6 @@ class CrawlerCore {
         }
       }
       
-      await logger.log('Crawler', '搜索作者完成, 结果数: ${authors.length}');
       return authors;
     } catch (e) {
       await logger.log('Crawler', '搜索作者失败: $e');
@@ -522,7 +518,6 @@ class CrawlerCore {
         videos = _parseVideoListOriginal(html);
       }
       
-      await logger.log('Crawler', '获取作者视频完成, 返回 ${videos.length} 个');
       return videos;
     } catch (e) {
       await logger.log('Crawler', '获取作者视频失败: $e');
@@ -539,11 +534,6 @@ class CrawlerCore {
       final resp = await _dio.get(video.url);
       final html = resp.data.toString();
       
-      // 记录 HTML 片段用于调试
-      if (html.length < 2000) {
-      } else {
-      }
-      
       String? videoUrl;
       String? extractionMethod;
       
@@ -556,7 +546,6 @@ class CrawlerCore {
           final idMatch = RegExp(r'/(\d+)\.jpe?g').firstMatch(video.cover!);
           if (idMatch != null) {
             videoId = idMatch.group(1);
-            await logger.log('Crawler', '从封面提取视频ID: $videoId');
           }
         }
         
@@ -564,8 +553,6 @@ class CrawlerCore {
         // 可能有多个strencode2调用，优先匹配封面ID
         final strencodePattern = RegExp(r'''strencode2\(["'](%[0-9a-fA-F]{2}[^"']+)["']\)''');
         final strencodeMatches = strencodePattern.allMatches(html).toList();
-        
-        await logger.log('Crawler', '找到 ${strencodeMatches.length} 个strencode2调用');
         
         for (var i = 0; i < strencodeMatches.length; i++) {
           final m = strencodeMatches[i];
@@ -584,24 +571,20 @@ class CrawlerCore {
                 final urlIdMatch = RegExp(r'/(\d+)\.(?:mp4|m3u8)').firstMatch(src);
                 final urlVideoId = urlIdMatch?.group(1);
                 
-                await logger.log('Crawler', '[策略A-$i] 视频ID: $urlVideoId, 封面ID: $videoId');
-                
                 // 优先匹配封面ID
                 if (videoId != null && urlVideoId == videoId) {
                   videoUrl = src;
                   extractionMethod = 'strencode2解码(ID匹配)';
-                  await logger.log('Crawler', '[策略A-$i] ✅ 匹配成功: $src');
                   break;  // 找到匹配的，退出循环
                 } else if (videoUrl == null) {
                   // 没有封面ID时，取第一个作为候选
                   videoUrl = src;
                   extractionMethod = 'strencode2解码(首个)';
-                  await logger.log('Crawler', '[策略A-$i] 作为候选: $src');
                 }
               }
             }
           } catch (e) {
-            await logger.log('Crawler', '[策略A-$i] 解码失败: $e');
+            // 解码失败，继续下一个
           }
         }
         
@@ -611,8 +594,6 @@ class CrawlerCore {
           
           final sourcePattern = RegExp(r'''<source[^>]+src=["']([^"']+)["']''', caseSensitive: false);
           final sourceMatches = sourcePattern.allMatches(html).toList();
-          
-          await logger.log('Crawler', '找到 ${sourceMatches.length} 个source标签');
           
           // 优先匹配封面ID
           for (var i = 0; i < sourceMatches.length; i++) {
@@ -628,7 +609,6 @@ class CrawlerCore {
               if (videoId != null && urlVideoId == videoId) {
                 videoUrl = src;
                 extractionMethod = 'source标签(ID匹配)';
-                await logger.log('Crawler', 'source[$i] ✅ 封面ID匹配: $src');
                 break;
               }
             }
@@ -643,12 +623,10 @@ class CrawlerCore {
               if (src.contains('.mp4') || src.contains('.m3u8')) {
                 // 排除已知的广告视频ID
                 if (src.contains('358999')) {
-                  await logger.log('Crawler', 'source[$i] 是广告，跳过: $src');
                   continue;
                 }
                 videoUrl = src;
                 extractionMethod = 'source标签(首个非广告)';
-                await logger.log('Crawler', 'source[$i] 提取成功: $src');
                 break;
               }
             }
@@ -747,11 +725,6 @@ class CrawlerCore {
           }
         }
         
-        await logger.log('Crawler', '视频详情获取成功: ID=${video.id}');
-        await logger.log('Crawler', '封面URL: ${video.cover}');
-        await logger.log('Crawler', '视频URL: $videoUrl');
-        await logger.log('Crawler', '提取方式: $extractionMethod');
-        
         return VideoInfo(
           id: video.id,
           url: video.url,
@@ -763,12 +736,8 @@ class CrawlerCore {
         );
       }
       
-      await logger.log('Crawler', '========== 视频详情获取失败 ==========');
-      await logger.log('Crawler', '所有策略均未能提取到视频URL');
-      // 输出更多调试信息
       return null;
     } catch (e, stack) {
-      await logger.log('Crawler', '获取视频详情异常: $e');
       return null;
     }
   }
