@@ -1076,10 +1076,9 @@ class _VideoResultsWidget extends StatelessWidget {
                       ),
                     ),
                   ),
-                );
-              },
+                },
+              ),
             ),
-          ),
         // 加载更多指示器（仅在正在加载更多时显示）
         if (hasMore && isLoadingMore)
           Container(
