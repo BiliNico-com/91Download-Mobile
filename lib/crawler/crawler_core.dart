@@ -100,6 +100,9 @@ class CrawlerCore {
     // 设置 Referer
     _dio.options.headers['Referer'] = '$baseUrl/';
     
+    // 设置 Sec-Fetch-Site（动态设置，首次访问为none）
+    _dio.options.headers['Sec-Fetch-Site'] = 'same-origin';
+    
     // 设置语言 Cookie（关键！）
     _setLanguageCookie();
   }
