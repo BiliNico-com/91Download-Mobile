@@ -462,18 +462,18 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               Container(
                 padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.grey[100],
+                  color: isDark ? Colors.grey[800] : Colors.grey[100],
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey[400]!),
+                  border: Border.all(color: isDark ? Colors.grey[700]! : Colors.grey[400]!),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<bool>(
                     value: _isAuthorMode,
                     isDense: true,
-                    style: TextStyle(fontSize: 11, color: Colors.black87),
+                    style: TextStyle(fontSize: 11, color: isDark ? Colors.white70 : Colors.black87),
                     items: [
-                      DropdownMenuItem(value: false, child: Text('搜视频', style: TextStyle(fontSize: 11, color: Colors.black87))),
-                      DropdownMenuItem(value: true, child: Text('搜作者', style: TextStyle(fontSize: 11, color: Colors.black87))),
+                      DropdownMenuItem(value: false, child: Text('搜视频', style: TextStyle(fontSize: 11, color: isDark ? Colors.white70 : Colors.black87))),
+                      DropdownMenuItem(value: true, child: Text('搜作者', style: TextStyle(fontSize: 11, color: isDark ? Colors.white70 : Colors.black87))),
                     ],
                     onChanged: (v) => setState(() => _isAuthorMode = v!),
                   ),
@@ -484,10 +484,11 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               GestureDetector(
                 onTap: _search,
                 child: Container(
-                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
                     color: Colors.blue,
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(18),
                   ),
                   child: Icon(Icons.search, color: Colors.white, size: 18),
                 ),
