@@ -637,6 +637,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   Widget _buildSettingsBar(AppState appState) {
     final siteType = appState.crawler?.siteType ?? "original";
     final typeNames = _getTypeNames(siteType);
+    final isDark = appState.isDarkMode;
     
     // 站点切换后，检查当前选择的类型是否有效
     if (!typeNames.containsKey(_selectedType)) {
@@ -644,18 +645,26 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     }
     
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       color: Theme.of(context).scaffoldBackgroundColor,
       child: Center(
         child: Container(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(24),
+            color: isDark ? Color(0xFF252525) : Colors.white.withOpacity(0.95),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: isDark ? Color(0xFF333333) : Colors.grey[300]!, width: 0.5),
             boxShadow: [
+              // 外发光效果
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: isDark ? Color(0xFF4a9eff).withOpacity(0.1) : Colors.black.withOpacity(0.05),
                 blurRadius: 8,
+                spreadRadius: 1,
+              ),
+              // 基础阴影
+              BoxShadow(
+                color: Colors.black.withOpacity(0.15),
+                blurRadius: 4,
                 offset: Offset(0, 2),
               ),
             ],
@@ -663,16 +672,20 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.list_alt, size: 18, color: Colors.blue),
+              Icon(Icons.list_alt, size: 18, color: Color(0xFF4a9eff)),
               SizedBox(width: 8),
-              Text('列表: ', style: TextStyle(fontSize: 14)),
+              Text('列表: ', style: TextStyle(fontSize: 13, color: isDark ? Colors.white : Colors.black87)),
               DropdownButtonHideUnderline(
                 child: DropdownButton<String>(
                   value: _selectedType,
                   isDense: true,
-                  icon: Icon(Icons.keyboard_arrow_down, size: 18),
+                  icon: Icon(Icons.keyboard_arrow_down, size: 18, color: isDark ? Colors.grey[600] : Colors.grey[700]),
+                  style: TextStyle(fontSize: 13, color: isDark ? Colors.white : Colors.black87),
                   items: typeNames.entries.map((e) {
-                    return DropdownMenuItem(value: e.key, child: Text(e.value, style: TextStyle(fontSize: 14)));
+                    return DropdownMenuItem(
+                      value: e.key, 
+                      child: Text(e.value, style: TextStyle(fontSize: 13, color: isDark ? Colors.grey[300] : Colors.black87))
+                    );
                   }).toList(),
                   onChanged: (v) async {
                     if (v != null && v != _selectedType) {
