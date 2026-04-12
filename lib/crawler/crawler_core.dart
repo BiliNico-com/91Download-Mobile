@@ -50,13 +50,13 @@ class CrawlerCore {
   /// 保存 HTML 到文件（调试用）
   Future<void> _saveHtmlToFile(String html, String listType, int page) async {
     try {
-      // 使用外部存储目录（Android: /storage/emulated/0/Android/data/com.bilinico.download_91/files/)
+      // 保存到视频下载目录下的 debug_html 子目录
       final baseDir = await getExternalStorageDirectory();
       if (baseDir == null) {
         await logger.log('Debug', '无法获取外部存储目录');
         return;
       }
-      final dir = Directory('${baseDir.parent.parent.parent.parent.parent.path}/debug_html');
+      final dir = Directory('${baseDir.path}/91Download/debug_html');
       if (!await dir.exists()) {
         await dir.create(recursive: true);
       }
