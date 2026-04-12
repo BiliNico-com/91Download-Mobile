@@ -256,6 +256,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         ],
       ),
     );
+    },
+  );
   }
 
   /// 覆盖层：翻页控件 + 浮动按钮
