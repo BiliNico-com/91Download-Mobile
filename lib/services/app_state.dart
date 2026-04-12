@@ -75,6 +75,8 @@ class AppState extends ChangeNotifier {
   Future<void> init() async {
     await requestPermissions();
     await initDownloadDir();
+    // 恢复未完成的下载任务
+    await _downloadManager.restorePendingTasks();
   }
 
   // 请求存储权限 - 适配 Android 13+ 的细粒度媒体权限

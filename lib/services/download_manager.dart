@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/video_info.dart';
 import '../crawler/crawler_core.dart';
 import '../utils/logger.dart';
@@ -142,6 +144,7 @@ class DownloadManager extends ChangeNotifier {
     final task = DownloadTask(id: id, video: video);
     _tasks.insert(0, task);
     _taskMap[id] = task;
+    _savePendingTasks();  // 保存任务列表
     notifyListeners();
     
     // 自动开始下载
@@ -218,6 +221,7 @@ class DownloadManager extends ChangeNotifier {
         task.progress = 1.0;
         task.progressText = '下载完成';
         task.downloadSpeed = 0.0;
+        _savePendingTasks();  // 保存更新后的任务列表
       } else {
         await logger.log('Download', '下载失败: ${task.video.title}');
         task.status = DownloadStatus.failed;
@@ -332,9 +336,78 @@ class DownloadManager extends ChangeNotifier {
   void clearCompleted() {
     _tasks.removeWhere((t) => t.status == DownloadStatus.completed);
     _taskMap.removeWhere((_, t) => t.status == DownloadStatus.completed);
+    _savePendingTasks();  // 保存更新后的任务列表
     notifyListeners();
   }
   
   /// 获取任务
   DownloadTask? getTask(String taskId) => _taskMap[taskId];
+  
+  /// 保存未完成的任务到本地
+  Future<void> _savePendingTasks() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pendingTasks = _tasks.where((t) => 
+        t.status == DownloadStatus.pending || 
+        t.status == DownloadStatus.paused ||
+        t.status == DownloadStatus.downloading
+      ).toList();
+      
+      final taskList = pendingTasks.map((t) => {
+        return {
+          'id': t.video.id,
+          'url': t.video.url,
+          'title': t.video.title,
+          'cover': t.video.cover,
+          'author': t.video.author,
+          'duration': t.video.duration,
+          'status': t.status.index,
+        };
+      }).toList();
+      
+      await prefs.setString('pending_download_tasks', jsonEncode(taskList));
+    } catch (e) {
+      print('保存下载任务失败: $e');
+    }
+  }
+  
+  /// 从本地恢复未完成的任务
+  Future<void> restorePendingTasks() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final tasksJson = prefs.getString('pending_download_tasks');
+      if (tasksJson == null || tasksJson.isEmpty) return;
+      
+      final taskList = jsonDecode(tasksJson) as List;
+      for (final item in taskList) {
+        final video = VideoInfo(
+          id: item['id'],
+          url: item['url'],
+          title: item['title'],
+          cover: item['cover'],
+          author: item['author'],
+          duration: item['duration'],
+        );
+        
+        // 检查是否已存在
+        if (!_taskMap.containsKey(video.id)) {
+          final task = DownloadTask(id: video.id, video: video);
+          // 恢复为等待状态（需要重新下载）
+          task.status = DownloadStatus.pending;
+          _tasks.add(task);
+          _taskMap[video.id] = task;
+        }
+      }
+      
+      // 清除已恢复的任务
+      await prefs.remove('pending_download_tasks');
+      
+      if (_tasks.isNotEmpty) {
+        notifyListeners();
+        await logger.log('Download', '恢复了 ${_tasks.length} 个下载任务');
+      }
+    } catch (e) {
+      print('恢复下载任务失败: $e');
+    }
+  }
 }
