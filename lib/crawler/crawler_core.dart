@@ -217,30 +217,24 @@ class CrawlerCore {
       final videoHref = viewkeyMatch.group(1)!.replaceAll('&amp;', '&');
       final viewkey = viewkeyMatch.group(2)!;
       
-      // 提取封面（优先从 playvthumb_XXXXXX，后备从 img src）
+      // ✅ 修复：直接提取 img-responsive 的 src 属性获取封面ID
+      // 注意：不能依赖容器ID（如 playvthumb_XXXXXX），因为它与实际图片文件名不一致！
       String? cover;
       String? coverId;
-      final playvthumbMatch = CrawlerConfig.playvthumbPattern.firstMatch(wellContent);
-      if (playvthumbMatch != null) {
-        coverId = playvthumbMatch.group(1)!;
-        cover = VideoInfo.buildCoverUrl(coverId);
-      } else {
-        // 后备方案：从 img 标签提取封面
-        final imgMatch = RegExp(r'<img[^>]*src="([^"]+)"[^>]*>').firstMatch(wellContent);
-        if (imgMatch != null) {
-          var imgSrc = imgMatch.group(1)!;
-          // 从img src提取封面ID
-          final idMatch = RegExp(r'/(\d+)\.jpe?g').firstMatch(imgSrc);
-          if (idMatch != null) {
-            coverId = idMatch.group(1);
-          }
-          if (imgSrc.startsWith('http')) {
-            cover = imgSrc;
-          } else if (imgSrc.startsWith('//')) {
-            cover = 'https:$imgSrc';
-          } else if (imgSrc.isNotEmpty) {
-            cover = '$baseUrl$imgSrc';
-          }
+      
+      // 优先从 img-responsive 标签提取（这是实际正确的封面URL）
+      final imgMatch = RegExp(r'<img[^>]+class="img-responsive"[^>]+src="([^"]+)"')
+          .firstMatch(wellContent);
+      if (imgMatch != null) {
+        final imgSrc = imgMatch.group(1)!;
+        // 从URL中提取文件名作为封面ID（如 .../1191387.jpg -> 1191387）
+        final idMatch = RegExp(r'/(\d+)\.(?:jpe?g|webp|png)', caseSensitive: false)
+            .firstMatch(imgSrc);
+        if (idMatch != null) {
+          coverId = idMatch.group(1);
+          cover = VideoInfo.buildCoverUrl(coverId);
+        } else if (imgSrc.startsWith('http')) {
+          cover = imgSrc;
         }
       }
       
