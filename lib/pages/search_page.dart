@@ -539,94 +539,101 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
 
   /// 底部页码跳转区域（悬浮胶囊）
   Widget _buildBottomPageNavigation() {
-    return Positioned(
-      bottom: 16,
-      left: 0,
-      right: 0,
-      child: Center(
-        child: Container(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.15),
-                blurRadius: 12,
-                offset: Offset(0, 4),
+    return Consumer<AppState>(
+      builder: (context, appState, _) {
+        // 当有选中视频时，下移避免与下载按钮重叠
+        final bottomOffset = _selectedIds.isNotEmpty ? 80.0 : 16.0;
+        
+        return Positioned(
+          bottom: bottomOffset,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: Container(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 12,
+                    offset: Offset(0, 4),
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 当前页显示
-              if (_currentPage > 0)
-                Container(
-                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '第$_currentPage页',
-                    style: TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.w500),
-                  ),
-                ),
-              if (_currentPage > 0) SizedBox(width: 12),
-              // 分隔线
-              Container(width: 1, height: 16, color: Theme.of(context).dividerColor.withOpacity(0.3)),
-              SizedBox(width: 12),
-              // 跳转页输入
-              Text('跳转', style: TextStyle(fontSize: 12)),
-              SizedBox(width: 8),
-              SizedBox(
-                width: 50,
-                child: TextField(
-                  controller: _pageController,
-                  keyboardType: TextInputType.number,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 14),
-                  decoration: InputDecoration(
-                    contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 当前页显示
+                  if (_currentPage > 0)
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '第$_currentPage页',
+                        style: TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.w500),
+                      ),
                     ),
-                    filled: true,
-                    fillColor: Theme.of(context).scaffoldBackgroundColor,
-                    isDense: true,
+                  if (_currentPage > 0) SizedBox(width: 12),
+                  // 分隔线
+                  Container(width: 1, height: 16, color: Theme.of(context).dividerColor.withOpacity(0.3)),
+                  SizedBox(width: 12),
+                  // 跳转页输入
+                  Text('跳转', style: TextStyle(fontSize: 12)),
+                  SizedBox(width: 8),
+                  SizedBox(
+                    width: 50,
+                    child: TextField(
+                      controller: _pageController,
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 14),
+                      decoration: InputDecoration(
+                        contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor: Theme.of(context).scaffoldBackgroundColor,
+                        isDense: true,
+                      ),
+                      onChanged: (v) {
+                        _currentPage = int.tryParse(v) ?? 1;
+                      },
+                    ),
                   ),
-                  onChanged: (v) {
-                    _currentPage = int.tryParse(v) ?? 1;
-                  },
-                ),
-              ),
-              SizedBox(width: 8),
-              // 跳转按钮
-              Material(
-                color: Colors.blue,
-                borderRadius: BorderRadius.circular(8),
-                child: InkWell(
-                  onTap: (_isLoading || _isLoadingMore) ? null : () {
-                    final page = int.tryParse(_pageController.text);
-                    if (page != null && page > 0) {
-                      _goToPage(page);
-                    }
-                  },
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    child: _isLoading || _isLoadingMore
-                      ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : Icon(Icons.arrow_forward, color: Colors.white, size: 16),
+                  SizedBox(width: 8),
+                  // 跳转按钮
+                  Material(
+                    color: Colors.blue,
+                    borderRadius: BorderRadius.circular(8),
+                    child: InkWell(
+                      onTap: (_isLoading || _isLoadingMore) ? null : () {
+                        final page = int.tryParse(_pageController.text);
+                        if (page != null && page > 0) {
+                          _goToPage(page);
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        child: _isLoading || _isLoadingMore
+                          ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : Icon(Icons.arrow_forward, color: Colors.white, size: 16),
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 

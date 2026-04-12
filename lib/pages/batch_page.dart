@@ -173,13 +173,25 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     return Consumer<AppState>(
       builder: (context, appState, _) {
         return Scaffold(
+          extendBodyBehindAppBar: true,
           body: CustomScrollView(
             controller: _scrollController,
             slivers: [
-              // AppBar
+              // AppBar - 添加毛玻璃效果
               SliverAppBar(
                 pinned: true,
                 floating: true,
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                scrolledUnderElevation: 0,
+                flexibleSpace: ClipRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                    child: Container(
+                      color: Colors.black.withOpacity(0.5),
+                    ),
+                  ),
+                ),
                 title: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
@@ -198,42 +210,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   child: _buildSettingsBar(appState),
                 ),
               ),
-              // 视频列表
-              SliverToBoxAdapter(
-                child: Stack(
-                  children: [
-                    SizedBox(
-                      height: MediaQuery.of(context).size.height - 250,
-                      child: _buildVideoGrid(),
-                    ),
-                    // 页码跳转悬浮胶囊
-                    _buildBottomPageNavigation(),
-                    // 回顶部按钮
-                    if (_showBackToTop && appState.showBackToTop)
-                      Positioned(
-                        bottom: (appState.backToTopPosition == 'right' && _selectedIds.isNotEmpty) ? 160.0 : 80.0,
-                        left: appState.backToTopPosition == 'left' ? 16 : null,
-                        right: appState.backToTopPosition == 'right' ? 16 : null,
-                        child: FloatingActionButton(
-                          mini: true,
-                          heroTag: 'batch_back_to_top',
-                          onPressed: _scrollToTop,
-                          child: Icon(Icons.arrow_upward),
-                        ),
-                      ),
-                    // 下载按钮
-                    if (_selectedIds.isNotEmpty)
-                      Positioned(
-                        bottom: 80,
-                        right: 16,
-                        child: FloatingActionButton.extended(
-                          onPressed: _startDownload,
-                          icon: Icon(Icons.download),
-                          label: Text('下载 (${_selectedIds.length})'),
-                        ),
-                      ),
-                  ],
-                ),
+              // 视频列表 - 使用 SliverFillRemaining 替代 SliverToBoxAdapter + SizedBox
+              SliverFillRemaining(
+                hasScrollBody: true,
+                child: _buildVideoListContent(appState),
               ),
             ],
           ),
@@ -531,6 +511,41 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           Text(_progressText, style: TextStyle(fontSize: 12, color: Colors.grey)),
         ],
       ),
+    );
+  }
+
+  /// 视频列表内容（包含视频网格和悬浮按钮）
+  Widget _buildVideoListContent(AppState appState) {
+    return Stack(
+      children: [
+        _buildVideoGrid(),
+        // 页码跳转悬浮胶囊
+        _buildBottomPageNavigation(),
+        // 回顶部按钮
+        if (_showBackToTop && appState.showBackToTop)
+          Positioned(
+            bottom: (appState.backToTopPosition == 'right' && _selectedIds.isNotEmpty) ? 160.0 : 80.0,
+            left: appState.backToTopPosition == 'left' ? 16 : null,
+            right: appState.backToTopPosition == 'right' ? 16 : null,
+            child: FloatingActionButton(
+              mini: true,
+              heroTag: 'batch_back_to_top',
+              onPressed: _scrollToTop,
+              child: Icon(Icons.arrow_upward),
+            ),
+          ),
+        // 下载按钮
+        if (_selectedIds.isNotEmpty)
+          Positioned(
+            bottom: 80,
+            right: 16,
+            child: FloatingActionButton.extended(
+              onPressed: _startDownload,
+              icon: Icon(Icons.download),
+              label: Text('下载 (${_selectedIds.length})'),
+            ),
+          ),
+      ],
     );
   }
 
