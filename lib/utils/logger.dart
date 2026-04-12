@@ -46,7 +46,7 @@ class Logger {
     _enabled = enable;
   }
   
-  // 写入网络日志
+  // 写入网络日志（异步）
   Future<void> log(String tag, String message) async {
     if (!_enabled) return;
     
@@ -63,6 +63,24 @@ class Logger {
       } catch (e) {
         print('Logger write failed: $e');
       }
+    }
+  }
+  
+  // 写入网络日志（同步，用于解析等同步方法中调用）
+  void logSync(String tag, String message) {
+    if (!_enabled || _logFile == null) return;
+    
+    final timestamp = DateFormat('HH:mm:ss.SSS').format(DateTime.now());
+    final line = '[$timestamp][$tag] $message\n';
+    
+    // 控制台输出
+    print(line.trim());
+    
+    // 同步文件写入
+    try {
+      _logFile!.writeAsStringSync(line, mode: FileMode.append);
+    } catch (e) {
+      print('Logger writeSync failed: $e');
     }
   }
   

@@ -40,7 +40,7 @@ class CrawlerCore {
   /// 检测站点类型
   void _detectSiteType() {
     _siteType = CrawlerConfig.detectSiteType(baseUrl);
-    Logger().log('Crawler', '站点类型检测: domain=${Uri.parse(baseUrl).host}, type=$_siteType');
+    Logger().logSync('Crawler', '站点类型检测: domain=${Uri.parse(baseUrl).host}, type=$_siteType');
   }
   
   /// 获取站点类型
@@ -74,7 +74,7 @@ class CrawlerCore {
       _dio.options.headers['Cookie'] = 'language=cn_CN; domain=.91porn.com; path=/';
     }
     
-    Logger().log('Crawler', '设置语言 Cookie: language=cn_CN (domain=$domain)');
+    Logger().logSync('Crawler', '设置语言 Cookie: language=cn_CN (domain=$domain)');
   }
 
   /// 初始化数据库
@@ -102,7 +102,7 @@ class CrawlerCore {
       );
       _dbInitialized = true;
     } catch (e) {
-      Logger().log('Crawler', '数据库初始化失败: $e');
+      Logger().logSync('Crawler', '数据库初始化失败: $e');
     }
   }
   
@@ -174,11 +174,11 @@ class CrawlerCore {
     final videos = <VideoInfo>[];
     final seenIds = <String>{};
     
-    Logger().log('Parse', '解析 porn91 HTML, 长度: ${html.length}');
+    Logger().logSync('Parse', '解析 porn91 HTML, 长度: ${html.length}');
     
     // 策略1：只匹配 col-lg-3 容器内的视频卡片（过滤 col-lg-8 广告）
     final containerMatches = CrawlerConfig.containerPattern.allMatches(html).toList();
-    Logger().log('Parse', '找到 ${containerMatches.length} 个容器');
+    Logger().logSync('Parse', '找到 ${containerMatches.length} 个容器');
     
     for (var i = 0; i < containerMatches.length; i++) {
       final match = containerMatches[i];
@@ -267,7 +267,7 @@ class CrawlerCore {
       ));
     }
     
-    Logger().log('Parse', '解析完成: ${videos.length} 个视频');
+    Logger().logSync('Parse', '解析完成: ${videos.length} 个视频');
     
     return videos;
   }
@@ -278,7 +278,7 @@ class CrawlerCore {
     final videos = <VideoInfo>[];
     final seenIds = <String>{};
     
-    Logger().log('Parse', '解析 original HTML, 长度: ${html.length}');
+    Logger().logSync('Parse', '解析 original HTML, 长度: ${html.length}');
     
     // 策略1: 完整容器解析 - 匹配 thumbnail 容器
     // <div class="thumbnail">
@@ -359,7 +359,7 @@ class CrawlerCore {
       ));
     }
     
-    Logger().log('Parse', '策略1(thumbnail容器)找到 ${videos.length} 个视频');
+    Logger().logSync('Parse', '策略1(thumbnail容器)找到 ${videos.length} 个视频');
     
     // 策略2: 简单链接格式（兜底）
     if (videos.isEmpty) {
@@ -423,10 +423,10 @@ class CrawlerCore {
         ));
       }
       
-      Logger().log('Parse', '策略2找到 ${videos.length} 个视频');
+      Logger().logSync('Parse', '策略2找到 ${videos.length} 个视频');
     }
     
-    Logger().log('Parse', '解析完成: ${videos.length} 个视频');
+    Logger().logSync('Parse', '解析完成: ${videos.length} 个视频');
     return videos;
   }
 
