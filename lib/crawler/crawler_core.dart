@@ -188,10 +188,16 @@ class CrawlerCore {
       // 确定容器结束位置：找到下一个 <div class="col-xs-12 开始
       // 这样可以避开中间的广告位
       final nextDivPattern = RegExp(r'<div[^>]*class="[^"]*col-xs-12[^"]*"', caseSensitive: false);
-      final nextDivMatch = nextDivPattern.firstMatch(html, start: start + 1);
+      int? end;
+      for (final m in nextDivPattern.allMatches(html)) {
+        if (m.start > start) {
+          end = m.start;
+          break;
+        }
+      }
       
-      final end = nextDivMatch?.start ?? html.length;
-      final wellContent = html.substring(start, end);
+      final containerEnd = end ?? html.length;
+      final wellContent = html.substring(start, containerEnd);
       
       // 提取 viewkey
       final viewkeyMatch = CrawlerConfig.viewkeyPattern.firstMatch(wellContent);
