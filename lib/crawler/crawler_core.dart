@@ -47,12 +47,25 @@ class CrawlerCore {
   /// 获取站点类型
   String get siteType => _siteType;
 
+  /// 禁用缓存的请求选项（复用）
+  Options get _noCacheOptions => Options(
+    headers: {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    },
+    extra: {'cache': false},
+  );
+
   void _initDio() {
     _dio.options = BaseOptions(
       connectTimeout: Duration(seconds: CrawlerConfig.connectTimeout),
       receiveTimeout: Duration(seconds: CrawlerConfig.readTimeout),
       headers: CrawlerConfig.defaultHeaders,
       followRedirects: true,
+      // 禁用 Dio HTTP 客户端缓存
+      receiveDataWhenStatusError: false,
+      extra: {'cache': false},
     );
     
     // 设置 Referer
@@ -140,7 +153,7 @@ class CrawlerCore {
       if (_siteType == "porn91") {
         // porn91 需要先 GET 获取 cookie，然后 POST 提交语言设置
         // Step 1: GET 请求获取初始 cookie
-        final getResp = await _dio.get(urlWithCache);
+        final getResp = await _dio.get(urlWithCache, options: _noCacheOptions);
         
         // Step 2: POST 请求提交语言设置
         final postResp = await _dio.post(
@@ -148,12 +161,18 @@ class CrawlerCore {
           data: {'session_language': 'cn_CN'},
           options: Options(
             contentType: Headers.formUrlEncodedContentType,
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0',
+            },
+            extra: {'cache': false},
           ),
         );
         html = postResp.data.toString();
       } else {
         // original CMS 直接 GET
-        final resp = await _dio.get(urlWithCache);
+        final resp = await _dio.get(urlWithCache, options: _noCacheOptions);
         html = resp.data.toString();
       }
       
@@ -476,11 +495,10 @@ class CrawlerCore {
     await logger.log('Crawler', '网络请求: 搜索视频 $url (siteType=$_siteType)');
     
     try {
-      // 添加时间戳参数避免CDN缓存
       // 添加随机参数避免CDN缓存
       final randomParam = '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
       final urlWithCache = url.contains('?') ? '$url&_cache=$randomParam' : '$url?_cache=$randomParam';
-      final resp = await _dio.get(urlWithCache);
+      final resp = await _dio.get(urlWithCache, options: _noCacheOptions);
       final html = resp.data.toString();
       
       // 根据站点类型选择解析方法
@@ -513,11 +531,10 @@ class CrawlerCore {
     await logger.log('Crawler', '网络请求: 搜索作者 $url');
     
     try {
-      // 添加时间戳参数避免CDN缓存
       // 添加随机参数避免CDN缓存
       final randomParam = '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
       final urlWithCache = url.contains('?') ? '$url&_cache=$randomParam' : '$url?_cache=$randomParam';
-      final resp = await _dio.get(urlWithCache);
+      final resp = await _dio.get(urlWithCache, options: _noCacheOptions);
       final html = resp.data.toString();
       
       final authors = <AuthorInfo>[];
@@ -569,7 +586,7 @@ class CrawlerCore {
     await logger.log('Crawler', '网络请求: 获取作者视频 $url (siteType=$_siteType)');
     
     try {
-      final resp = await _dio.get(url);
+      final resp = await _dio.get(url, options: _noCacheOptions);
       final html = resp.data.toString();
       
       List<VideoInfo> videos;
@@ -597,7 +614,7 @@ class CrawlerCore {
           ? '${video.url}&_cache=$randomParam' 
           : '${video.url}?_cache=$randomParam';
       
-      final resp = await _dio.get(urlWithCache);
+      final resp = await _dio.get(urlWithCache, options: _noCacheOptions);
       final html = resp.data.toString();
       
       String? videoUrl;
@@ -835,8 +852,8 @@ class CrawlerCore {
     onLog?.call('开始下载: ${video.title}', 'info');
     
     try {
-      // 下载 m3u8 文件
-      final m3u8Resp = await _dio.get(videoUrl);
+      // 下载 m3u8 文件（禁用缓存）
+      final m3u8Resp = await _dio.get(videoUrl, options: _noCacheOptions);
       final m3u8Content = m3u8Resp.data.toString();
       
       // 解析 TS 切片列表
@@ -936,7 +953,13 @@ class CrawlerCore {
       try {
         final resp = await _dio.get(
           url,
-          options: Options(responseType: ResponseType.bytes),
+          options: Options(
+            responseType: ResponseType.bytes,
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+            },
+          ),
         );
         
         final file = File(savePath);
