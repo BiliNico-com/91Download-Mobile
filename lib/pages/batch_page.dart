@@ -17,6 +17,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   String _selectedType = 'list';
   int _currentPage = 1;  // 当前输入的页码
   int _loadedPage = 0;   // 已加载的页码
+  bool _hasMore = true;  // 是否还有更多（瀑布流用）
   List<VideoInfo> _videos = [];
   Set<String> _selectedIds = {};
   bool _isLoading = false;
@@ -55,7 +56,41 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       setState(() => _showBackToTop = showBtn);
     }
     
-    // 批量页不自动加载，通过翻页控件跳转
+    // 瀑布流：滚动到底部自动加载下一页
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      if (!_isLoading && _hasMore && _videos.isNotEmpty) {
+        _loadMore();
+      }
+    }
+  }
+  
+  /// 瀑布流加载更多（追加到现有列表）
+  Future<void> _loadMore() async {
+    if (!_hasMore || _isLoading) return;
+    
+    final appState = context.read<AppState>();
+    final crawler = appState.crawler;
+    if (crawler == null) return;
+    
+    setState(() => _isLoading = true });
+    
+    final nextPage = _loadedPage + 1;
+    final newVideos = await crawler.getVideoList(_selectedType, nextPage);
+    
+    if (newVideos.isEmpty) {
+      setState(() {
+        _hasMore = false;
+        _isLoading = false;
+      });
+    } else {
+      setState(() {
+        _videos.addAll(newVideos);
+        _totalVideos = _videos.length;
+        _loadedPage = nextPage;
+        _hasMore = newVideos.length >= 24;  // 每页24个，少于则没有更多
+        _isLoading = false;
+      });
+    }
   }
   
   void _scrollToTop() {
@@ -472,6 +507,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       _isLoading = true;
       _videos.clear();
       _selectedIds.clear();
+      _hasMore = true;  // 重置，允许瀑布流继续加载
     });
     
     final videos = await crawler.getVideoList(_selectedType, targetPage);
@@ -483,6 +519,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       _currentPage = targetPage;
       _isLoading = false;
       _status = videos.isEmpty ? '无结果' : '就绪';
+      _hasMore = videos.length >= 24;  // 每页24个
     });
     
     // 滚动到顶部
