@@ -1,7 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart';
 import '../models/video_info.dart';
 import '../crawler/crawler_core.dart';
 import '../utils/logger.dart';
@@ -116,6 +115,39 @@ class DownloadManager extends ChangeNotifier {
   final Map<String, DownloadTask> _taskMap = {};
   CrawlerCore? _crawler;
   String _downloadDir = '';
+  Database? _db;
+  bool _dbInitialized = false;
+  
+  /// 初始化数据库
+  Future<void> _initDb() async {
+    if (_dbInitialized) return;
+    try {
+      final dbPath = await getDatabasesPath();
+      _db = await openDatabase(
+        '$dbPath/download_tasks.db',
+        onCreate: (db, version) {
+          return db.execute('''
+            CREATE TABLE IF NOT EXISTS download_tasks (
+              id TEXT PRIMARY KEY,
+              url TEXT,
+              title TEXT,
+              cover TEXT,
+              author TEXT,
+              duration TEXT,
+              status INTEGER,
+              file_path TEXT,
+              error TEXT,
+              download_time TEXT
+            )
+          ''');
+        },
+        version: 1,
+      );
+      _dbInitialized = true;
+    } catch (e) {
+      print('[DownloadManager] 数据库初始化失败: $e');
+    }
+  }
   
   /// 设置爬虫和下载目录
   void setup(CrawlerCore crawler, String downloadDir) {
@@ -144,7 +176,7 @@ class DownloadManager extends ChangeNotifier {
     final task = DownloadTask(id: id, video: video);
     _tasks.insert(0, task);
     _taskMap[id] = task;
-    _savePendingTasks();  // 保存任务列表
+    _saveTaskToDb(task);  // 保存到数据库
     notifyListeners();
     
     // 自动开始下载
@@ -221,7 +253,7 @@ class DownloadManager extends ChangeNotifier {
         task.progress = 1.0;
         task.progressText = '下载完成';
         task.downloadSpeed = 0.0;
-        _savePendingTasks();  // 保存更新后的任务列表
+        _saveTaskToDb(task);  // 更新数据库
       } else {
         await logger.log('Download', '下载失败: ${task.video.title}');
         task.status = DownloadStatus.failed;
@@ -328,84 +360,105 @@ class DownloadManager extends ChangeNotifier {
     if (task != null) {
       _tasks.remove(task);
       _taskMap.remove(taskId);
+      _deleteTaskFromDb(taskId);  // 从数据库删除
       notifyListeners();
     }
   }
   
   /// 清除已完成的任务
   void clearCompleted() {
+    final completedIds = _tasks.where((t) => t.status == DownloadStatus.completed).map((t) => t.video.id).toList();
     _tasks.removeWhere((t) => t.status == DownloadStatus.completed);
     _taskMap.removeWhere((_, t) => t.status == DownloadStatus.completed);
-    _savePendingTasks();  // 保存更新后的任务列表
+    // 从数据库删除已完成的任务
+    for (final id in completedIds) {
+      _deleteTaskFromDb(id);
+    }
     notifyListeners();
   }
   
   /// 获取任务
   DownloadTask? getTask(String taskId) => _taskMap[taskId];
   
-  /// 保存未完成的任务到本地
-  Future<void> _savePendingTasks() async {
+  /// 保存任务到数据库
+  Future<void> _saveTaskToDb(DownloadTask task) async {
+    await _initDb();
+    if (_db == null) return;
+    
     try {
-      final prefs = await SharedPreferences.getInstance();
-      
-      // 保存所有任务（包括已完成的）
-      final taskList = _tasks.map((t) {
-        return {
-          'id': t.video.id,
-          'url': t.video.url,
-          'title': t.video.title,
-          'cover': t.video.cover,
-          'author': t.video.author,
-          'duration': t.video.duration,
-          'status': t.status.index,
-          'filePath': t.filePath,
-        };
-      }).toList();
-      
-      await prefs.setString('pending_download_tasks', jsonEncode(taskList));
+      await _db!.insert(
+        'download_tasks',
+        {
+          'id': task.video.id,
+          'url': task.video.url,
+          'title': task.video.title,
+          'cover': task.video.cover,
+          'author': task.video.author,
+          'duration': task.video.duration,
+          'status': task.status.index,
+          'file_path': task.filePath,
+          'error': task.error,
+          'download_time': task.startTime.toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     } catch (e) {
-      print('保存下载任务失败: $e');
+      print('[DownloadManager] 保存任务失败: $e');
     }
   }
   
-  /// 从本地恢复任务
-  Future<void> restorePendingTasks() async {
+  /// 删除任务从数据库
+  Future<void> _deleteTaskFromDb(String taskId) async {
+    await _initDb();
+    if (_db == null) return;
+    
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final tasksJson = prefs.getString('pending_download_tasks');
-      if (tasksJson == null || tasksJson.isEmpty) return;
+      await _db!.delete('download_tasks', where: 'id = ?', whereArgs: [taskId]);
+    } catch (e) {
+      print('[DownloadManager] 删除任务失败: $e');
+    }
+  }
+  
+  /// 从数据库恢复任务
+  Future<void> restorePendingTasks() async {
+    await _initDb();
+    if (_db == null) return;
+    
+    try {
+      final List<Map<String, dynamic>> maps = await _db!.query(
+        'download_tasks',
+        orderBy: 'download_time DESC',
+      );
       
-      final taskList = jsonDecode(tasksJson) as List;
-      for (final item in taskList) {
+      for (final map in maps) {
         final video = VideoInfo(
-          id: item['id'],
-          url: item['url'],
-          title: item['title'],
-          cover: item['cover'],
-          author: item['author'],
-          duration: item['duration'],
+          id: map['id'],
+          url: map['url'],
+          title: map['title'],
+          cover: map['cover'],
+          author: map['author'],
+          duration: map['duration'],
         );
         
-        // 检查是否已存在
         if (!_taskMap.containsKey(video.id)) {
           final task = DownloadTask(id: video.id, video: video);
-          // 恢复状态
-          task.status = DownloadStatus.values[item['status'] as int];
-          task.filePath = item['filePath'];
+          task.status = DownloadStatus.values[map['status'] as int];
+          task.filePath = map['file_path'];
+          task.error = map['error'];
+          if (map['download_time'] != null) {
+            task.startTime = DateTime.parse(map['download_time']);
+          }
           _tasks.add(task);
           _taskMap[video.id] = task;
         }
       }
       
-      // 清除已保存的数据（下次保存时重新写入）
-      await prefs.remove('pending_download_tasks');
-      
       if (_tasks.isNotEmpty) {
         notifyListeners();
-        await logger.log('Download', '恢复了 ${_tasks.length} 个下载任务');
+        await logger.log('Download', '从数据库恢复了 ${_tasks.length} 个下载任务');
       }
     } catch (e) {
-      print('恢复下载任务失败: $e');
+      print('[DownloadManager] 恢复任务失败: $e');
     }
   }
 }
