@@ -177,10 +177,11 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           body: CustomScrollView(
             controller: _scrollController,
             slivers: [
-              // AppBar - 添加毛玻璃效果
+              // AppBar - 添加毛玻璃效果，标签栏放在bottom实现浮动吸附
               SliverAppBar(
                 pinned: true,
                 floating: true,
+                snap: false,
                 backgroundColor: Colors.transparent,
                 elevation: 0,
                 scrolledUnderElevation: 0,
@@ -202,12 +203,18 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   ],
                 ),
                 actions: _buildAppBarActions(appState),
-              ),
-              // 列表选择栏（吸顶）
-              SliverPersistentHeader(
-                pinned: true,
-                delegate: _StickySettingsDelegate(
-                  child: _buildSettingsBar(appState),
+                // 标签栏放在bottom实现浮动吸附效果
+                bottom: PreferredSize(
+                  preferredSize: Size.fromHeight(56),
+                  child: ClipRect(
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                      child: Container(
+                        color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.9),
+                        child: _buildSettingsBar(appState),
+                      ),
+                    ),
+                  ),
                 ),
               ),
               // 视频列表 - 使用 SliverFillRemaining 替代 SliverToBoxAdapter + SizedBox

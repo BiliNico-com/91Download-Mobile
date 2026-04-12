@@ -417,10 +417,10 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               );
             },
           ),
-          // 下载按钮（右下角，仅选中后显示）
+          // 下载按钮（右下角，仅选中后显示，抬高到页码上方）
           if (_selectedIds.isNotEmpty)
             Positioned(
-              bottom: 16,
+              bottom: 80,
               right: 16,
               child: FloatingActionButton.extended(
                 onPressed: _download,
@@ -541,11 +541,10 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   Widget _buildBottomPageNavigation() {
     return Consumer<AppState>(
       builder: (context, appState, _) {
-        // 当有选中视频时，下移避免与下载按钮重叠
-        final bottomOffset = _selectedIds.isNotEmpty ? 80.0 : 16.0;
+        // 页码控件固定在底部，不随选中状态移动
         
         return Positioned(
-          bottom: bottomOffset,
+          bottom: 16,
           left: 0,
           right: 0,
           child: Center(
