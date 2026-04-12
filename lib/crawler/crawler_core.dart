@@ -177,16 +177,20 @@ class CrawlerCore {
     Logger().logSync('Parse', '解析 porn91 HTML, 长度: ${html.length}');
     
     // 策略1：只匹配 col-lg-3 容器内的视频卡片（过滤 col-lg-8 广告）
+    // 找到所有容器位置
     final containerMatches = CrawlerConfig.containerPattern.allMatches(html).toList();
-    Logger().logSync('Parse', '找到 ${containerMatches.length} 个容器');
+    Logger().logSync('Parse', '找到 ${containerMatches.length} 个容器匹配');
     
     for (var i = 0; i < containerMatches.length; i++) {
       final match = containerMatches[i];
       final start = match.start;
-      final end = (i + 1 < containerMatches.length) 
-          ? containerMatches[i + 1].start 
-          : html.length;
       
+      // 确定容器结束位置：找到下一个 <div class="col-xs-12 开始
+      // 这样可以避开中间的广告位
+      final nextDivPattern = RegExp(r'<div[^>]*class="[^"]*col-xs-12[^"]*"', caseSensitive: false);
+      final nextDivMatch = nextDivPattern.firstMatch(html, start: start + 1);
+      
+      final end = nextDivMatch?.start ?? html.length;
       final wellContent = html.substring(start, end);
       
       // 提取 viewkey
