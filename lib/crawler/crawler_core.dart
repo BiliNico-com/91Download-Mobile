@@ -257,6 +257,9 @@ class CrawlerCore {
       if (seenIds.contains(viewkey)) continue;
       seenIds.add(viewkey);
       
+      // 详细日志
+      Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$viewkey, 封面ID=$coverId, 作者=$author, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
+      
       videos.add(VideoInfo(
         id: viewkey,
         url: videoUrl,
@@ -349,6 +352,16 @@ class CrawlerCore {
         author = authorMatch.group(2)!.trim();
       }
       
+      // 从封面URL提取封面ID
+      String? coverId;
+      final coverIdMatch = RegExp(r'/(\d+)\.(webp|jpg|png)').firstMatch(cover ?? '');
+      if (coverIdMatch != null) {
+        coverId = coverIdMatch.group(1);
+      }
+      
+      // 详细日志
+      Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$videoId, 封面ID=$coverId, 作者=$author, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
+      
       videos.add(VideoInfo(
         id: videoId,
         url: '$baseUrl/$videoHref',
@@ -412,6 +425,16 @@ class CrawlerCore {
         if (authorMatch != null) {
           author = authorMatch.group(2)!.trim();
         }
+        
+        // 从封面URL提取封面ID
+        String? coverId;
+        final coverIdMatch = RegExp(r'/(\d+)\.(webp|jpg|png)').firstMatch(cover ?? '');
+        if (coverIdMatch != null) {
+          coverId = coverIdMatch.group(1);
+        }
+        
+        // 详细日志
+        Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$videoId, 封面ID=$coverId, 作者=$author, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
         
         videos.add(VideoInfo(
           id: videoId,
