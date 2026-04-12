@@ -269,11 +269,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
             ),
             // 覆盖层：翻页控件 + 浮动按钮
             ..._buildOverlays(appState),
-          );
-        },
-      ),
-    );
-  }
+          ],
+        ),
+      );
+    },
+  ),
+);
+}
   
   /// 覆盖层：翻页控件 + 浮动按钮
   List<Widget> _buildOverlays(AppState appState) {
