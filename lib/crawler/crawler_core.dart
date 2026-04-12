@@ -46,6 +46,22 @@ class CrawlerCore {
   
   /// 获取站点类型
   String get siteType => _siteType;
+  
+  /// 保存 HTML 到文件（调试用）
+  Future<void> _saveHtmlToFile(String html, String listType, int page) async {
+    try {
+      final dir = Directory('${(await getApplicationDocumentsDirectory()).path}/debug_html');
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final file = File('${dir.path}/${_siteType}_${listType}_page$page\_$timestamp.html');
+      await file.writeAsString(html);
+      await logger.log('Debug', 'HTML已保存: ${file.path}');
+    } catch (e) {
+      await logger.log('Debug', '保存HTML失败: $e');
+    }
+  }
 
   /// 禁用缓存的请求选项（复用）
   Options get _noCacheOptions => Options(
@@ -160,6 +176,9 @@ class CrawlerCore {
       // ✅ 调试日志：记录实际收到的 HTML 长度和前500字符
       await logger.log('Crawler', '收到响应: ${html.length} 字节, URL=$urlWithCache');
       await logger.log('Debug', 'HTML前500字符: ${html.substring(0, html.length > 500 ? 500 : html.length)}');
+      
+      // ✅ 保存原始 HTML 到文件（调试用）
+      await _saveHtmlToFile(html, listType, page);
       
       // 根据站点类型选择解析方法
       List<VideoInfo> videos;
