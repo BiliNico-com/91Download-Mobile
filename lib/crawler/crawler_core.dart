@@ -182,11 +182,19 @@ class CrawlerCore {
         final getResp = await _dio.get(urlWithCache, options: _noCacheOptions);
         
         // 步骤2：POST 提交语言设置
+        // 注意：必须使用 x-www-form-urlencoded 格式，不能用 JSON
         await logger.log('Crawler', 'porn91: POST 提交语言设置 session_language=cn_CN');
         final postResp = await _dio.post(
           urlWithCache,
-          data: {'session_language': 'cn_CN'},
-          options: _noCacheOptions,
+          data: 'session_language=cn_CN',  // 使用字符串格式，Dio会自动设置 Content-Type: application/x-www-form-urlencoded
+          options: Options(
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+            },
+            extra: {'cache': false},
+          ),
         );
         html = postResp.data.toString();
         await logger.log('Crawler', 'porn91: POST 响应长度 ${html.length} 字节');
