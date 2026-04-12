@@ -778,6 +778,59 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
       ],
     );
   }
+  
+  // 列表选择器组件
+  Widget _buildTypeChip(BuildContext ctx, bool isDark) {
+    final dropdownBg = isDark ? const Color(0xFF252525) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF252525) : Colors.white.withOpacity(0.95),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isDark ? const Color(0xFF333333) : Colors.grey[300]!,
+          width: 0.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF4a9eff).withOpacity(0.1),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.15),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.list_alt, size: 16, color: const Color(0xFF4a9eff)),
+          const SizedBox(width: 6),
+          Theme(
+            data: Theme.of(ctx).copyWith(canvasColor: dropdownBg),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: selectedType,
+                isDense: true,
+                icon: Icon(Icons.keyboard_arrow_down, size: 16, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 12, color: textColor),
+                items: typeNames.entries.map((e) => DropdownMenuItem(
+                  value: e.key,
+                  child: Text(e.value, style: TextStyle(fontSize: 12, color: isDark ? Colors.grey[300] : Colors.black87)),
+                )).toList(),
+                onChanged: onTypeChanged,
+                underline: const SizedBox(),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   bool shouldRebuild(_BatchHeaderDelegate old) =>
       old.collapseRatio != collapseRatio ||
