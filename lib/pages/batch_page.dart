@@ -636,21 +636,9 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
   double get maxExtent => statusBarHeight + expandedHeight;
 
   @override
+  @override
   Widget build(BuildContext ctx, double shrinkOffset, bool overlapsContent) {
-    final screenWidth = MediaQuery.of(ctx).size.width;
     final isDark = Theme.of(ctx).brightness == Brightness.dark;
-    
-    // 计算列表选择器的位置
-    // 展开时 (collapseRatio=0)：左侧居中
-    // 收起时 (collapseRatio=1)：左上角
-    final chipWidth = 140.0; // 估算选择器宽度
-    final chipLeftExpanded = 16.0;  // 展开时：左侧留出空间
-    final chipLeftCollapsed = 16.0;  // 收起时：左上角
-    final chipLeft = chipLeftExpanded + (chipLeftCollapsed - chipLeftExpanded) * collapseRatio;
-    
-    final chipTopExpanded = 56.0;   // 展开时：标题下方
-    final chipTopCollapsed = 12.0;  // 收起时：顶部
-    final chipTop = chipTopExpanded + (chipTopCollapsed - chipTopExpanded) * collapseRatio;
     
     return ClipRect(
       child: BackdropFilter(
@@ -658,135 +646,51 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
         child: Container(
           color: Colors.black.withOpacity(0.75),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(height: statusBarHeight),
               
-              // ── 主内容区 ──
-              Expanded(
-                child: Stack(
+              // ── 第一行：标题/下拉选择器 + 右侧按钮 ──
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    // ── 标题和副标题：展开时显示，收起时淡出 ──
-                    Opacity(
-                      opacity: 1.0 - collapseRatio,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 8),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Text(
+                    // 左侧：展开时显示标题，收起时显示下拉选择器
+                    Expanded(
+                      child: collapseRatio < 0.5
+                          ? Text(
                               '批量爬取',
                               style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.w600,
                                 color: Colors.white,
                               ),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Text(
-                              '已加载 $videoCount 个视频',
-                              style: const TextStyle(fontSize: 12, color: Colors.grey),
-                            ),
-                          ),
-                        ],
-                      ),
+                            )
+                          : _buildTypeChip(ctx, isDark),
                     ),
-                    
-                    // ── 列表选择器：从居中滑动到左上角 ──
-                    Positioned(
-                      left: chipLeft,
-                      top: chipTop,
-                      child: _buildTypeChip(ctx, isDark),
-                    ),
-                    
-                    // ── 右侧按钮：始终可见 ──
-                    Positioned(
-                      right: 16,
-                      top: 8,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // 已选数量
-                          if (selectedCount > 0)
-                            Container(
-                              margin: const EdgeInsets.only(right: 8),
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.blue.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                '已选 $selectedCount 个',
-                                style: const TextStyle(color: Colors.blue, fontSize: 11),
-                              ),
-                            ),
-                          
-                          // 全选按钮
-                          if (selectedCount > 0)
-                            GestureDetector(
-                              onTap: onSelectAll,
-                              child: Container(
-                                margin: const EdgeInsets.only(right: 8),
-                                padding: const EdgeInsets.all(6),
-                                decoration: BoxDecoration(
-                                  color: selectedCount == totalCount
-                                      ? Colors.blue
-                                      : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: selectedCount == totalCount
-                                      ? null
-                                      : Border.all(color: Colors.blue, width: 2),
-                                ),
-                                child: Icon(
-                                  Icons.check,
-                                  color: selectedCount == totalCount
-                                      ? Colors.white
-                                      : Colors.blue,
-                                  size: 18,
-                                ),
-                              ),
-                            ),
-                          
-                          // 就绪标签
-                          Container(
-                            margin: const EdgeInsets.only(right: 8),
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: status == '就绪'
-                                  ? Colors.green.withOpacity(0.2)
-                                  : Colors.orange.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              status,
-                              style: TextStyle(
-                                color: status == '就绪' ? Colors.green : Colors.orange,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                          
-                          // 隐私按钮
-                          IconButton(
-                            icon: Icon(
-                              privacyMode ? Icons.visibility_off : Icons.visibility,
-                              color: privacyMode ? Colors.red : Colors.grey,
-                              size: 20,
-                            ),
-                            onPressed: onPrivacyToggle,
-                            tooltip: privacyMode ? '取消模糊' : '模糊预览图',
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                        ],
-                      ),
-                    ),
+                    // 右侧按钮
+                    _buildRightButtons(),
                   ],
                 ),
               ),
+              
+              // ── 第二行：副标题（展开时显示）──
+              if (collapseRatio < 0.5)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                  child: Text(
+                    '已加载 $videoCount 个视频',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+              
+              // ── 第三行：下拉选择器（展开时显示）──
+              if (collapseRatio < 0.5)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  child: _buildTypeChip(ctx, isDark),
+                ),
             ],
           ),
         ),
@@ -794,60 +698,87 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
     );
   }
   
-  // 列表选择器组件 - 支持下拉点击
-  Widget _buildTypeChip(BuildContext ctx, bool isDark) {
-    final dropdownBg = isDark ? const Color(0xFF252525) : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black87;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF252525) : Colors.white.withOpacity(0.95),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark ? const Color(0xFF333333) : Colors.grey[300]!,
-          width: 0.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF4a9eff).withOpacity(0.1),
-            blurRadius: 8,
-            spreadRadius: 1,
+  // 右侧按钮组
+  Widget _buildRightButtons() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 已选数量
+        if (selectedCount > 0)
+          Container(
+            margin: const EdgeInsets.only(right: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              '已选 $selectedCount 个',
+              style: const TextStyle(color: Colors.blue, fontSize: 11),
+            ),
           ),
-          BoxShadow(
-            color: Colors.black.withOpacity(0.15),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.list_alt, size: 16, color: const Color(0xFF4a9eff)),
-          const SizedBox(width: 6),
-          Theme(
-            data: Theme.of(ctx).copyWith(canvasColor: dropdownBg),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: selectedType,
-                isDense: true,
-                icon: Icon(Icons.keyboard_arrow_down, size: 16, color: Colors.grey[600]),
-                style: TextStyle(fontSize: 12, color: textColor),
-                items: typeNames.entries.map((e) => DropdownMenuItem(
-                  value: e.key,
-                  child: Text(e.value, style: TextStyle(fontSize: 12, color: isDark ? Colors.grey[300] : Colors.black87)),
-                )).toList(),
-                onChanged: onTypeChanged,
-                underline: const SizedBox(),
+        
+        // 全选按钮
+        if (selectedCount > 0)
+          GestureDetector(
+            onTap: onSelectAll,
+            child: Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: selectedCount == totalCount
+                    ? Colors.blue
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+                border: selectedCount == totalCount
+                    ? null
+                    : Border.all(color: Colors.blue, width: 2),
+              ),
+              child: Icon(
+                Icons.check,
+                color: selectedCount == totalCount
+                    ? Colors.white
+                    : Colors.blue,
+                size: 18,
               ),
             ),
           ),
-        ],
-      ),
+        
+        // 就绪标签
+        Container(
+          margin: const EdgeInsets.only(right: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: status == '就绪'
+                ? Colors.green.withOpacity(0.2)
+                : Colors.orange.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            status,
+            style: TextStyle(
+              color: status == '就绪' ? Colors.green : Colors.orange,
+              fontSize: 11,
+            ),
+          ),
+        ),
+        
+        // 隐私按钮
+        IconButton(
+          icon: Icon(
+            privacyMode ? Icons.visibility_off : Icons.visibility,
+            color: privacyMode ? Colors.red : Colors.grey,
+            size: 20,
+          ),
+          onPressed: onPrivacyToggle,
+          tooltip: privacyMode ? '取消模糊' : '模糊预览图',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+        ),
+      ],
     );
   }
 
-  @override
   bool shouldRebuild(_BatchHeaderDelegate old) =>
       old.collapseRatio != collapseRatio ||
       old.selectedType != selectedType ||
