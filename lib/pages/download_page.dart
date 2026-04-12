@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:open_filex/open_filex.dart';
 import 'dart:io';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
@@ -891,13 +891,13 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
         return;
       }
       
-      // 使用 url_launcher 打开外部播放器
-      final uri = Uri.parse('file://${task.filePath}');
-      final canLaunch = await canLaunchUrl(uri);
+      // 使用 open_filex 打开外部播放器（自动处理 FileProvider）
+      final result = await OpenFilex.open(
+        task.filePath!,
+        type: 'video/*',
+      );
       
-      if (canLaunch) {
-        await launchUrl(uri);
-      } else {
+      if (result.type != ResultType.done) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('没有可用的外部播放器，使用内置播放器')),
