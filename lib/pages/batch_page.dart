@@ -436,6 +436,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   onChanged: (v) {
                     _currentPage = int.tryParse(v) ?? 1;
                   },
+                  onSubmitted: (_) => _goToPage(),
+                  textInputAction: TextInputAction.go,
                 ),
               ),
               SizedBox(width: 8),
@@ -584,6 +586,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     
     return ListView.builder(
       padding: EdgeInsets.all(8),
+      shrinkWrap: true,
+      physics: NeverScrollableScrollPhysics(),
       itemCount: _videos.length,
       itemBuilder: (context, index) {
         final video = _videos[index];
@@ -706,6 +710,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     
     return GridView.builder(
       padding: EdgeInsets.all(8),
+      shrinkWrap: true,
+      physics: NeverScrollableScrollPhysics(),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         childAspectRatio: childAspectRatio,

@@ -488,6 +488,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                       contentPadding: EdgeInsets.symmetric(horizontal: 12),
                       isDense: true,
                     ),
+                    onSubmitted: (_) => _search(),
+                    textInputAction: TextInputAction.search,
                   ),
                 ),
                 SizedBox(width: 8),
@@ -604,6 +606,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                       onChanged: (v) {
                         _currentPage = int.tryParse(v) ?? 1;
                       },
+                      onSubmitted: (_) {
+                        final page = int.tryParse(_pageController.text);
+                        if (page != null && page > 0) {
+                          _goToPage(page);
+                        }
+                      },
+                      textInputAction: TextInputAction.go,
                     ),
                   ),
                   SizedBox(width: 8),
