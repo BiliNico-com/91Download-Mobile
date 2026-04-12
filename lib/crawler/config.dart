@@ -92,7 +92,8 @@ class CrawlerConfig {
       return "$baseUrl/search_result.php?search_id=${Uri.encodeComponent(keyword)}&search_type=search_videos&min_duration=&page=$page";
     } else {
       // original 风格搜索 URL（支持分页）
-      return "$baseUrl/search.htm?search=${Uri.encodeComponent(keyword)}&sort=$sort&page=$page";
+      // ✅ 修复：实际URL格式是 search-{page}.htm?search=xxx，不是 search.htm?search=xxx&page=N
+      return "$baseUrl/search-$page.htm?search=${Uri.encodeComponent(keyword)}";
     }
   }
 
