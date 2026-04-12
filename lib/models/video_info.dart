@@ -5,7 +5,8 @@ class VideoInfo {
   final String url;         // 视频页面 URL
   final String title;       // 标题
   final String? cover;      // 封面 URL
-  final String? author;     // 作者
+  final String? author;     // 作者名
+  final String? authorId;   // 作者ID（用于跳转作者主页）
   final String? duration;   // 时长
   final String? uploadDate; // 上传日期
   final String? m3u8Url;    // m3u8 地址（解析后）
@@ -16,6 +17,7 @@ class VideoInfo {
     required this.title,
     this.cover,
     this.author,
+    this.authorId,
     this.duration,
     this.uploadDate,
     this.m3u8Url,
@@ -28,6 +30,7 @@ class VideoInfo {
       title: json['title'] ?? '',
       cover: json['cover'],
       author: json['author'],
+      authorId: json['authorId'],
       duration: json['duration'],
       uploadDate: json['uploadDate'],
       m3u8Url: json['m3u8Url'],
@@ -41,6 +44,7 @@ class VideoInfo {
       'title': title,
       'cover': cover,
       'author': author,
+      'authorId': authorId,
       'duration': duration,
       'uploadDate': uploadDate,
       'm3u8Url': m3u8Url,

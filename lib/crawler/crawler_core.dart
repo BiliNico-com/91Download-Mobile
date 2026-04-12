@@ -281,6 +281,7 @@ class CrawlerCore {
         title: title,
         cover: cover,
         author: author,
+        authorId: null, // porn91 没有作者ID
         duration: duration,
       ));
     }
@@ -363,10 +364,12 @@ class CrawlerCore {
       // ✅ 修复：提取作者 <a href="user.htm?author=xxx">作者名</a>
       // ml0987 格式: <p>&nbsp;&nbsp;<a href="...user.htm?author=xxx">&nbsp;作者名</a>
       String? author;
+      String? authorId;
       final authorMatch = RegExp(
         r'<a[^>]*href="[^"]*user\.htm\?author=([^"]+)"[^>]*>([^<]*)</a>'
       ).firstMatch(container);
       if (authorMatch != null) {
+        authorId = authorMatch.group(1);
         author = authorMatch.group(2)?.replaceAll('&nbsp;', '').trim();
       }
       
@@ -378,7 +381,7 @@ class CrawlerCore {
       }
       
       // 详细日志
-      Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$videoId, 封面ID=$coverId, 作者=$author, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
+      Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$videoId, 封面ID=$coverId, 作者=$author, 作者ID=$authorId, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
       
       videos.add(VideoInfo(
         id: videoId,
@@ -386,6 +389,7 @@ class CrawlerCore {
         title: title,
         cover: cover,
         author: author,
+        authorId: authorId,
         duration: duration,
       ));
     }
@@ -460,6 +464,7 @@ class CrawlerCore {
           title: title,
           cover: cover,
           author: author,
+          authorId: null, // 策略2无法提取作者ID
           duration: duration,
         ));
       }
@@ -818,6 +823,7 @@ class CrawlerCore {
           title: video.title,
           cover: video.cover,
           author: author,
+          authorId: video.authorId, // 保留原有的作者ID
           duration: duration,
           m3u8Url: videoUrl,
         );
