@@ -9,6 +9,9 @@ import '../utils/logger.dart';
 import 'download_manager.dart';
 
 class AppState extends ChangeNotifier {
+  // 初始化标志
+  bool _initialized = false;
+  
   // 站点配置 - 默认为空，用户必须选择
   String? currentSite;
   

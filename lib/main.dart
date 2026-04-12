@@ -60,6 +60,13 @@ class MyApp extends StatelessWidget {
       create: (_) => AppState(),
       child: Consumer<AppState>(
         builder: (context, appState, _) {
+          // 首次构建时初始化 AppState
+          if (!appState._initialized) {
+            appState._initialized = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              appState.init();
+            });
+          }
           return ThemeWrapper(
             child: MaterialApp(
               title: '91Download',
