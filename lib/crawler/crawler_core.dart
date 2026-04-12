@@ -3,6 +3,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:crypto/crypto.dart';
@@ -128,9 +129,9 @@ class CrawlerCore {
     }
     
     final url = '$baseUrl/${urlPattern.replaceAll('{page}', page.toString())}';
-    // 添加时间戳参数避免CDN缓存
-    final cacheBuster = '_t=${DateTime.now().millisecondsSinceEpoch}';
-    final urlWithCache = url.contains('?') ? '$url&$cacheBuster' : '$url?$cacheBuster';
+    // 添加随机参数避免CDN缓存（时间戳+随机数）
+    final randomParam = '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
+    final urlWithCache = url.contains('?') ? '$url&_cache=$randomParam' : '$url?_cache=$randomParam';
     await logger.log('Crawler', '网络请求: GET $url (siteType=$_siteType)');
     
     try {
@@ -476,8 +477,9 @@ class CrawlerCore {
     
     try {
       // 添加时间戳参数避免CDN缓存
-      final cacheBuster = '_t=${DateTime.now().millisecondsSinceEpoch}';
-      final urlWithCache = url.contains('?') ? '$url&$cacheBuster' : '$url?$cacheBuster';
+      // 添加随机参数避免CDN缓存
+      final randomParam = '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
+      final urlWithCache = url.contains('?') ? '$url&_cache=$randomParam' : '$url?_cache=$randomParam';
       final resp = await _dio.get(urlWithCache);
       final html = resp.data.toString();
       
@@ -512,8 +514,9 @@ class CrawlerCore {
     
     try {
       // 添加时间戳参数避免CDN缓存
-      final cacheBuster = '_t=${DateTime.now().millisecondsSinceEpoch}';
-      final urlWithCache = url.contains('?') ? '$url&$cacheBuster' : '$url?$cacheBuster';
+      // 添加随机参数避免CDN缓存
+      final randomParam = '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
+      final urlWithCache = url.contains('?') ? '$url&_cache=$randomParam' : '$url?_cache=$randomParam';
       final resp = await _dio.get(urlWithCache);
       final html = resp.data.toString();
       
@@ -588,11 +591,11 @@ class CrawlerCore {
   /// 获取视频详情（m3u8地址等）
   Future<VideoInfo?> getVideoDetail(VideoInfo video) async {
     try {
-      // 添加时间戳参数避免CDN缓存
-      final cacheBuster = '_t=${DateTime.now().millisecondsSinceEpoch}';
+      // 添加随机参数避免CDN缓存
+      final randomParam = '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
       final urlWithCache = video.url.contains('?') 
-          ? '${video.url}&$cacheBuster' 
-          : '${video.url}?$cacheBuster';
+          ? '${video.url}&_cache=$randomParam' 
+          : '${video.url}?_cache=$randomParam';
       
       final resp = await _dio.get(urlWithCache);
       final html = resp.data.toString();
