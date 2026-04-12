@@ -304,9 +304,9 @@ class CrawlerCore {
     //   <div class="caption title">标题</div>
     //   <div class="info"><p>&nbsp;&nbsp;<a href="user.htm?author=xxx">作者名</a></p></div>
     // </div>
-    // ✅ 修复：匹配两个连续的 </div>，确保包含 <div class="info"> 部分
+    // ✅ 修复：匹配到下一个 </div> 后再找一个 </div>，确保包含 info 部分
     final containerPattern = RegExp(
-      r'<div[^>]*class="[^"]*thumbnail[^"]*"[^>]*>([\s\S]*?)</div>\s*</div>',
+      r'<div[^>]*class="[^"]*thumbnail[^"]*"[^>]*>([\s\S]*?)</div>\s*(?:</div>[\s\n]*)*</div>',
       caseSensitive: false,
     );
     
