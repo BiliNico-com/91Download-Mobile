@@ -173,6 +173,11 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   Widget _buildMainContent() {
     return Consumer<AppState>(
       builder: (context, appState, _) {
+        // 自动加载第一页：如果视频列表为空且不在加载中
+        if (_videos.isEmpty && !_isLoading && appState.crawler != null) {
+          Future.microtask(() => _goToPage());
+        }
+        
         return Scaffold(
           extendBodyBehindAppBar: true,
           body: Stack(
