@@ -394,91 +394,91 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       color: Theme.of(context).scaffoldBackgroundColor,
-      child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color: isDark ? Color(0xFF1a1a1a) : Colors.white.withOpacity(0.95),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!, width: 0.5),
-          boxShadow: [
-            // 玻璃态外发光
-            BoxShadow(
-              color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.08),
-              blurRadius: 16,
-              spreadRadius: 0,
-            ),
-            // 基础阴影
-            BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              blurRadius: 8,
-              offset: Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            // 搜索框 - 占据剩余空间
-            Expanded(
-              child: Container(
-                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: isDark ? Color(0xFF0a0a0a) : Colors.grey[50],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: TextField(
-                  controller: _keywordController,
-                  textAlign: TextAlign.center,
-                  decoration: InputDecoration(
-                    hintText: '',
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
-                    isDense: true,
-                  ),
-                  style: TextStyle(fontSize: 12, color: isDark ? Colors.white : Colors.black87),
-                  onSubmitted: (_) => _search(),
-                  textInputAction: TextInputAction.search,
-                ),
-              ),
-            ),
-            SizedBox(width: 8),
-            // 搜索模式选择（放前面）
-            Container(
-              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      child: Row(
+        children: [
+          // 搜索输入框 + 搜索模式选择（合并为一个容器）
+          Expanded(
+            child: Container(
+              height: 40,
+              padding: EdgeInsets.symmetric(horizontal: 4),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: isDark ? Colors.white24 : Colors.grey[400]!, width: 0.8),
+                color: isDark ? Color(0xFF1a1a1a) : Colors.white.withOpacity(0.95),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!, width: 0.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.08),
+                    blurRadius: 16,
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ],
               ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<bool>(
-                  value: _isAuthorMode,
-                  isDense: true,
-                  style: TextStyle(fontSize: 11, color: isDark ? Colors.white : Colors.black87),
-                  icon: Icon(Icons.arrow_drop_down, size: 16, color: isDark ? Colors.white54 : Colors.grey[600]),
-                  items: [
-                    DropdownMenuItem(value: false, child: Text('搜视频', style: TextStyle(fontSize: 11, color: isDark ? Colors.white : Colors.black87))),
-                    DropdownMenuItem(value: true, child: Text('搜作者', style: TextStyle(fontSize: 11, color: isDark ? Colors.white : Colors.black87))),
-                  ],
-                  onChanged: (v) => setState(() => _isAuthorMode = v!),
-                ),
+              child: Row(
+                children: [
+                  // 搜索输入框
+                  Expanded(
+                    child: TextField(
+                      controller: _keywordController,
+                      textAlign: TextAlign.center,
+                      decoration: InputDecoration(
+                        hintText: '输入关键词',
+                        hintStyle: TextStyle(fontSize: 12, color: isDark ? Colors.grey[500] : Colors.grey[400]),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12),
+                        isDense: true,
+                      ),
+                      style: TextStyle(fontSize: 12, color: isDark ? Colors.white : Colors.black87),
+                      onSubmitted: (_) => _search(),
+                      textInputAction: TextInputAction.search,
+                    ),
+                  ),
+                  // 分隔线
+                  Container(
+                    width: 1,
+                    height: 20,
+                    color: isDark ? Colors.white24 : Colors.grey[300],
+                  ),
+                  // 搜索模式选择
+                  DropdownButtonHideUnderline(
+                    child: DropdownButton<bool>(
+                      value: _isAuthorMode,
+                      isDense: true,
+                      underline: null,
+                      style: TextStyle(fontSize: 11, color: isDark ? Colors.white : Colors.black87),
+                      icon: Icon(Icons.arrow_drop_down, size: 18, color: isDark ? Colors.white54 : Colors.grey[600]),
+                      items: [
+                        DropdownMenuItem(value: false, child: Text('搜视频', style: TextStyle(fontSize: 11, color: isDark ? Colors.white : Colors.black87))),
+                        DropdownMenuItem(value: true, child: Text('搜作者', style: TextStyle(fontSize: 11, color: isDark ? Colors.white : Colors.black87))),
+                      ],
+                      onChanged: (v) => setState(() => _isAuthorMode = v!),
+                    ),
+                  ),
+                ],
               ),
             ),
-            // 排序选择（搜视频模式 + original CMS）
-            if (showSort) ...[
-              SizedBox(width: 6),
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: isDark ? Colors.white24 : Colors.grey[400]!, width: 0.8),
-                ),
+          ),
+          // 排序选择（搜视频模式 + original CMS）
+          if (showSort) ...[
+            SizedBox(width: 8),
+            Container(
+              height: 40,
+              padding: EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: isDark ? Color(0xFF1a1a1a) : Colors.white.withOpacity(0.95),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: isDark ? Colors.white.withOpacity(0.1) : Colors.grey[300]!, width: 0.5),
+              ),
+              child: Center(
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
                     value: _sortBy,
                     isDense: true,
                     style: TextStyle(fontSize: 11, color: isDark ? Colors.white : Colors.black87),
-                    icon: Icon(Icons.arrow_drop_down, size: 16, color: isDark ? Colors.white54 : Colors.grey[600]),
+                    icon: Icon(Icons.arrow_drop_down, size: 18, color: isDark ? Colors.white54 : Colors.grey[600]),
                     items: [
                       DropdownMenuItem(value: 'default', child: Text('默认', style: TextStyle(fontSize: 11, color: isDark ? Colors.white : Colors.black87))),
                       DropdownMenuItem(value: 'new', child: Text('最新', style: TextStyle(fontSize: 11, color: isDark ? Colors.white : Colors.black87))),
@@ -495,34 +495,34 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                   ),
                 ),
               ),
-            ],
-            SizedBox(width: 6),
-            // 搜索按钮（渐变色）
-            GestureDetector(
-              onTap: _search,
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF4a9eff), Color(0xFF2d7dd2)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Color(0xFF4a9eff).withOpacity(0.4),
-                      blurRadius: 8,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Icon(Icons.search, color: Colors.white, size: 18),
-              ),
             ),
           ],
-        ),
+          SizedBox(width: 8),
+          // 搜索按钮（渐变色）
+          GestureDetector(
+            onTap: _search,
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF4a9eff), Color(0xFF2d7dd2)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Color(0xFF4a9eff).withOpacity(0.4),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Icon(Icons.search, color: Colors.white, size: 18),
+            ),
+          ),
+        ],
       ),
     );
   }
