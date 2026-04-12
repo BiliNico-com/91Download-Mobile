@@ -21,6 +21,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   List<VideoInfo> _videos = [];
   Set<String> _selectedIds = {};
   bool _isLoading = false;
+  bool _isLoadingMore = false;  // 瀑布流加载状态（独立于翻页加载）
   String _status = '就绪';
   double _progress = 0.0;
   String _progressText = '';
@@ -58,7 +59,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     
     // 瀑布流：滚动到底部自动加载下一页
     if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-      if (!_isLoading && _hasMore && _videos.isNotEmpty) {
+      if (!_isLoading && !_isLoadingMore && _hasMore && _videos.isNotEmpty) {
         _loadMore();
       }
     }
@@ -66,13 +67,13 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   
   /// 瀑布流加载更多（追加到现有列表）
   Future<void> _loadMore() async {
-    if (!_hasMore || _isLoading) return;
+    if (!_hasMore || _isLoading || _isLoadingMore) return;
     
     final appState = context.read<AppState>();
     final crawler = appState.crawler;
     if (crawler == null) return;
     
-    setState(() => _isLoading = true);
+    setState(() => _isLoadingMore = true);
     
     final nextPage = _loadedPage + 1;
     final newVideos = await crawler.getVideoList(_selectedType, nextPage);
@@ -80,7 +81,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     if (newVideos.isEmpty) {
       setState(() {
         _hasMore = false;
-        _isLoading = false;
+        _isLoadingMore = false;
       });
     } else {
       setState(() {
@@ -88,7 +89,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         _totalVideos = _videos.length;
         _loadedPage = nextPage;
         _hasMore = newVideos.length >= 24;  // 每页24个，少于则没有更多
-        _isLoading = false;
+        _isLoadingMore = false;
       });
     }
   }
@@ -424,7 +425,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
               SizedBox(width: 12),
               // 上一页按钮
               GestureDetector(
-                onTap: (_isLoading || _loadedPage <= 1) 
+                onTap: (_isLoading || _isLoadingMore || _loadedPage <= 1) 
                   ? null 
                   : () => _goToPageDirect(_loadedPage - 1),
                 child: Icon(
@@ -461,7 +462,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
               SizedBox(width: 8),
               // 下一页按钮
               GestureDetector(
-                onTap: _isLoading ? null : () => _goToPageDirect(_loadedPage + 1),
+                onTap: (_isLoading || _isLoadingMore) ? null : () => _goToPageDirect(_loadedPage + 1),
                 child: Icon(
                   Icons.arrow_right,
                   size: 20,
