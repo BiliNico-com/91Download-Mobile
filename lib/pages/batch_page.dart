@@ -641,15 +641,15 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
     final isDark = Theme.of(ctx).brightness == Brightness.dark;
     
     // 计算列表选择器的位置
-    // 展开时 (collapseRatio=0)：居中显示
+    // 展开时 (collapseRatio=0)：左侧居中
     // 收起时 (collapseRatio=1)：左上角
     final chipWidth = 140.0; // 估算选择器宽度
-    final chipLeftExpanded = (screenWidth - chipWidth) / 2; // 居中
-    final chipLeftCollapsed = 16.0; // 左上角
+    final chipLeftExpanded = 60.0;  // 展开时：左侧留出空间
+    final chipLeftCollapsed = 16.0;  // 收起时：左上角
     final chipLeft = chipLeftExpanded + (chipLeftCollapsed - chipLeftExpanded) * collapseRatio;
     
-    final chipTopExpanded = 80.0;  // 展开时：中间偏上
-    final chipTopCollapsed = 12.0; // 收起时：顶部
+    final chipTopExpanded = 75.0;   // 展开时：标题下方
+    final chipTopCollapsed = 12.0;  // 收起时：顶部
     final chipTop = chipTopExpanded + (chipTopCollapsed - chipTopExpanded) * collapseRatio;
     
     return ClipRect(
@@ -702,86 +702,86 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
                       child: _buildTypeChip(ctx, isDark),
                     ),
                     
-                    // ── 底部按钮：始终可见 ──
+                    // ── 右侧按钮：始终可见 ──
                     Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 12,
-                      child: Center(
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // 已选数量
-                            if (selectedCount > 0)
-                              Container(
-                                margin: const EdgeInsets.only(right: 12),
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue.withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  '已选 $selectedCount 个',
-                                  style: const TextStyle(color: Colors.blue, fontSize: 12),
-                                ),
-                              ),
-                            
-                            // 全选按钮
-                            if (selectedCount > 0)
-                              GestureDetector(
-                                onTap: onSelectAll,
-                                child: Container(
-                                  margin: const EdgeInsets.only(right: 8),
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: selectedCount == totalCount
-                                        ? Colors.blue
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: selectedCount == totalCount
-                                        ? null
-                                        : Border.all(color: Colors.blue, width: 2),
-                                  ),
-                                  child: Icon(
-                                    Icons.check,
-                                    color: selectedCount == totalCount
-                                        ? Colors.white
-                                        : Colors.blue,
-                                    size: 20,
-                                  ),
-                                ),
-                              ),
-                            
-                            // 就绪标签
+                      right: 16,
+                      top: 8,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 已选数量
+                          if (selectedCount > 0)
                             Container(
                               margin: const EdgeInsets.only(right: 8),
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: status == '就绪'
-                                    ? Colors.green.withOpacity(0.2)
-                                    : Colors.orange.withOpacity(0.2),
+                                color: Colors.blue.withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
-                                status,
-                                style: TextStyle(
-                                  color: status == '就绪' ? Colors.green : Colors.orange,
-                                  fontSize: 12,
+                                '已选 $selectedCount 个',
+                                style: const TextStyle(color: Colors.blue, fontSize: 11),
+                              ),
+                            ),
+                          
+                          // 全选按钮
+                          if (selectedCount > 0)
+                            GestureDetector(
+                              onTap: onSelectAll,
+                              child: Container(
+                                margin: const EdgeInsets.only(right: 8),
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: selectedCount == totalCount
+                                      ? Colors.blue
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: selectedCount == totalCount
+                                      ? null
+                                      : Border.all(color: Colors.blue, width: 2),
+                                ),
+                                child: Icon(
+                                  Icons.check,
+                                  color: selectedCount == totalCount
+                                      ? Colors.white
+                                      : Colors.blue,
+                                  size: 18,
                                 ),
                               ),
                             ),
-                            
-                            // 隐私按钮
-                            IconButton(
-                              icon: Icon(
-                                privacyMode ? Icons.visibility_off : Icons.visibility,
-                                color: privacyMode ? Colors.red : Colors.grey,
-                              ),
-                              onPressed: onPrivacyToggle,
-                              tooltip: privacyMode ? '取消模糊' : '模糊预览图',
+                          
+                          // 就绪标签
+                          Container(
+                            margin: const EdgeInsets.only(right: 8),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: status == '就绪'
+                                  ? Colors.green.withOpacity(0.2)
+                                  : Colors.orange.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                          ],
-                        ),
+                            child: Text(
+                              status,
+                              style: TextStyle(
+                                color: status == '就绪' ? Colors.green : Colors.orange,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                          
+                          // 隐私按钮
+                          IconButton(
+                            icon: Icon(
+                              privacyMode ? Icons.visibility_off : Icons.visibility,
+                              color: privacyMode ? Colors.red : Colors.grey,
+                              size: 20,
+                            ),
+                            onPressed: onPrivacyToggle,
+                            tooltip: privacyMode ? '取消模糊' : '模糊预览图',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
                       ),
                     ),
                   ],
