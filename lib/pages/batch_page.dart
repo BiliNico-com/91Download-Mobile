@@ -387,6 +387,13 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                           filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
                           child: Container(color: Colors.transparent),
                         ),
+                      // 选中标记（左上角）
+                      if (isSelected)
+                        Positioned(
+                          top: 4,
+                          left: 4,
+                          child: Icon(Icons.check_circle, color: Colors.blue, size: 20),
+                        ),
                       // 时长
                       Positioned(
                         right: 4,
@@ -429,9 +436,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   ],
                 ),
               ),
-              // 选中标记
-              if (isSelected)
-                Icon(Icons.check_circle, color: Colors.blue),
             ],
           ),
         ),
