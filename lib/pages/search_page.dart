@@ -448,11 +448,11 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               // 排序选择（仅视频模式 + original CMS）
               if (showSort) ...[
                 Container(
-                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                   decoration: BoxDecoration(
-                    color: isDark ? Color(0xFF303030) : Colors.grey[100],
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: isDark ? Color(0xFF444444) : Colors.grey[300]!, width: 0.5),
+                    color: isDark ? Color(0xFF252525) : Colors.grey[100],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: isDark ? Color(0xFF333333) : Colors.grey[300]!, width: 0.5),
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
@@ -479,11 +479,11 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               ],
               // 搜索模式选择
               Container(
-                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: BoxDecoration(
-                  color: isDark ? Color(0xFF303030) : Colors.grey[100],
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: isDark ? Color(0xFF444444) : Colors.grey[300]!, width: 0.5),
+                  color: isDark ? Color(0xFF252525) : Colors.grey[100],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: isDark ? Color(0xFF333333) : Colors.grey[300]!, width: 0.5),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<bool>(
