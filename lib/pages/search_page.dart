@@ -69,10 +69,12 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     
     // 自动加载更多
     if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-      if (!_isLoading && !_isLoadingMore && !_isAuthorMode) {
+      if (!_isLoading && !_isLoadingMore) {
+        // 作者主页模式
         if (_isAuthorPageMode && _authorHasMore) {
           _loadMoreAuthorVideos();
-        } else if (!_isAuthorPageMode && _hasMore && _results.isNotEmpty) {
+        // 视频搜索模式（非作者搜索模式）
+        } else if (!_isAuthorPageMode && !_isAuthorMode && _hasMore && _results.isNotEmpty) {
           _loadMore();
         }
       }
