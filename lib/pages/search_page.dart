@@ -395,11 +395,11 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         child: Container(
           padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
+            color: Colors.white.withOpacity(0.95),
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withOpacity(0.15),
                 blurRadius: 8,
                 offset: Offset(0, 2),
               ),
@@ -418,9 +418,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     border: InputBorder.none,
                     contentPadding: EdgeInsets.symmetric(horizontal: 8),
                     isDense: true,
-                    hintStyle: TextStyle(fontSize: 12),
+                    hintStyle: TextStyle(fontSize: 12, color: Colors.grey[600]),
                   ),
-                  style: TextStyle(fontSize: 12),
+                  style: TextStyle(fontSize: 12, color: Colors.black87),
                   onSubmitted: (_) => _search(),
                   textInputAction: TextInputAction.search,
                 ),
@@ -430,9 +430,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                 Container(
                   padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).scaffoldBackgroundColor,
+                    color: Colors.grey[100],
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                    border: Border.all(color: Colors.grey[400]!),
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
@@ -440,9 +440,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                       isDense: true,
                       style: TextStyle(fontSize: 11, color: Colors.black87),
                       items: [
-                        DropdownMenuItem(value: 'default', child: Text('默认', style: TextStyle(fontSize: 11))),
-                        DropdownMenuItem(value: 'new', child: Text('最新', style: TextStyle(fontSize: 11))),
-                        DropdownMenuItem(value: 'hot', child: Text('最热', style: TextStyle(fontSize: 11))),
+                        DropdownMenuItem(value: 'default', child: Text('默认', style: TextStyle(fontSize: 11, color: Colors.black87))),
+                        DropdownMenuItem(value: 'new', child: Text('最新', style: TextStyle(fontSize: 11, color: Colors.black87))),
+                        DropdownMenuItem(value: 'hot', child: Text('最热', style: TextStyle(fontSize: 11, color: Colors.black87))),
                       ],
                       onChanged: (v) {
                         if (v != null && v != _sortBy) {
@@ -461,9 +461,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               Container(
                 padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).scaffoldBackgroundColor,
+                  color: Colors.grey[100],
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                  border: Border.all(color: Colors.grey[400]!),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<bool>(
@@ -471,8 +471,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     isDense: true,
                     style: TextStyle(fontSize: 11, color: Colors.black87),
                     items: [
-                      DropdownMenuItem(value: false, child: Text('搜视频', style: TextStyle(fontSize: 11))),
-                      DropdownMenuItem(value: true, child: Text('搜作者', style: TextStyle(fontSize: 11))),
+                      DropdownMenuItem(value: false, child: Text('搜视频', style: TextStyle(fontSize: 11, color: Colors.black87))),
+                      DropdownMenuItem(value: true, child: Text('搜作者', style: TextStyle(fontSize: 11, color: Colors.black87))),
                     ],
                     onChanged: (v) => setState(() => _isAuthorMode = v!),
                   ),
