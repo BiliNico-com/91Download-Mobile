@@ -644,11 +644,11 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
     // 展开时 (collapseRatio=0)：左侧居中
     // 收起时 (collapseRatio=1)：左上角
     final chipWidth = 140.0; // 估算选择器宽度
-    final chipLeftExpanded = 60.0;  // 展开时：左侧留出空间
+    final chipLeftExpanded = 16.0;  // 展开时：左侧留出空间
     final chipLeftCollapsed = 16.0;  // 收起时：左上角
     final chipLeft = chipLeftExpanded + (chipLeftCollapsed - chipLeftExpanded) * collapseRatio;
     
-    final chipTopExpanded = 75.0;   // 展开时：标题下方
+    final chipTopExpanded = 56.0;   // 展开时：标题下方
     final chipTopCollapsed = 12.0;  // 收起时：顶部
     final chipTop = chipTopExpanded + (chipTopCollapsed - chipTopExpanded) * collapseRatio;
     
