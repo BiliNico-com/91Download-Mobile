@@ -41,6 +41,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Future<void> _checkAuthentication() async {
     final appState = context.read<AppState>();
     
+    // 先初始化，读取保存的状态
+    await appState.init();
+    
     // 如果未启用应用锁或已认证，直接进入
     if (!appState.appLockEnabled || appState.isAuthenticated) {
       return;
