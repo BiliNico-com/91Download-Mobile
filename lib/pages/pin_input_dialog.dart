@@ -279,8 +279,9 @@ class _PinInputDialogState extends State<PinInputDialog> {
   }
   
   Widget _buildNumberButton(String number, ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
     return Material(
-      color: theme.colorScheme.surfaceContainerHighest,
+      color: isDark ? Colors.grey[800] : Colors.grey[200],
       borderRadius: BorderRadius.circular(40),
       child: InkWell(
         onTap: () => _onNumberPressed(number),
