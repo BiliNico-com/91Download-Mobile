@@ -505,26 +505,31 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               },
             ),
             // 应用锁设置
-            if (_biometricSupported) ...[
-              Divider(),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text('应用锁'),
-                subtitle: Text('进入应用时需要指纹或面容验证'),
-                value: appState.appLockEnabled,
-                onChanged: (v) async {
-                  // 开启时先验证一次
-                  if (v) {
-                    final success = await _authService.authenticate();
-                    if (success && mounted) {
-                      await appState.toggleAppLock(true);
-                    }
-                  } else {
-                    await appState.toggleAppLock(false);
-                  }
-                },
+            Divider(),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('应用锁'),
+              subtitle: Text(
+                _biometricSupported 
+                    ? '进入应用时需要指纹或面容验证'
+                    : '设备不支持生物识别',
+                style: _biometricSupported 
+                    ? null 
+                    : TextStyle(color: Colors.grey),
               ),
-            ],
+              value: appState.appLockEnabled,
+              onChanged: _biometricSupported ? (v) async {
+                // 开启时先验证一次
+                if (v) {
+                  final success = await _authService.authenticate();
+                  if (success && mounted) {
+                    await appState.toggleAppLock(true);
+                  }
+                } else {
+                  await appState.toggleAppLock(false);
+                }
+              } : null,  // 设备不支持时禁用
+            ),
           ],
         ),
       ),
