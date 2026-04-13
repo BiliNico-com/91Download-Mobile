@@ -140,8 +140,8 @@ class CrawlerConfig {
   
   /// 获取请求头（根据站点类型）
   static Map<String, String> getHeaders(String siteType) {
-    // porn91 使用桌面端请求头（移动端请求会返回不同的视频ID，导致封面与视频不匹配）
-    return defaultHeaders;
+    // porn91 使用移动端请求头
+    return siteType == "porn91" ? mobileHeaders : defaultHeaders;
   }
 
   // ==================== 站点配置 ====================
