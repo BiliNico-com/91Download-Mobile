@@ -236,6 +236,11 @@ class CrawlerCore {
         );
         html = postResp.data.toString();
         await logger.log('Crawler', 'porn91: POST 响应长度 ${html.length} 字节');
+        
+        // ✅ 关键：将Cookie保存到全局，后续请求（如播放页）可以使用
+        _dio.options.headers['Cookie'] = cookies;
+        await logger.log('Crawler', 'porn91: 已保存Cookie到全局headers');
+        
         // 检查响应中的分类信息
         final categoryMatch = RegExp(r'category=([a-z]+)').firstMatch(html);
         if (categoryMatch != null) {
@@ -714,7 +719,19 @@ class CrawlerCore {
       
       await logger.log('Crawler', '网络请求: 获取视频详情 $urlWithCache');
       
-      final resp = await _dio.get(urlWithCache, options: _noCacheOptions);
+      // ✅ 携带Cookie请求播放页（关键！）
+      // 获取当前存储的Cookie
+      final currentCookie = _dio.options.headers['Cookie']?.toString() ?? 'language=cn_CN';
+      
+      final resp = await _dio.get(urlWithCache, options: Options(
+        headers: {
+          'Cookie': currentCookie,  // 携带Cookie
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        },
+        extra: {'cache': false},
+      ));
       final html = resp.data.toString();
       
       await logger.log('Crawler', '视频详情响应: ${html.length} 字节');
