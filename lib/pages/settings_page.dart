@@ -5,8 +5,10 @@ import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/app_state.dart';
 import '../services/auth_service.dart';
+import '../services/pin_service.dart';
 import '../crawler/config.dart';
 import '../utils/logger.dart';
+import 'pin_input_dialog.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -17,6 +19,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClientMixin {
   final AuthService _authService = AuthService();
+  final PinService _pinService = PinService();
   bool _biometricSupported = false;
   
   @override
@@ -63,26 +66,32 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
           ),
           body: ListView(
             children: [
-              // 主题设置
-              _buildThemeSection(appState),
-              
-              // 站点选择 - 必须先选择
+              // 1. 当前站点选择
               _buildSiteSection(appState),
               
-              // 下载目录
+              // 2. 下载目录设置
               _buildDownloadDirSection(appState),
               
-              // 播放器设置
-              _buildPlayerSection(appState),
+              // 3. 浏览设置
+              _buildBrowseSection(appState),
               
-              // 权限状态
+              // 4. 主题模式设置
+              _buildThemeSection(appState),
+              
+              // 5. 应用锁设置
+              _buildAppLockSection(appState),
+              
+              // 6. 权限状态展示
               _buildPermissionSection(appState),
               
-              // Debug设置
+              // 7. 调试设置（默认折叠）
               _buildDebugSection(appState),
               
-              // 关于
+              // 8. 关于页面
               _buildAboutSection(),
+              
+              // 底部间距
+              const SizedBox(height: 32),
             ],
           ),
         );
@@ -90,115 +99,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
   }
 
-  /// 主题设置区域
-  Widget _buildThemeSection(AppState appState) {
-    return Card(
-      margin: EdgeInsets.all(16),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.palette, size: 20, color: Colors.purple),
-                SizedBox(width: 8),
-                Text('主题设置', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              ],
-            ),
-            SizedBox(height: 12),
-            // 跟随系统开关
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text('跟随系统'),
-              subtitle: Text('自动切换日间/夜间模式'),
-              value: appState.themeMode == 2,
-              onChanged: (v) {
-                if (v) {
-                  appState.setAutoTheme();
-                } else {
-                  // 关闭跟随系统时，切换到日间模式
-                  appState.setLightMode();
-                }
-              },
-            ),
-            Divider(),
-            // 主题选择（跟随系统关闭时才可操作）
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text('选择主题'),
-              subtitle: Text(
-                appState.themeMode == 2 
-                    ? '当前跟随系统' 
-                    : (appState.themeMode == 0 ? '日间模式' : '夜间模式')
-              ),
-              trailing: SegmentedButton<int>(
-                segments: [
-                  ButtonSegment(
-                    value: 0,
-                    icon: Icon(Icons.light_mode, size: 18),
-                    label: Text('日'),
-                  ),
-                  ButtonSegment(
-                    value: 1,
-                    icon: Icon(Icons.dark_mode, size: 18),
-                    label: Text('夜'),
-                  ),
-                  ButtonSegment(
-                    value: 2,
-                    icon: Icon(Icons.settings_suggest, size: 18),
-                    label: Text('自动'),
-                  ),
-                ],
-                selected: {appState.themeMode},
-                onSelectionChanged: (s) {
-                  final mode = s.first;
-                  switch (mode) {
-                    case 0:
-                      appState.setLightMode();
-                      break;
-                    case 1:
-                      appState.setDarkMode();
-                      break;
-                    case 2:
-                      appState.setAutoTheme();
-                      break;
-                  }
-                },
-              ),
-            ),
-            // 当前主题预览
-            SizedBox(height: 8),
-            Container(
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceVariant,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    appState.isDarkMode ? Icons.dark_mode : Icons.light_mode,
-                    size: 20,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    '当前: ${appState.isDarkMode ? "夜间模式" : "日间模式"}',
-                    style: TextStyle(
-                      color: Theme.of(context).textTheme.bodyMedium?.color,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
+  /// 1. 当前站点选择区域
   Widget _buildSiteSection(AppState appState) {
     return Card(
       margin: EdgeInsets.all(16),
@@ -256,6 +157,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
   }
 
+  /// 2. 下载目录设置区域
   Widget _buildDownloadDirSection(AppState appState) {
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 16),
@@ -341,7 +243,6 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
   
   void _selectDownloadDirectory(AppState appState) async {
-    
     // 尝试使用 file_picker 选择目录
     try {
       String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
@@ -411,7 +312,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
   }
 
-  Widget _buildPlayerSection(AppState appState) {
+  /// 3. 浏览设置区域
+  Widget _buildBrowseSection(AppState appState) {
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Padding(
@@ -427,6 +329,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               ],
             ),
             SizedBox(height: 12),
+            
             // 视频显示模式切换
             Row(
               children: [
@@ -468,6 +371,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               ],
             ),
             Divider(),
+            
             // 回顶部按钮设置
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
@@ -494,6 +398,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 ),
               ),
             Divider(),
+            
             // 外部播放器设置
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
@@ -504,31 +409,117 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 appState.setExternalPlayer(v);
               },
             ),
-            // 应用锁设置
-            Divider(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 4. 主题模式设置区域
+  Widget _buildThemeSection(AppState appState) {
+    return Card(
+      margin: EdgeInsets.all(16),
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.palette, size: 20, color: Colors.purple),
+                SizedBox(width: 8),
+                Text('主题模式', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            SizedBox(height: 12),
+            
+            // 跟随系统开关
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: Text('应用锁'),
-              subtitle: Text(
-                _biometricSupported 
-                    ? '进入应用时需要指纹或面容验证'
-                    : '设备不支持生物识别',
-                style: _biometricSupported 
-                    ? null 
-                    : TextStyle(color: Colors.grey),
-              ),
-              value: appState.appLockEnabled,
-              onChanged: _biometricSupported ? (v) async {
-                // 开启时先验证一次
+              title: Text('跟随系统'),
+              subtitle: Text('自动切换日间/夜间模式'),
+              value: appState.themeMode == 2,
+              onChanged: (v) {
                 if (v) {
-                  final success = await _authService.authenticate();
-                  if (success && mounted) {
-                    await appState.toggleAppLock(true);
-                  }
+                  appState.setAutoTheme();
                 } else {
-                  await appState.toggleAppLock(false);
+                  // 关闭跟随系统时，切换到日间模式
+                  appState.setLightMode();
                 }
-              } : null,  // 设备不支持时禁用
+              },
+            ),
+            Divider(),
+            
+            // 主题选择（跟随系统关闭时才可操作）
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('选择主题'),
+              subtitle: Text(
+                appState.themeMode == 2 
+                    ? '当前跟随系统' 
+                    : (appState.themeMode == 0 ? '日间模式' : '夜间模式')
+              ),
+              trailing: SegmentedButton<int>(
+                segments: [
+                  ButtonSegment(
+                    value: 0,
+                    icon: Icon(Icons.light_mode, size: 18),
+                    label: Text('日'),
+                  ),
+                  ButtonSegment(
+                    value: 1,
+                    icon: Icon(Icons.dark_mode, size: 18),
+                    label: Text('夜'),
+                  ),
+                  ButtonSegment(
+                    value: 2,
+                    icon: Icon(Icons.settings_suggest, size: 18),
+                    label: Text('自动'),
+                  ),
+                ],
+                selected: {appState.themeMode},
+                onSelectionChanged: (s) {
+                  final mode = s.first;
+                  switch (mode) {
+                    case 0:
+                      appState.setLightMode();
+                      break;
+                    case 1:
+                      appState.setDarkMode();
+                      break;
+                    case 2:
+                      appState.setAutoTheme();
+                      break;
+                  }
+                },
+              ),
+            ),
+            
+            // 当前主题预览
+            SizedBox(height: 8),
+            Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceVariant,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    appState.isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    '当前: ${appState.isDarkMode ? "夜间模式" : "日间模式"}',
+                    style: TextStyle(
+                      color: Theme.of(context).textTheme.bodyMedium?.color,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -536,6 +527,170 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
   }
 
+  /// 5. 应用锁设置区域
+  Widget _buildAppLockSection(AppState appState) {
+    return Card(
+      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.lock, size: 20, color: Colors.red),
+                SizedBox(width: 8),
+                Text('应用锁', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            SizedBox(height: 8),
+            Text(
+              appState.appLockEnabled 
+                  ? '已启用 - 进入应用时需要身份验证'
+                  : '未启用 - 点击开启应用锁保护',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            SizedBox(height: 12),
+            
+            // 应用锁开关（始终可点击）
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('应用锁'),
+              subtitle: Text(_getAppLockSubtitle(appState)),
+              value: appState.appLockEnabled,
+              onChanged: (v) => _onAppLockToggle(appState, v),
+            ),
+            
+            // 如果已启用，显示PIN码设置入口
+            if (appState.appLockEnabled) ...[
+              Divider(),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.pin, size: 20),
+                title: Text('修改PIN码'),
+                trailing: Icon(Icons.chevron_right),
+                onTap: () => _showChangePinDialog(),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+  
+  String _getAppLockSubtitle(AppState appState) {
+    if (!appState.appLockEnabled) {
+      return _biometricSupported ? '支持指纹/面容解锁' : '支持PIN码解锁';
+    }
+    return _biometricSupported ? '已启用指纹/面容解锁' : '已启用PIN码解锁';
+  }
+  
+  Future<void> _onAppLockToggle(AppState appState, bool enable) async {
+    if (enable) {
+      // 开启应用锁 - 弹出选择对话框
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (context) => _AppLockChoiceDialog(
+          biometricSupported: _biometricSupported,
+        ),
+      );
+      
+      if (choice == null || !mounted) return;
+      
+      if (choice == 'biometric') {
+        // 使用生物识别
+        final success = await _authService.authenticate();
+        if (success && mounted) {
+          await appState.toggleAppLock(true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('已启用应用锁（生物识别）')),
+          );
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('生物识别验证失败')),
+          );
+        }
+      } else if (choice == 'pin') {
+        // 使用PIN码
+        final pin = await PinInputDialog.showSetNewPin(context);
+        if (pin == null || !mounted) return;
+        
+        // 确认PIN码
+        final confirmPin = await PinInputDialog.showConfirmPin(context, pin);
+        if (confirmPin == null || !mounted) return;
+        
+        // 保存PIN码
+        final success = await _pinService.setPin(pin);
+        if (success && mounted) {
+          await appState.toggleAppLock(true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('已启用应用锁（PIN码）')),
+          );
+        }
+      }
+    } else {
+      // 关闭应用锁
+      // 先验证身份
+      if (_biometricSupported) {
+        final success = await _authService.authenticate();
+        if (!success && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('身份验证失败')),
+          );
+          return;
+        }
+      } else {
+        // 使用PIN码验证
+        final pin = await PinInputDialog.showVerifyPin(context);
+        if (pin == null || !mounted) return;
+        
+        final success = await _pinService.verifyPin(pin);
+        if (!success && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('PIN码错误')),
+          );
+          return;
+        }
+      }
+      
+      await appState.toggleAppLock(false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已关闭应用锁')),
+        );
+      }
+    }
+  }
+  
+  Future<void> _showChangePinDialog() async {
+    // 先验证当前PIN
+    final currentPin = await PinInputDialog.showVerifyPin(context);
+    if (currentPin == null || !mounted) return;
+    
+    final success = await _pinService.verifyPin(currentPin);
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('当前PIN码错误')),
+      );
+      return;
+    }
+    
+    // 设置新PIN码
+    final newPin = await PinInputDialog.showSetNewPin(context);
+    if (newPin == null || !mounted) return;
+    
+    final confirmPin = await PinInputDialog.showConfirmPin(context, newPin);
+    if (confirmPin == null || !mounted) return;
+    
+    final saved = await _pinService.setPin(newPin);
+    if (saved && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('PIN码已修改')),
+      );
+    }
+  }
+
+  /// 6. 权限状态展示区域
   Widget _buildPermissionSection(AppState appState) {
     return Card(
       margin: EdgeInsets.all(16),
@@ -575,91 +730,95 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
   }
 
+  /// 7. 调试设置区域（默认折叠）
   Widget _buildDebugSection(AppState appState) {
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: false,  // 默认折叠
+          leading: Icon(Icons.bug_report, size: 20, color: Colors.purple),
+          title: Text('调试设置', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           children: [
-            Row(
-              children: [
-                Icon(Icons.bug_report, size: 20, color: Colors.purple),
-                SizedBox(width: 8),
-                Text('调试设置', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              ],
-            ),
-            SizedBox(height: 12),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text('Debug模式'),
-              subtitle: Text('开启后将记录运行日志'),
-              value: appState.debugMode,
-              onChanged: (v) async {
-                await appState.toggleDebug(v);
-              },
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text('保存HTML'),
-              subtitle: Text('保存请求的HTML到文件，用于调试'),
-              value: appState.saveDebugHtml,
-              onChanged: (v) {
-                appState.toggleSaveDebugHtml(v);
-              },
-            ),
-            if (appState.debugMode) ...[
-              SizedBox(height: 8),
-              Row(
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _exportLog,
-                      icon: Icon(Icons.share, size: 18),
-                      label: Text('分享日志'),
-                    ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('Debug模式'),
+                    subtitle: Text('开启后将记录运行日志'),
+                    value: appState.debugMode,
+                    onChanged: (v) async {
+                      await appState.toggleDebug(v);
+                    },
                   ),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _saveLog(appState.downloadDir),
-                      icon: Icon(Icons.save, size: 18),
-                      label: Text('保存日志'),
-                    ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('保存HTML'),
+                    subtitle: Text('保存请求的HTML到文件，用于调试'),
+                    value: appState.saveDebugHtml,
+                    onChanged: (v) {
+                      appState.toggleSaveDebugHtml(v);
+                    },
                   ),
+                  if (appState.debugMode) ...[
+                    SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _exportLog,
+                            icon: Icon(Icons.share, size: 18),
+                            label: Text('分享日志'),
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => _saveLog(appState.downloadDir),
+                            icon: Icon(Icons.save, size: 18),
+                            label: Text('保存日志'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _manageLogs,
+                            icon: Icon(Icons.folder_open, size: 18),
+                            label: Text('管理日志'),
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _clearLog,
+                            icon: Icon(Icons.delete_sweep, size: 18, color: Colors.red),
+                            label: Text('清空日志', style: TextStyle(color: Colors.red)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
-              SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _manageLogs,
-                      icon: Icon(Icons.folder_open, size: 18),
-                      label: Text('管理日志'),
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _clearLog,
-                      icon: Icon(Icons.delete_sweep, size: 18, color: Colors.red),
-                      label: Text('清空日志', style: TextStyle(color: Colors.red)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ],
         ),
       ),
     );
   }
 
+  /// 8. 关于页面区域
   Widget _buildAboutSection() {
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -820,6 +979,46 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         SnackBar(content: Text('日志已清空')),
       );
     }
+  }
+}
+
+/// 应用锁选择对话框
+class _AppLockChoiceDialog extends StatelessWidget {
+  final bool biometricSupported;
+  
+  const _AppLockChoiceDialog({required this.biometricSupported});
+  
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('选择解锁方式'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (biometricSupported) ...[
+            ListTile(
+              leading: Icon(Icons.fingerprint, color: Colors.blue),
+              title: Text('生物识别'),
+              subtitle: Text('使用指纹或面容解锁'),
+              onTap: () => Navigator.pop(context, 'biometric'),
+            ),
+            Divider(),
+          ],
+          ListTile(
+            leading: Icon(Icons.pin, color: Colors.orange),
+            title: Text('PIN码'),
+            subtitle: Text('使用数字密码解锁'),
+            onTap: () => Navigator.pop(context, 'pin'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('取消'),
+        ),
+      ],
+    );
   }
 }
 
