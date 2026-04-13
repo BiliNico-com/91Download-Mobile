@@ -278,6 +278,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   /// 批量删除（带确认对话框，询问是否删除本地文件）
   void _batchDeleteWithConfirm(AppState appState) async {
     final count = _selectedIds.length;
+    bool deleteFile = false;  // ✅ 移到外部，避免每次重建时重置
     
     final result = await showDialog<Map<String, bool>>(
       context: context,
@@ -291,7 +292,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             SizedBox(height: 16),
             StatefulBuilder(
               builder: (context, setDialogState) {
-                bool deleteFile = false;
                 return Row(
                   children: [
                     Checkbox(
@@ -318,9 +318,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           ),
           TextButton(
             onPressed: () {
-              // 获取复选框状态
-              final checkbox = context.findAncestorStateOfType<State>();
-              final deleteFile = checkbox != null;
               Navigator.pop(context, {'deleteFile': deleteFile});
             },
             child: Text('确定', style: TextStyle(color: Colors.red)),
@@ -461,6 +458,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   /// 删除选中任务（带确认对话框，询问是否删除本地文件）
   void _deleteSelectedWithConfirm(AppState appState) async {
     final count = _selectedIds.length;
+    bool deleteFile = true;  // ✅ 移到外部，默认勾选删除文件
     
     final result = await showDialog<Map<String, bool>>(
       context: context,
@@ -474,7 +472,6 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             SizedBox(height: 16),
             StatefulBuilder(
               builder: (context, setDialogState) {
-                bool deleteFile = true;  // 默认勾选删除文件
                 return Row(
                   children: [
                     Checkbox(
@@ -501,8 +498,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           ),
           TextButton(
             onPressed: () {
-              // 获取复选框状态（通过查找Checkbox的状态）
-              Navigator.pop(context, {'deleteFile': true});
+              Navigator.pop(context, {'deleteFile': deleteFile});
             },
             child: Text('确定', style: TextStyle(color: Colors.red)),
           ),
