@@ -31,9 +31,6 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     });
   }
   
-
-  }
-  
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -626,11 +623,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     }
     
     // 设置新PIN码
-    final newPin = await PinInputDialog.showSetNewPin(context);
+    final newPin = await PinInputDialog.showSetPin(context);
     if (newPin == null || !mounted) return;
-    
-    final confirmPin = await PinInputDialog.showConfirmPin(context, newPin);
-    if (confirmPin == null || !mounted) return;
     
     final saved = await _pinService.setPin(newPin);
     if (saved && mounted) {
@@ -931,8 +925,6 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     }
   }
 }
-
-/// 应用锁选择对话框
 
 /// 日志管理对话框
 class _LogManagerDialog extends StatefulWidget {

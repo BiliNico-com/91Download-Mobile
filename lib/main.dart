@@ -131,11 +131,6 @@ class _ThemeWrapperState extends State<ThemeWrapper> {
   @override
   void initState() {
     super.initState();
-    // 初始化时检查系统主题
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final appState = context.read<AppState>();
-      appState.updateThemeFromSystem();
-    });
   }
   
   @override
@@ -172,7 +167,9 @@ class MyApp extends StatelessWidget {
               ),
               useMaterial3: true,
             ),
-            themeMode: appState.themeMode,
+            themeMode: appState.themeMode == 0 
+                ? ThemeMode.light 
+                : (appState.themeMode == 1 ? ThemeMode.dark : ThemeMode.system),
             home: AuthWrapper(
               child: ThemeWrapper(
                 child: MainPage(),
