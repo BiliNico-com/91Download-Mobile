@@ -37,8 +37,9 @@ class CrawlerCore {
     this.imgBaseUrl,
     Dio? dio,
   }) : _dio = dio ?? Dio() {
-    _initDio();
+    // 重要：先检测站点类型，再初始化Dio（请求头依赖站点类型）
     _detectSiteType();
+    _initDio();
   }
   
   /// 检测站点类型
