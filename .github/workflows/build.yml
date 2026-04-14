@@ -153,6 +153,6 @@ jobs:
           时间: ${{ github.event.head_commit.timestamp }}
         files: build/app/outputs/flutter-apk/app-release.apk
         draft: false
-        prerelease: true
+        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
