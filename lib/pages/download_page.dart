@@ -385,8 +385,10 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                         setState(() {
                           if (_selectedIds.length == tasks.length) {
                             _selectedIds.clear();
+                            _isCompletedSelectMode = false;
                           } else {
                             _selectedIds = tasks.map((t) => t.id).toSet();
+                            _isCompletedSelectMode = true;
                           }
                         });
                       },
@@ -407,7 +409,13 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                     Spacer(),
                     if (_selectedIds.isNotEmpty)
                       TextButton(
-                        onPressed: () => _deleteSelectedWithConfirm(appState),
+                        onPressed: () {
+                          _deleteSelectedWithConfirm(appState);
+                          setState(() {
+                            _isCompletedSelectMode = false;
+                            _selectedIds.clear();
+                          });
+                        },
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -756,19 +764,30 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   
   Widget _buildCompletedTaskItem(DownloadTask task, bool selected, AppState appState) {
     return GestureDetector(
-      onTap: () {
-        // 短按播放视频
-        _playVideo(task, appState);
-      },
       onLongPress: () {
-        // 长按选择视频
+        // 长按进入选择模式
         setState(() {
-          if (_selectedIds.contains(task.id)) {
-            _selectedIds.remove(task.id);
-          } else {
-            _selectedIds.add(task.id);
-          }
+          _isCompletedSelectMode = true;
+          _selectedIds.add(task.id);
         });
+      },
+      onTap: () {
+        if (_isCompletedSelectMode) {
+          // 选择模式：切换选中
+          setState(() {
+            if (selected) {
+              _selectedIds.remove(task.id);
+              if (_selectedIds.isEmpty) {
+                _isCompletedSelectMode = false;
+              }
+            } else {
+              _selectedIds.add(task.id);
+            }
+          });
+        } else {
+          // 非选择模式：播放视频
+          _playVideo(task, appState);
+        }
       },
       child: Card(
         margin: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
