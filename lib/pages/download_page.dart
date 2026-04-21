@@ -1499,16 +1499,35 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
           ),
           child: Row(
             children: [
-              IconButton(icon: Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.pop(context)),
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  padding: EdgeInsets.all(12),
+                  child: Icon(Icons.arrow_back, color: Colors.white, size: 24),
+                ),
+              ),
               Expanded(
                 child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: Colors.white, fontSize: 16)),
               ),
               if (_isPipAvailable)
-                IconButton(icon: Icon(Icons.picture_in_picture_alt, color: Colors.white),
-                    onPressed: _enterPipMode, tooltip: '小窗播放'),
-              IconButton(icon: Icon(Icons.picture_in_picture, color: Colors.white),
-                  onPressed: _enterFloatingMode, tooltip: '悬浮窗播放'),
+                GestureDetector(
+                  onTap: _enterPipMode,
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
+                    padding: EdgeInsets.all(12),
+                    child: Icon(Icons.picture_in_picture_alt, color: Colors.white, size: 24),
+                  ),
+                ),
+              GestureDetector(
+                onTap: _enterFloatingMode,
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  padding: EdgeInsets.all(12),
+                  child: Icon(Icons.picture_in_picture, color: Colors.white, size: 24),
+                ),
+              ),
             ],
           ),
         ),

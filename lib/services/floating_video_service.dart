@@ -61,10 +61,10 @@ class FloatingVideoService {
       
       // 显示悬浮窗 - 使用正确的命名参数
       await FlutterOverlayWindow.showOverlay(
-        height: 200,
-        width: 300,
+        height: 180,
+        width: 280,
         alignment: OverlayAlignment.centerRight,
-        flag: OverlayFlag.defaultFlag,
+        flag: OverlayFlag.focusable,
         overlayTitle: title,
         overlayContent: '视频播放中',
         enableDrag: true,

@@ -15,9 +15,21 @@ void overlayMain() {
     home: Material(
       color: Colors.black,
       child: Center(
-        child: Text(
-          '视频播放中...',
-          style: TextStyle(color: Colors.white, fontSize: 16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.play_circle_outline, color: Colors.white, size: 48),
+            SizedBox(height: 8),
+            Text(
+              '视频播放中...',
+              style: TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            SizedBox(height: 4),
+            Text(
+              '返回应用可继续控制',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ],
         ),
       ),
     ),
