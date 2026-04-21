@@ -194,6 +194,55 @@ jobs:
         }
         KOTLINEOF
 
+        # 创建 PipPlugin.kt
+        cat > android/app/src/main/kotlin/com/bilinico/download_91/PipPlugin.kt << 'KOTLINEOF'
+        package com.bilinico.download_91
+
+        import android.app.Activity
+        import android.app.PictureInPictureParams
+        import android.content.res.Configuration
+        import android.os.Build
+        import android.util.Rational
+        import io.flutter.plugin.common.MethodCall
+        import io.flutter.plugin.common.MethodChannel
+
+        class PipPlugin(private val activity: Activity) {
+            companion object {
+                const val CHANNEL = "com.bilinico.download_91/pip"
+            }
+
+            fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
+                when (call.method) {
+                    "enterPip" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            val aspectRatio = call.argument<Double>("aspectRatio") ?: (16.0 / 9.0)
+                            try {
+                                val width = (aspectRatio * 100).toInt()
+                                val height = 100
+                                val params = PictureInPictureParams.Builder()
+                                    .setAspectRatio(Rational(width, height))
+                                    .build()
+                                val success = activity.enterPictureInPictureMode(params)
+                                result.success(success)
+                            } catch (e: Exception) {
+                                result.error("PIP_ERROR", e.message, null)
+                            }
+                        } else {
+                            result.success(false)
+                        }
+                    }
+                    "isPipAvailable" -> {
+                        result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    }
+                    "isInPipMode" -> {
+                        result.success(activity.isInPictureInPictureMode)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        KOTLINEOF
+
         cat > android/app/src/main/kotlin/com/bilinico/download_91/MainActivity.kt << 'KOTLINEOF'
         package com.bilinico.download_91
 
@@ -203,15 +252,23 @@ jobs:
 
         class MainActivity: FlutterActivity() {
             private lateinit var brightnessPlugin: BrightnessPlugin
+            private lateinit var pipPlugin: PipPlugin
 
             override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                 super.configureFlutterEngine(flutterEngine)
                 
+                // 注册亮度插件
                 brightnessPlugin = BrightnessPlugin(this)
-                
                 MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BrightnessPlugin.CHANNEL_NAME)
                     .setMethodCallHandler { call, result ->
                         brightnessPlugin.handleMethodCall(call, result)
+                    }
+                
+                // 注册 PiP 插件
+                pipPlugin = PipPlugin(this)
+                MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PipPlugin.CHANNEL)
+                    .setMethodCallHandler { call, result ->
+                        pipPlugin.handleMethodCall(call, result)
                     }
             }
         }
