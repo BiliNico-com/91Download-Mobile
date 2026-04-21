@@ -85,15 +85,20 @@ class CrawlerConfig {
   }
   
   /// 构建搜索URL
-  static String buildSearchUrl(String baseUrl, String siteType, String keyword, {int page = 1, String sort = "new"}) {
+  static String buildSearchUrl(String baseUrl, String siteType, String keyword, {int page = 1, String sort = "default"}) {
     if (siteType == "porn91") {
       // porn91 风格搜索 URL（支持分页）
       // URL格式: search_result.php?search_id=xxx&search_type=search_videos&min_duration=&page=N
       return "$baseUrl/search_result.php?search_id=${Uri.encodeComponent(keyword)}&search_type=search_videos&min_duration=&page=$page";
     } else {
-      // original 风格搜索 URL（支持分页）
-      // ✅ 修复：实际URL格式是 search-{page}.htm?search=xxx，不是 search.htm?search=xxx&page=N
-      return "$baseUrl/search-$page.htm?search=${Uri.encodeComponent(keyword)}";
+      // original 风格搜索 URL（支持分页和排序）
+      // URL格式: search-{page}.htm?search=xxx[&sort=new/hot]
+      String url = "$baseUrl/search-$page.htm?search=${Uri.encodeComponent(keyword)}";
+      // 添加排序参数（default 时不添加）
+      if (sort != "default") {
+        url += "&sort=$sort";
+      }
+      return url;
     }
   }
 
