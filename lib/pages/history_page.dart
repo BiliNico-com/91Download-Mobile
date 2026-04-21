@@ -3,6 +3,18 @@ import 'package:provider/provider.dart';
 import '../services/app_state.dart';
 import '../utils/logger.dart';
 
+/// 格式化下载时间
+String _formatDownloadTime(String? isoTime) {
+  if (isoTime == null || isoTime.isEmpty) return '';
+  try {
+    final dt = DateTime.parse(isoTime);
+    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} '
+           '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  } catch (e) {
+    return isoTime;
+  }
+}
+
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key});
 
@@ -56,7 +68,7 @@ class _HistoryPageState extends State<HistoryPage> with AutomaticKeepAliveClient
                       leading: Icon(Icons.video_file),
                       title: Text(item['title'] ?? ''),
                       subtitle: Text(
-                        item['download_time'] ?? '',
+                        _formatDownloadTime(item['download_time']),
                         style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                       trailing: Icon(Icons.check_circle, color: Colors.green),
