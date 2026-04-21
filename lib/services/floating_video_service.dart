@@ -64,7 +64,7 @@ class FloatingVideoService {
         height: 180,
         width: 280,
         alignment: OverlayAlignment.centerRight,
-        flag: OverlayFlag.focusable,
+        flag: OverlayFlag.defaultFlag,
         overlayTitle: title,
         overlayContent: '视频播放中',
         enableDrag: true,
