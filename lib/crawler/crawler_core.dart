@@ -1547,6 +1547,13 @@ class CrawlerCore {
     );
   }
 
+  /// 删除单个下载历史记录
+  Future<void> deleteDownloadHistory(String videoId) async {
+    final db = await _getDb();
+    if (db == null) return;
+    await db.delete('download_history', where: 'video_id = ?', whereArgs: [videoId]);
+  }
+
   /// ✅ 清空下载历史
   Future<void> clearDownloadHistory() async {
     final db = await _getDb();

@@ -473,7 +473,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   /// 删除选中任务（带确认对话框，询问是否删除本地文件）
   void _deleteSelectedWithConfirm(AppState appState) async {
     final count = _selectedIds.length;
-    bool deleteFile = true;  // ✅ 移到外部，默认勾选删除文件
+    bool deleteFile = true;  // ✅ 默认勾选删除文件
     
     final result = await showDialog<Map<String, bool>>(
       context: context,
@@ -522,26 +522,41 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     );
     
     if (result != null) {
-      final deleteFile = result['deleteFile'] ?? true;
+      final shouldDeleteFile = result['deleteFile'] ?? true;
+      final idsToDelete = _selectedIds.toList();
       
-      for (final id in _selectedIds.toList()) {
-        if (deleteFile) {
-          // 删除本地文件
-          final task = appState.downloadManager.getTask(id);
-          if (task?.filePath != null) {
-            try {
-              final file = File(task!.filePath!);
-              if (await file.exists()) {
-                await file.delete();
-              }
-            } catch (e) {
+      for (final id in idsToDelete) {
+        final task = appState.downloadManager.getTask(id);
+        
+        // 删除本地文件
+        if (shouldDeleteFile && task?.filePath != null && task!.filePath!.isNotEmpty) {
+          try {
+            final file = File(task.filePath!);
+            if (await file.exists()) {
+              await file.delete();
+              print('已删除文件: ${task.filePath}');
             }
+          } catch (e) {
+            print('删除文件失败: $e');
           }
         }
+        
+        // 删除历史记录
+        if (appState.crawler != null) {
+          try {
+            await appState.crawler!.deleteDownloadHistory(id);
+          } catch (e) {
+            print('删除历史记录失败: $e');
+          }
+        }
+        
+        // 删除任务
         appState.downloadManager.cancelTask(id);
       }
+      
       setState(() {
         _selectedIds.clear();
+        _isCompletedSelectMode = false;
       });
     }
   }
