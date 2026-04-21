@@ -56,7 +56,7 @@ jobs:
 
         android {
             namespace "com.bilinico.download_91"
-            compileSdk 33
+            compileSdk 34
             ndkVersion flutter.ndkVersion
 
             compileOptions {
@@ -85,7 +85,7 @@ jobs:
             defaultConfig {
                 applicationId "com.bilinico.download_91"
                 minSdk 21
-                targetSdk 33
+                targetSdk 34
                 versionCode flutterVersionCode.toInteger()
                 versionName flutterVersionName
             }
