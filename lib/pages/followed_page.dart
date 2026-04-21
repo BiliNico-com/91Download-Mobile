@@ -102,8 +102,15 @@ class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClie
                     ),
                   ),
                   GestureDetector(
-                    onTap: () => _unfollowAuthor(author, appState),
-                    child: Icon(Icons.favorite, size: 18, color: Colors.red),
+                    onTap: () {
+                      // 阻止事件冒泡到父级卡片
+                      _unfollowAuthor(author, appState);
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.favorite, size: 18, color: Colors.red),
+                    ),
                   ),
                 ],
               ),
@@ -162,7 +169,7 @@ class _AuthorPageWrapper extends StatefulWidget {
 
 class _AuthorPageWrapperState extends State<_AuthorPageWrapper> {
   List<dynamic> _videos = [];
-  bool _isLoading = true;
+  bool _isLoading = false;
   bool _hasMore = true;
   int _currentPage = 0;
   String? _error;
@@ -170,7 +177,10 @@ class _AuthorPageWrapperState extends State<_AuthorPageWrapper> {
   @override
   void initState() {
     super.initState();
-    _loadVideos();
+    // 使用 WidgetsBinding 在第一帧后加载
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadVideos();
+    });
   }
 
   Future<void> _loadVideos() async {
