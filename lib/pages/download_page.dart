@@ -9,6 +9,7 @@ import 'dart:io';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
 import '../services/brightness_service.dart';
+import '../services/pip_service.dart';
 import '../models/video_info.dart' show VideoInfo;
 import '../utils/logger.dart';
 
@@ -996,7 +997,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
 }
 
-/// 视频播放器页面（支持亮度/音量手势控制）
+/// 视频播放器页面（支持手势控制、自定义控件、长按快进快退、PiP）
 class VideoPlayerPage extends StatefulWidget {
   final String filePath;
   final String title;
@@ -1011,56 +1012,74 @@ class VideoPlayerPage extends StatefulWidget {
   State<VideoPlayerPage> createState() => _VideoPlayerPageState();
 }
 
-class _VideoPlayerPageState extends State<VideoPlayerPage> {
+class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingObserver {
   late VideoPlayerController _videoPlayerController;
   ChewieController? _chewieController;
   bool _isInitialized = false;
   bool _hasError = false;
   String _errorMessage = '';
   
-  // 手势控制进度相关
-  bool _isDragging = false;
+  // ====== 控件显示控制 ======
+  bool _showControls = true;
+  bool _showPlayPauseIcon = false;
+  bool _isPlayingState = false;
+  
+  // ====== 水平手势（进度控制） ======
+  bool _isHorizontalDragging = false;
   double _dragStartX = 0;
+  double _dragStartY = 0;
   Duration _dragStartPosition = Duration.zero;
   Duration _seekPosition = Duration.zero;
   bool _showSeekIndicator = false;
   
-  // 垂直手势：亮度/音量
+  // ====== 垂直手势（亮度/音量） ======
   bool _isVerticalDragging = false;
-  String _verticalDragType = ''; // 'brightness' 或 'volume'
+  String _verticalDragType = '';
   double _verticalDragStartY = 0;
   double _verticalDragStartValue = 0.5;
   double _currentBrightness = 0.5;
   double _currentVolume = 0.5;
   bool _showVerticalIndicator = false;
-  double _savedBrightness = 0.5; // 用于恢复原始亮度
+  double _savedBrightness = 0.5;
+  
+  // ====== 长按快进快退 ======
+  bool _isLongPressing = false;
+  String _longPressSide = '';
+  bool _showLongPressIndicator = false;
+  Timer? _longPressTimer;
+  
+  // ====== PiP ======
+  bool _isPipAvailable = false;
+  bool _isInPipMode = false;
+  
+  Timer? _hideControlsTimer;
   
   @override
   void initState() {
     super.initState();
-    // 初始化音量监听
+    WidgetsBinding.instance.addObserver(this);
     VolumeController().listener((volume) {
-      if (mounted) {
-        setState(() => _currentVolume = volume);
-      }
+      if (mounted) setState(() => _currentVolume = volume);
     });
-    // 异步获取初始音量
     VolumeController().getVolume().then((volume) {
-      if (mounted) {
-        setState(() => _currentVolume = volume);
-      }
+      if (mounted) setState(() => _currentVolume = volume);
     });
+    _checkPipAvailability();
     _initializePlayer();
+  }
+  
+  Future<void> _checkPipAvailability() async {
+    try {
+      final available = await PipService.isAvailable();
+      if (mounted) setState(() => _isPipAvailable = available);
+    } catch (e) {}
   }
   
   Future<void> _initializePlayer() async {
     try {
-      // 使用文件路径初始化 VideoPlayerController
       _videoPlayerController = VideoPlayerController.file(File(widget.filePath));
-      
       await _videoPlayerController.initialize();
       
-      // 保存并初始化当前屏幕亮度
       try {
         _savedBrightness = await BrightnessService.getBrightness();
         _currentBrightness = _savedBrightness;
@@ -1072,7 +1091,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         autoPlay: true,
         looping: false,
         aspectRatio: _videoPlayerController.value.aspectRatio,
-        showControls: false,  // 禁用自带控制面板，避免进度条拖动时的遮罩效果
+        showControls: false,
         errorBuilder: (context, errorMessage) {
           return Center(
             child: Column(
@@ -1087,33 +1106,187 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         },
         placeholder: Container(
           color: Colors.black,
-          child: Center(
-            child: CircularProgressIndicator(color: Colors.white),
-          ),
+          child: Center(child: CircularProgressIndicator(color: Colors.white)),
         ),
       );
       
       if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
+        setState(() => _isInitialized = true);
+        _startHideControlsTimer();
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _hasError = true;
-          _errorMessage = e.toString();
-        });
+      if (mounted) setState(() { _hasError = true; _errorMessage = e.toString(); });
+    }
+  }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused && _isPipAvailable && !_isInPipMode && _isInitialized) {
+      _enterPipMode();
+    }
+  }
+  
+  Future<void> _enterPipMode() async {
+    if (!_isPipAvailable) return;
+    final aspectRatio = _videoPlayerController.value.aspectRatio ?? 16/9;
+    final success = await PipService.enterPipMode(aspectRatio: aspectRatio);
+    if (mounted) setState(() => _isInPipMode = success);
+  }
+  
+  void _startHideControlsTimer() {
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = Timer(Duration(seconds: 3), () {
+      if (mounted && !_isHorizontalDragging && !_isVerticalDragging && !_isLongPressing) {
+        setState(() => _showControls = false);
       }
+    });
+  }
+  
+  void _showControlsTemporarily() {
+    setState(() => _showControls = true);
+    _startHideControlsTimer();
+  }
+  
+  void _togglePlayPause() {
+    if (_videoPlayerController.value.isPlaying) {
+      _videoPlayerController.pause();
+      _isPlayingState = false;
+    } else {
+      _videoPlayerController.play();
+      _isPlayingState = true;
+    }
+    setState(() => _showPlayPauseIcon = true);
+    Future.delayed(Duration(milliseconds: 800), () {
+      if (mounted) setState(() => _showPlayPauseIcon = false);
+    });
+    _showControlsTemporarily();
+  }
+  
+  void _seekTo(Duration position) {
+    final duration = _videoPlayerController.value.duration;
+    _videoPlayerController.seekTo(Duration(
+      milliseconds: position.inMilliseconds.clamp(0, duration.inMilliseconds),
+    ));
+  }
+  
+  void _onHorizontalSeekStart(double globalX) {
+    if (!_videoPlayerController.value.isInitialized) return;
+    setState(() {
+      _isHorizontalDragging = true;
+      _dragStartX = globalX;
+      _dragStartPosition = _videoPlayerController.value.position;
+      _seekPosition = _dragStartPosition;
+      _showSeekIndicator = true;
+      _showControls = true;
+    });
+    _hideControlsTimer?.cancel();
+    if (_videoPlayerController.value.isPlaying) _videoPlayerController.pause();
+  }
+  
+  void _onHorizontalSeekUpdate(double globalX) {
+    if (!_isHorizontalDragging) return;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final dx = globalX - _dragStartX;
+    final totalDuration = _videoPlayerController.value.duration;
+    final seekRatio = dx / (screenWidth / 2);
+    final seekSeconds = (seekRatio * 10).round();
+    final newPosition = _dragStartPosition + Duration(seconds: seekSeconds);
+    _seekPosition = Duration(
+      milliseconds: newPosition.inMilliseconds.clamp(0, totalDuration.inMilliseconds),
+    );
+    setState(() {});
+  }
+  
+  void _onHorizontalSeekEnd() {
+    if (!_isHorizontalDragging) return;
+    _seekTo(_seekPosition);
+    setState(() { _isHorizontalDragging = false; _showSeekIndicator = false; });
+    _videoPlayerController.play();
+    _startHideControlsTimer();
+  }
+  
+  void _onVerticalDragStart(double globalX, double globalY) {
+    if (!_videoPlayerController.value.isInitialized) return;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isLeftSide = globalX < screenWidth / 2;
+    setState(() {
+      _isVerticalDragging = true;
+      _verticalDragStartY = globalY;
+      _verticalDragType = isLeftSide ? 'brightness' : 'volume';
+      _verticalDragStartValue = isLeftSide ? _currentBrightness : _currentVolume;
+      _showVerticalIndicator = true;
+      _showControls = true;
+    });
+    _hideControlsTimer?.cancel();
+  }
+  
+  void _onVerticalDragUpdate(double globalY) {
+    if (!_isVerticalDragging) return;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final dy = globalY - _verticalDragStartY;
+    final change = -dy / screenHeight;
+    var newValue = (_verticalDragStartValue + change).clamp(0.0, 1.0);
+    setState(() {
+      if (_verticalDragType == 'brightness') {
+        _currentBrightness = newValue;
+        try { BrightnessService.setBrightness(newValue); } catch (_) {}
+      } else {
+        _currentVolume = newValue;
+        VolumeController().setVolume(newValue, showSystemUI: false);
+      }
+    });
+  }
+  
+  void _onVerticalDragEnd() {
+    if (!_isVerticalDragging) return;
+    setState(() { _isVerticalDragging = false; _showVerticalIndicator = false; });
+    _startHideControlsTimer();
+  }
+  
+  void _onLongPressStart(double globalX) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isLeftSide = globalX < screenWidth / 2;
+    setState(() {
+      _isLongPressing = true;
+      _longPressSide = isLeftSide ? 'left' : 'right';
+      _showLongPressIndicator = true;
+      _showControls = false;
+    });
+    _doLongPressSeek();
+    _longPressTimer = Timer.periodic(Duration(milliseconds: 500), (_) => _doLongPressSeek());
+  }
+  
+  void _doLongPressSeek() {
+    if (!_isLongPressing) return;
+    final currentPos = _videoPlayerController.value.position;
+    final duration = _videoPlayerController.value.duration;
+    Duration newPos;
+    if (_longPressSide == 'left') {
+      newPos = Duration(milliseconds: (currentPos.inMilliseconds - 5000).clamp(0, duration.inMilliseconds));
+    } else {
+      newPos = Duration(milliseconds: (currentPos.inMilliseconds + 5000).clamp(0, duration.inMilliseconds));
+    }
+    _seekTo(newPos);
+    setState(() {});
+  }
+  
+  void _onLongPressEnd() {
+    _longPressTimer?.cancel();
+    _longPressTimer = null;
+    if (_isLongPressing) {
+      setState(() { _isLongPressing = false; _showLongPressIndicator = false; });
+      _videoPlayerController.play();
+      _showControlsTemporarily();
     }
   }
   
   @override
   void dispose() {
-    // 恢复屏幕亮度
-    try {
-      BrightnessService.restoreBrightness();
-    } catch (_) {}
+    WidgetsBinding.instance.removeObserver(this);
+    _hideControlsTimer?.cancel();
+    _longPressTimer?.cancel();
+    try { BrightnessService.restoreBrightness(); } catch (_) {}
     _videoPlayerController.dispose();
     _chewieController?.dispose();
     super.dispose();
@@ -1122,21 +1295,20 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          widget.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-      ),
       backgroundColor: Colors.black,
-      body: _buildBody(),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Positioned.fill(child: _buildVideoBody()),
+            if (_showControls && !_isInPipMode) _buildControlsOverlay(),
+            if (_showPlayPauseIcon) _buildPlayPauseIndicator(),
+          ],
+        ),
+      ),
     );
   }
   
-  Widget _buildBody() {
+  Widget _buildVideoBody() {
     if (_hasError) {
       return Center(
         child: Column(
@@ -1144,26 +1316,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           children: [
             Icon(Icons.error_outline, color: Colors.red, size: 64),
             SizedBox(height: 16),
-            Text(
-              '视频加载失败',
-              style: TextStyle(color: Colors.white, fontSize: 18),
-            ),
+            Text('视频加载失败', style: TextStyle(color: Colors.white, fontSize: 18)),
             SizedBox(height: 8),
             Padding(
               padding: EdgeInsets.symmetric(horizontal: 32),
-              child: Text(
-                _errorMessage,
-                style: TextStyle(color: Colors.grey, fontSize: 12),
-                textAlign: TextAlign.center,
-              ),
+              child: Text(_errorMessage, style: TextStyle(color: Colors.grey, fontSize: 12), textAlign: TextAlign.center),
             ),
             SizedBox(height: 24),
             ElevatedButton(
               onPressed: () {
-                setState(() {
-                  _hasError = false;
-                  _errorMessage = '';
-                });
+                setState(() { _hasError = false; _errorMessage = ''; });
                 _initializePlayer();
               },
               child: Text('重试'),
@@ -1180,242 +1342,257 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           children: [
             CircularProgressIndicator(color: Colors.white),
             SizedBox(height: 16),
-            Text(
-              '加载中...',
-              style: TextStyle(color: Colors.white),
-            ),
+            Text('加载中...', style: TextStyle(color: Colors.white)),
           ],
         ),
       );
     }
     
     return GestureDetector(
-      // ─── 水平拖拽：快进/快退 ───
-      onHorizontalDragStart: (details) {
-        if (!_videoPlayerController.value.isInitialized) return;
-        setState(() {
-          _isDragging = true;
-          _dragStartX = details.globalPosition.dx;
-          _dragStartPosition = _videoPlayerController.value.position;
-          _seekPosition = _dragStartPosition;
-          _showSeekIndicator = true;
-        });
-        if (_videoPlayerController.value.isPlaying) {
-          _videoPlayerController.pause();
-        }
-      },
-      onHorizontalDragUpdate: (details) {
-        if (!_isDragging) return;
-        
-        final screenWidth = MediaQuery.of(context).size.width;
-        final dx = details.globalPosition.dx - _dragStartX;
-        
-        // 每滑动屏幕宽度的 1/2，快进/快退 10 秒
-        final totalDuration = _videoPlayerController.value.duration;
-        final seekRatio = dx / (screenWidth / 2);
-        final seekSeconds = (seekRatio * 10).round();
-        
-        final newPosition = _dragStartPosition + Duration(seconds: seekSeconds);
-        _seekPosition = Duration(
-          milliseconds: newPosition.inMilliseconds.clamp(0, totalDuration.inMilliseconds),
-        );
-        
-        setState(() {});
-      },
-      onHorizontalDragEnd: (details) {
-        if (!_isDragging) return;
-        
-        _videoPlayerController.seekTo(_seekPosition);
-        
-        setState(() {
-          _isDragging = false;
-          _showSeekIndicator = false;
-        });
-        
-        _videoPlayerController.play();
-      },
-      // ─── 垂直拖拽：左侧调亮度，右侧调音量 ───
-      onVerticalDragStart: (details) {
-        if (!_videoPlayerController.value.isInitialized) return;
-        final screenWidth = MediaQuery.of(context).size.width;
-        final isLeftSide = details.globalPosition.dx < screenWidth / 2;
-        
-        setState(() {
-          _isVerticalDragging = true;
-          _verticalDragStartY = details.globalPosition.dy;
-          _verticalDragType = isLeftSide ? 'brightness' : 'volume';
-          _verticalDragStartValue = isLeftSide ? _currentBrightness : _currentVolume;
-          _showVerticalIndicator = true;
-        });
-      },
-      onVerticalDragUpdate: (details) {
-        if (!_isVerticalDragging) return;
-        
-        final screenHeight = MediaQuery.of(context).size.height;
-        final dy = details.globalPosition.dy - _verticalDragStartY;
-        
-        // 向下滑动 dy 为正 → 减小值（变暗/变小声）
-        // 向上滑动 dy 为负 → 增大值（变亮/变大声）
-        final change = -dy / screenHeight; // 归一化到 0~1
-        var newValue = (_verticalDragStartValue + change).clamp(0.0, 1.0);
-        
-        setState(() {
-          if (_verticalDragType == 'brightness') {
-            _currentBrightness = newValue;
-            try {
-              BrightnessService.setBrightness(newValue);
-            } catch (_) {}
-          } else {
-            _currentVolume = newValue;
-            VolumeController().setVolume(newValue, showSystemUI: false);
+      onTap: _togglePlayPause,
+      onLongPressStart: (details) => _onLongPressStart(details.globalPosition.dx),
+      onLongPressEnd: (_) => _onLongPressEnd(),
+      child: Listener(
+        onPointerDown: (event) {
+          _dragStartX = event.position.dx;
+          _dragStartY = event.position.dy;
+        },
+        onPointerMove: (event) {
+          final dx = (event.position.dx - _dragStartX).abs();
+          final dy = (event.position.dy - _dragStartY).abs();
+          
+          if (!_isVerticalDragging && !_isLongPressing && !_isHorizontalDragging) {
+            if (dx > 10 && dx > dy) {
+              _onHorizontalSeekStart(_dragStartX);
+            } else if (dy > 10 && dy > dx) {
+              _onVerticalDragStart(_dragStartX, _dragStartY);
+            }
+          } else if (_isHorizontalDragging) {
+            _onHorizontalSeekUpdate(event.position.dx);
+          } else if (_isVerticalDragging) {
+            _onVerticalDragUpdate(event.position.dy);
           }
-        });
-      },
-      onVerticalDragEnd: (details) {
-        if (!_isVerticalDragging) return;
-        setState(() {
-          _isVerticalDragging = false;
-          _showVerticalIndicator = false;
-        });
-      },
-      child: Stack(
-        children: [
-          Center(
-            child: Chewie(controller: _chewieController!),
-          ),
-          // 自定义控制层：点击播放/暂停 + 底部进度条
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: () {
-                if (_videoPlayerController.value.isPlaying) {
-                  _videoPlayerController.pause();
-                } else {
-                  _videoPlayerController.play();
-                }
-                setState(() {});
-              },
-              child: ValueListenableBuilder<VideoPlayerValue>(
-                valueListenable: _videoPlayerController,
-                builder: (context, value, child) {
-                  // 底部进度条
-                  return Stack(
-                    children: [
-                      Positioned(
-                        left: 16,
-                        right: 16,
-                        bottom: 24,
-                        child: Row(
-                          children: [
-                            Text(
-                              _formatDuration(value.position),
-                              style: TextStyle(color: Colors.white70, fontSize: 12),
-                            ),
-                            Expanded(
-                              child: Container(
-                                height: 4,
-                                margin: EdgeInsets.symmetric(horizontal: 8),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(2),
-                                  child: LinearProgressIndicator(
-                                    value: value.duration.inMilliseconds > 0
-                                        ? value.position.inMilliseconds / 
-                                          value.duration.inMilliseconds
-                                        : 0,
-                                    backgroundColor: Colors.white24,
-                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Text(
-                              _formatDuration(value.duration),
-                              style: TextStyle(color: Colors.white70, fontSize: 12),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ),
-          // 水平进度指示器
-          if (_showSeekIndicator)
+        },
+        onPointerUp: (_) {
+          if (_isHorizontalDragging) _onHorizontalSeekEnd();
+          else if (_isVerticalDragging) _onVerticalDragEnd();
+        },
+        onPointerCancel: (_) {
+          if (_isHorizontalDragging) _onHorizontalSeekEnd();
+          else if (_isVerticalDragging) _onVerticalDragEnd();
+        },
+        child: Stack(
+          children: [
             Center(
-              child: Container(
-                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(8),
+              child: AspectRatio(
+                aspectRatio: _videoPlayerController.value.aspectRatio ?? 16/9,
+                child: VideoPlayer(_videoPlayerController),
+              ),
+            ),
+            if (_showSeekIndicator) _buildSeekIndicator(),
+            if (_showVerticalIndicator) _buildVerticalIndicator(),
+            if (_showLongPressIndicator) _buildLongPressIndicator(),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildControlsOverlay() {
+    return Column(
+      children: [
+        // 顶部工具栏
+        Container(
+          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.black54, Colors.transparent],
+            ),
+          ),
+          child: Row(
+            children: [
+              IconButton(icon: Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.pop(context)),
+              Expanded(
+                child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.white, fontSize: 16)),
+              ),
+              if (_isPipAvailable)
+                IconButton(icon: Icon(Icons.picture_in_picture_alt, color: Colors.white),
+                    onPressed: _enterPipMode, tooltip: '小窗播放'),
+            ],
+          ),
+        ),
+        Spacer(),
+        // 底部进度条和控件
+        Container(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [Colors.black54, Colors.transparent],
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildProgressBar(),
+              SizedBox(height: 8),
+              Row(
+                children: [
+                  IconButton(icon: Icon(_videoPlayerController.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                      color: Colors.white, size: 32), onPressed: _togglePlayPause),
+                  IconButton(icon: Icon(Icons.replay_5, color: Colors.white, size: 28), onPressed: () {
+                    final pos = _videoPlayerController.value.position;
+                    _seekTo(Duration(milliseconds: pos.inMilliseconds - 5000));
+                  }),
+                  IconButton(icon: Icon(Icons.forward_5, color: Colors.white, size: 28), onPressed: () {
+                    final pos = _videoPlayerController.value.position;
+                    _seekTo(Duration(milliseconds: pos.inMilliseconds + 5000));
+                  }),
+                  Spacer(),
+                  ValueListenableBuilder<VideoPlayerValue>(
+                    valueListenable: _videoPlayerController,
+                    builder: (context, value, child) {
+                      return Text(
+                        '${_formatDuration(value.position)} / ${_formatDuration(value.duration)}',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildProgressBar() {
+    return ValueListenableBuilder<VideoPlayerValue>(
+      valueListenable: _videoPlayerController,
+      builder: (context, value, child) {
+        final progress = value.duration.inMilliseconds > 0
+            ? value.position.inMilliseconds / value.duration.inMilliseconds : 0.0;
+        return GestureDetector(
+          onHorizontalDragUpdate: (details) {
+            final width = MediaQuery.of(context).size.width - 32;
+            final newProgress = ((details.localPosition.dx - 16) / width).clamp(0.0, 1.0);
+            _seekTo(Duration(milliseconds: (newProgress * value.duration.inMilliseconds).round()));
+          },
+          onTapUp: (details) {
+            final width = MediaQuery.of(context).size.width - 32;
+            final newProgress = ((details.localPosition.dx - 16) / width).clamp(0.0, 1.0);
+            _seekTo(Duration(milliseconds: (newProgress * value.duration.inMilliseconds).round()));
+          },
+          child: Container(
+            height: 24,
+            alignment: Alignment.center,
+            child: Stack(
+              children: [
+                Container(height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+                FractionallySizedBox(
+                  widthFactor: progress.clamp(0.0, 1.0),
+                  child: Container(height: 4, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(2))),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _seekPosition < _dragStartPosition 
-                        ? Icons.replay_10 
-                        : Icons.forward_10,
-                      color: Colors.white,
-                    ),
-                    SizedBox(width: 8),
-                    Text(
-                      '${_formatDuration(_seekPosition)} / ${_formatDuration(_videoPlayerController.value.duration)}',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+                Positioned(
+                  left: (MediaQuery.of(context).size.width - 32) * progress.clamp(0.0, 1.0) - 6,
+                  child: Container(width: 12, height: 12, decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+  
+  Widget _buildPlayPauseIndicator() {
+    return Center(
+      child: Container(
+        padding: EdgeInsets.all(24),
+        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(16)),
+        child: Icon(_isPlayingState ? Icons.play_arrow : Icons.pause, color: Colors.white, size: 64),
+      ),
+    );
+  }
+  
+  Widget _buildSeekIndicator() {
+    final isFastForward = _seekPosition > _dragStartPosition;
+    return Center(
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(isFastForward ? Icons.fast_forward : Icons.fast_rewind, color: Colors.white),
+            SizedBox(width: 12),
+            Text(_formatDuration(_seekPosition), style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(' / ${_formatDuration(_videoPlayerController.value.duration)}', style: TextStyle(color: Colors.white70, fontSize: 14)),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildVerticalIndicator() {
+    final value = _verticalDragType == 'brightness' ? _currentBrightness : _currentVolume;
+    final icon = _verticalDragType == 'brightness'
+        ? (_currentBrightness > 0.5 ? Icons.brightness_high : Icons.brightness_low)
+        : (_currentVolume > 0.5 ? Icons.volume_up : Icons.volume_down);
+    return Positioned(
+      top: 100,
+      left: _verticalDragType == 'brightness' ? 24 : null,
+      right: _verticalDragType == 'volume' ? 24 : null,
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 32),
+            SizedBox(height: 16),
+            SizedBox(
+              width: 4,
+              height: 80,
+              child: Container(
+                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                child: FractionallySizedBox(
+                  alignment: Alignment.bottomCenter,
+                  heightFactor: value,
+                  child: Container(decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(2))),
                 ),
               ),
             ),
-          // 亮度/音量指示器（左侧或右侧垂直显示）
-          if (_showVerticalIndicator)
-            Positioned(
-              top: 80,
-              left: _verticalDragType == 'brightness' ? 24 : null,
-              right: _verticalDragType == 'volume' ? 24 : null,
-              child: Container(
-                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _verticalDragType == 'brightness'
-                        ? (_currentBrightness > 0.5 ? Icons.brightness_high : Icons.brightness_low)
-                        : (_currentVolume > 0.5 ? Icons.volume_up : Icons.volume_down),
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                    SizedBox(height: 12),
-                    SizedBox(
-                      width: 120,
-                      height: 4,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(2),
-                        child: LinearProgressIndicator(
-                          value: _verticalDragType == 'brightness' ? _currentBrightness : _currentVolume,
-                          backgroundColor: Colors.white24,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      '${((_verticalDragType == 'brightness' ? _currentBrightness : _currentVolume) * 100).round()}%',
-                      style: TextStyle(color: Colors.white, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
+            SizedBox(height: 12),
+            Text('${(value * 100).round()}%', style: TextStyle(color: Colors.white, fontSize: 14)),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildLongPressIndicator() {
+    final isRewind = _longPressSide == 'left';
+    final currentPos = _videoPlayerController.value.position;
+    return Center(
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(isRewind ? Icons.replay : Icons.forward, color: Colors.white, size: 48),
+            SizedBox(height: 8),
+            Text('${isRewind ? '快退' : '快进'} 5 秒', style: TextStyle(color: Colors.white, fontSize: 16)),
+            SizedBox(height: 4),
+            Text(_formatDuration(currentPos), style: TextStyle(color: Colors.white70, fontSize: 14)),
+          ],
+        ),
       ),
     );
   }
@@ -1424,9 +1601,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
     final seconds = duration.inSeconds.remainder(60);
-    if (hours > 0) {
-      return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-    }
-    return '${minutes}:${seconds.toString().padLeft(2, '0')}';
+    if (hours > 0) return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 }
+
