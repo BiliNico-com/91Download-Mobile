@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/video_info.dart';
@@ -118,6 +119,18 @@ class DownloadManager extends ChangeNotifier {
   Database? _db;
   bool _dbInitialized = false;
   
+  /// 同时下载任务数上限（由设置页面控制）
+  int maxConcurrentTasks = 2;
+  
+  /// TS切片并发下载数（由设置页面控制）
+  int maxConcurrentSegments = 32;
+  
+  /// 当前正在下载的任务数量
+  int _activeDownloads = 0;
+  
+  /// 等待队列（pending状态的任务）
+  final List<DownloadTask> _waitingQueue = [];
+  
   /// 初始化数据库
   Future<void> _initDb() async {
     if (_dbInitialized) return;
@@ -166,11 +179,83 @@ class DownloadManager extends ChangeNotifier {
   int get downloadingCount => downloadingTasks.length;
   int get completedCount => completedTasks.length;
   
+  /// 获取当前正在下载的任务数量
+  int get activeDownloads => _activeDownloads;
+  
+  /// 获取等待中的任务数量
+  int get waitingCount => _waitingQueue.length;
+  
+  /// 检查视频是否已下载（检查内存任务 + 历史数据库）
+  /// 返回 true 表示视频已经下载完成过（包含已完成任务和历史记录）
+  Future<bool> isVideoDownloaded(String videoId) async {
+    // 1. 检查内存中是否有已完成的任务
+    final task = _taskMap[videoId];
+    if (task != null && task.status == DownloadStatus.completed) {
+      return true;
+    }
+    // 2. 检查历史数据库（持久化记录，跨会话有效）
+    if (_crawler != null) {
+      try {
+        return await _crawler!.isDownloaded(videoId);
+      } catch (e) {
+        Logger().log('Download', '检查下载历史失败: $e');
+      }
+    }
+    return false;
+  }
+  
+  /// 检查视频是否正在下载队列中（等待中/下载中/暂停）
+  bool isVideoInQueue(String videoId) {
+    final task = _taskMap[videoId];
+    if (task == null) return false;
+    return task.status == DownloadStatus.pending ||
+           task.status == DownloadStatus.downloading ||
+           task.status == DownloadStatus.paused;
+  }
+  
   /// 添加下载任务
-  DownloadTask addTask(VideoInfo video) {
+  /// [forceRestart] 为 true 时，如果任务已完成会先删除旧文件再重新下载
+  /// 返回值：'new' 新任务, 'duplicate' 队列中已存在, 'replaced' 覆盖了已完成的任务
+  Future<String> addTask(VideoInfo video, {bool forceRestart = false}) async {
     final id = video.id;
+    
+    // 检查是否在队列中（等待/下载/暂停）
     if (_taskMap.containsKey(id)) {
-      return _taskMap[id]!;
+      final existing = _taskMap[id]!;
+      if (existing.status == DownloadStatus.pending ||
+          existing.status == DownloadStatus.downloading ||
+          existing.status == DownloadStatus.paused) {
+        return 'duplicate';
+      }
+      // 如果是已完成的任务且用户确认覆盖
+      if (existing.status == DownloadStatus.completed && forceRestart) {
+        // 删除旧的下载文件
+        if (existing.filePath != null && existing.filePath!.isNotEmpty) {
+          try {
+            final oldFile = File(existing.filePath!);
+            if (await oldFile.exists()) {
+              await oldFile.delete();
+              await logger.log('Download', '已删除旧文件: ${existing.filePath}');
+            }
+          } catch (e) {
+            await logger.log('Download', '删除旧文件失败: $e');
+          }
+        }
+        // 从列表和映射中移除旧任务
+        _waitingQueue.remove(existing);
+        _tasks.remove(existing);
+        _taskMap.remove(id);
+        _deleteTaskFromDb(id);
+      } else if (existing.status == DownloadStatus.completed) {
+        return 'duplicate';
+      }
+      // 失败的任务，允许重新下载
+      if (existing.status == DownloadStatus.failed) {
+        _waitingQueue.remove(existing);
+        _tasks.remove(existing);
+        _taskMap.remove(id);
+        _deleteTaskFromDb(id);
+      }
     }
     
     final task = DownloadTask(id: id, video: video);
@@ -179,20 +264,51 @@ class DownloadManager extends ChangeNotifier {
     _saveTaskToDb(task);  // 保存到数据库
     notifyListeners();
     
-    // 自动开始下载
-    _startDownload(task);
+    // 按并发限制决定立即下载还是加入队列
+    _tryStartNext(task);
     
-    return task;
+    return 'new';
+  }
+  
+  /// 尝试启动下载（受并发限制控制）
+  void _tryStartNext([DownloadTask? newTask]) {
+    if (_crawler == null || _downloadDir.isEmpty) {
+      if (newTask != null) {
+        newTask.status = DownloadStatus.failed;
+        newTask.error = '未配置爬虫或下载目录';
+        notifyListeners();
+      }
+      return;
+    }
+    
+    // 如果有新任务且当前有空位，立即下载
+    if (newTask != null) {
+      if (_activeDownloads < maxConcurrentTasks) {
+        _startDownload(newTask);
+      } else {
+        // 加入等待队列
+        newTask.status = DownloadStatus.pending;
+        if (!_waitingQueue.contains(newTask)) {
+          _waitingQueue.add(newTask);
+        }
+        notifyListeners();
+      }
+      return;
+    }
+    
+    // 否则从队列中取下一个任务
+    while (_waitingQueue.isNotEmpty && _activeDownloads < maxConcurrentTasks) {
+      final nextTask = _waitingQueue.removeAt(0);
+      if (nextTask.status == DownloadStatus.pending) {
+        _startDownload(nextTask);
+        break;  // 一次只启动一个，避免超过限制
+      }
+    }
   }
   
   /// 执行下载
   Future<void> _startDownload(DownloadTask task) async {
-    if (_crawler == null || _downloadDir.isEmpty) {
-      task.status = DownloadStatus.failed;
-      task.error = '未配置爬虫或下载目录';
-      notifyListeners();
-      return;
-    }
+    _activeDownloads++;
     
     task.status = DownloadStatus.downloading;
     // 重置下载速度相关数据
@@ -222,7 +338,16 @@ class DownloadManager extends ChangeNotifier {
       // 2. 下载视频
       // 清理文件名中的非法字符
       final safeTitle = task.video.title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-      final savePath = '$_downloadDir/$safeTitle.mp4';
+      // 构建文件名：视频名称 + 作者信息（避免同名覆盖）
+      String fileName;
+      final author = task.video.author ?? task.video.authorId;
+      if (author != null && author.isNotEmpty) {
+        final safeAuthor = author.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+        fileName = '${safeTitle}_$safeAuthor.mp4';
+      } else {
+        fileName = '${safeTitle}_${task.video.id}.mp4';
+      }
+      final savePath = '$_downloadDir/$fileName';
       
       await logger.log('Download', '保存路径: $savePath');
       
@@ -268,17 +393,27 @@ class DownloadManager extends ChangeNotifier {
       task.status = DownloadStatus.failed;
       task.error = e.toString();
       task.downloadSpeed = 0.0;
-      task.endTime = DateTime.now();  // ✅ 设置结束时间
+      task.endTime = DateTime.now();
+    } finally {
+      // 无论成功或失败，释放并发槽位并启动下一个等待任务
+      _activeDownloads--;
+      notifyListeners();
+      _tryStartNext();
     }
     
     notifyListeners();
   }
   
   /// 批量添加任务
-  void addTasks(List<VideoInfo> videos) {
+  /// 返回 (新添加数量, 重复数量, 覆盖数量)
+  Future<Map<String, int>> addTasks(List<VideoInfo> videos, {bool forceRestart = false}) async {
+    int newCount = 0, dupCount = 0;
     for (final video in videos) {
-      addTask(video);
+      final result = await addTask(video, forceRestart: forceRestart);
+      if (result == 'new') newCount++;
+      else dupCount++;
     }
+    return {'new': newCount, 'duplicate': dupCount};
   }
   
   /// 更新任务进度
@@ -319,7 +454,7 @@ class DownloadManager extends ChangeNotifier {
   void startTask(String taskId) {
     final task = _taskMap[taskId];
     if (task != null && task.status == DownloadStatus.pending) {
-      _startDownload(task);
+      _tryStartNext(task);
     }
   }
   
@@ -339,7 +474,7 @@ class DownloadManager extends ChangeNotifier {
     if (task != null && task.status == DownloadStatus.paused) {
       task.lastUpdateTime = DateTime.now();
       task.lastDownloadedBytes = task.downloadedBytes;
-      _startDownload(task);
+      _tryStartNext(task);
     }
   }
   
@@ -353,7 +488,7 @@ class DownloadManager extends ChangeNotifier {
       task.downloadedBytes = 0;
       task.totalBytes = 0;
       task.downloadSpeed = 0.0;
-      _startDownload(task);
+      _tryStartNext(task);
     }
   }
   
@@ -361,9 +496,16 @@ class DownloadManager extends ChangeNotifier {
   void cancelTask(String taskId) {
     final task = _taskMap[taskId];
     if (task != null) {
+      // 如果任务正在下载中，释放并发槽位
+      if (task.status == DownloadStatus.downloading) {
+        // 注意：_startDownload 的 finally 块会处理 _activeDownloads--
+        // 但我们标记为非 downloading 状态，需要在这里处理
+      }
+      // 从等待队列中移除
+      _waitingQueue.remove(task);
       _tasks.remove(task);
       _taskMap.remove(taskId);
-      _deleteTaskFromDb(taskId);  // 从数据库删除
+      _deleteTaskFromDb(taskId);
       notifyListeners();
     }
   }

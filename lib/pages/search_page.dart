@@ -1111,25 +1111,106 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     
     if (selectedVideos.isEmpty) return;
     
-    // 添加到下载管理器
+    // 检测哪些视频已经下载过
+    final alreadyDownloaded = <VideoInfo>[];
+    final newVideos = <VideoInfo>[];
+    final inQueue = <VideoInfo>[];
+    
     for (final video in selectedVideos) {
-      appState.downloadManager.addTask(video);
+      if (appState.downloadManager.isVideoInQueue(video.id)) {
+        inQueue.add(video);
+      } else if (await appState.downloadManager.isVideoDownloaded(video.id)) {
+        alreadyDownloaded.add(video);
+      } else {
+        newVideos.add(video);
+      }
     }
     
-    // 显示提示
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('已添加 ${selectedVideos.length} 个视频到下载队列'),
-          action: SnackBarAction(
-            label: '查看',
-            onPressed: () {
-              // 切换到下载页面（索引2）
-              appState.navigateToPage?.call(2);
-            },
+    // 队列中已存在的视频，直接跳过并提示
+    if (inQueue.isNotEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${inQueue.length} 个视频已在下载队列中，已跳过')),
+        );
+      }
+    }
+    
+    // 如果有已下载的视频，弹窗询问是否覆盖
+    bool overwriteConfirmed = false;
+    if (alreadyDownloaded.isNotEmpty) {
+      if (newVideos.isEmpty && alreadyDownloaded.isNotEmpty) {
+        // 全部已下载，询问是否全部覆盖
+        overwriteConfirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('视频已下载'),
+            content: Text('选中的 ${alreadyDownloaded.length} 个视频已经下载过了，是否覆盖重新下载？'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+              TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('覆盖下载')),
+            ],
           ),
-        ),
-      );
+        ) ?? false;
+        if (!overwriteConfirmed) {
+          setState(() => _selectedIds.clear());
+          return;
+        }
+      } else {
+        // 部分已下载，询问是否覆盖已下载的部分
+        final result = await showDialog<String>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('检测到已下载视频'),
+            content: Text(
+              '选中的 ${selectedVideos.length} 个视频中：\n'
+              '• ${newVideos.length} 个新视频\n'
+              '• ${alreadyDownloaded.length} 个已下载\n'
+              '• ${inQueue.length} 个在队列中\n\n'
+              '是否覆盖已下载的 ${alreadyDownloaded.length} 个视频？',
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, 'cancel'), child: const Text('取消')),
+              TextButton(onPressed: () => Navigator.pop(ctx, 'new_only'), child: const Text('只下载新的')),
+              TextButton(onPressed: () => Navigator.pop(ctx, 'all'), child: const Text('全部下载')),
+            ],
+          ),
+        );
+        
+        if (result == null || result == 'cancel') {
+          setState(() => _selectedIds.clear());
+          return;
+        }
+        if (result == 'all') {
+          overwriteConfirmed = true;
+        }
+        // result == 'new_only' 时 overwriteConfirmed 保持 false
+      }
+    }
+    
+    // 添加新视频到下载队列
+    final toDownload = <VideoInfo>[...newVideos];
+    if (overwriteConfirmed) {
+      toDownload.addAll(alreadyDownloaded);
+    }
+    
+    if (toDownload.isNotEmpty) {
+      final result = await appState.downloadManager.addTasks(toDownload, forceRestart: overwriteConfirmed);
+      if (mounted) {
+        final msg = '已添加 ${result['new']} 个视频到下载队列'
+            '${result['duplicate']! > 0 ? '，${result['duplicate']} 个已跳过' : ''}';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            action: SnackBarAction(
+              label: '查看',
+              onPressed: () {
+                // 切换到下载页面（索引2）
+                appState.navigateToPage?.call(2);
+              },
+            ),
+          ),
+        );
+      }
     }
     
     // 清空选择

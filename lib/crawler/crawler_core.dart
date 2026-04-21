@@ -21,6 +21,11 @@ class CrawlerCore {
   bool _stopFlag = false;
   bool _pauseFlag = false;
   
+  /// TS切片并发下载数（可由 DownloadManager 动态设置）
+  int _maxConcurrentDownloads = 32;
+  set maxConcurrentDownloads(int value) => _maxConcurrentDownloads = value.clamp(1, 64);
+  int get maxConcurrentDownloads => _maxConcurrentDownloads;
+  
   Database? _db;
   bool _dbInitialized = false;
   
@@ -1144,7 +1149,7 @@ class CrawlerCore {
         }));
         
         // 控制并发数
-        if (futures.length >= CrawlerConfig.maxConcurrentDownloads) {
+        if (futures.length >= _maxConcurrentDownloads) {
           await Future.wait(futures);
           futures.clear();
         }
@@ -1201,7 +1206,7 @@ class CrawlerCore {
             }
           }));
           
-          if (futures.length >= CrawlerConfig.maxConcurrentDownloads) {
+          if (futures.length >= _maxConcurrentDownloads) {
             await Future.wait(futures);
             futures.clear();
           }
@@ -1219,20 +1224,19 @@ class CrawlerCore {
         }
       }
       
-      // 检查成功率
+      // ✅ 严格失败处理：只要有切片失败，就不合并，直接标记失败
+      // 避免生成有缺损的视频文件导致播放异常
       final successCount = downloaded.where((d) => d).length;
-      final successRate = successCount / tsUrls.length * 100;
       
       if (failedIndices.isNotEmpty) {
-        onLog?.call('有 ${failedIndices.length} 个切片下载失败（$successCount/${tsUrls.length}，成功率 ${successRate.toStringAsFixed(1)}%）', 'warn');
-        
-        if (successRate < 50) {
-          onLog?.call('成功率低于 50%，放弃下载', 'error');
-          await tempDir.delete(recursive: true);
-          return false;
-        }
-        
-        onLog?.call('将跳过失败的切片继续合并', 'warn');
+        final failedSegNums = failedIndices.map((i) => '#${i + 1}').take(10).join(', ');
+        final failedSummary = failedIndices.length <= 10 
+            ? failedSegNums 
+            : '$failedSegNums ... 共${failedIndices.length}个';
+        onLog?.call('下载失败：${failedIndices.length} 个切片无法下载（$successCount/${tsUrls.length}），失败切片: $failedSummary', 'error');
+        onLog?.call('已清理临时文件，请检查网络后重试', 'error');
+        await tempDir.delete(recursive: true);
+        return false;
       }
       
       // 合并 TS 文件（带完整性校验）
