@@ -1113,11 +1113,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('需要悬浮窗权限才能使用此功能'),
-              action: SnackBarAction(
-                label: '去设置',
-                onPressed: () => FloatingVideoService.openSettings(),
-              ),
+              content: Text('需要悬浮窗权限才能使用此功能，请在系统设置中授权'),
             ),
           );
         }

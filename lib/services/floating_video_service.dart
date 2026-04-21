@@ -12,7 +12,6 @@ class FloatingVideoService {
   static String? _currentVideoPath;
   static String? _currentTitle;
   static bool _isFloating = false;
-  static OverlayController? _overlayController;
   
   /// 当前是否正在悬浮窗播放
   static bool get isFloating => _isFloating;
@@ -33,21 +32,11 @@ class FloatingVideoService {
   /// 请求悬浮窗权限
   static Future<bool> requestPermission() async {
     try {
-      // 直接请求权限
       final result = await FlutterOverlayWindow.requestPermission();
       return result ?? false;
     } catch (e) {
       debugPrint('请求悬浮窗权限失败: $e');
       return false;
-    }
-  }
-  
-  /// 打开悬浮设置页面（用户需要在此授权）
-  static Future<void> openSettings() async {
-    try {
-      await FlutterOverlayWindow.openSettings();
-    } catch (e) {
-      debugPrint('打开悬浮窗设置失败: $e');
     }
   }
   
@@ -63,8 +52,6 @@ class FloatingVideoService {
       if (!await isPermissionGranted()) {
         final granted = await requestPermission();
         if (!granted) {
-          // 尝试打开设置页面
-          await openSettings();
           return false;
         }
       }
@@ -72,30 +59,25 @@ class FloatingVideoService {
       _currentVideoPath = videoPath;
       _currentTitle = title;
       
-      // 创建悬浮窗配置
-      final config = OverlayConfig(
+      // 显示悬浮窗 - 使用正确的命名参数
+      await FlutterOverlayWindow.showOverlay(
+        height: 200,
+        width: 300,
         alignment: OverlayAlignment.centerRight,
-        flag: OverlayFlag.clickThrough,
-        visibility: Visibility.visible,
-        positionGravity: PositionGravity.left,
-        width: 200,
-        height: 360,
+        flag: OverlayFlag.defaultFlag,
+        overlayTitle: title,
+        overlayContent: '视频播放中',
+        enableDrag: true,
+        positionGravity: PositionGravity.right,
       );
       
-      // 显示悬浮窗
-      final result = await FlutterOverlayWindow.showOverlay(config);
+      _isFloating = true;
       
-      if (result ?? false) {
-        _isFloating = true;
-        
-        // 等待悬浮窗创建完成，然后通过 channel 传递视频信息
-        await Future.delayed(Duration(milliseconds: 500));
-        await _sendVideoToOverlay(videoPath, title);
-        
-        return true;
-      }
+      // 发送视频信息到悬浮窗
+      await Future.delayed(Duration(milliseconds: 500));
+      await _sendVideoToOverlay(videoPath, title);
       
-      return false;
+      return true;
     } catch (e) {
       debugPrint('启动悬浮窗失败: $e');
       return false;
@@ -105,7 +87,8 @@ class FloatingVideoService {
   /// 发送视频信息到悬浮窗
   static Future<void> _sendVideoToOverlay(String videoPath, String title) async {
     try {
-      await _channel.invokeMethod('setVideo', {
+      // 使用 shareData 发送数据到悬浮窗
+      await FlutterOverlayWindow.shareData({
         'path': videoPath,
         'title': title,
       });
@@ -131,16 +114,9 @@ class FloatingVideoService {
   }
   
   /// 更新悬浮窗大小
-  static Future<void> updateSize(double width, double height) async {
+  static Future<void> updateSize(int width, int height) async {
     try {
-      final config = OverlayConfig(
-        alignment: OverlayAlignment.center,
-        flag: OverlayFlag.clickThrough,
-        visibility: Visibility.visible,
-        width: width,
-        height: height,
-      );
-      await FlutterOverlayWindow.updateOverlay(config);
+      await FlutterOverlayWindow.resizeOverlay(width, height);
     } catch (e) {
       debugPrint('更新悬浮窗大小失败: $e');
     }
@@ -149,7 +125,10 @@ class FloatingVideoService {
   /// 发送播放控制命令到悬浮窗
   static Future<void> sendCommand(String command, [Map<String, dynamic>? args]) async {
     try {
-      await _channel.invokeMethod(command, args ?? {});
+      await FlutterOverlayWindow.shareData({
+        'command': command,
+        ...?args,
+      });
     } catch (e) {
       debugPrint('发送命令到悬浮窗失败: $e');
     }
@@ -165,17 +144,8 @@ class FloatingVideoService {
     await sendCommand('seekTo', {'position': position.inMilliseconds});
   }
   
-  /// 获取悬浮窗播放状态
-  static Future<Map<String, dynamic>?> getPlaybackState() async {
-    try {
-      final result = await _channel.invokeMethod('getPlaybackState');
-      if (result != null) {
-        return Map<String, dynamic>.from(result);
-      }
-      return null;
-    } catch (e) {
-      debugPrint('获取播放状态失败: $e');
-      return null;
-    }
+  /// 监听悬浮窗事件
+  static Stream<dynamic> get overlayListener {
+    return FlutterOverlayWindow.overlayListener;
   }
 }

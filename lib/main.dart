@@ -1,10 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'pages/main_page.dart';
 import 'pages/pin_input_dialog.dart';
 import 'services/app_state.dart';
 import 'services/pin_service.dart';
 import 'utils/logger.dart';
+
+/// 悬浮窗入口点 - 必须是顶级函数
+@pragma("vm:entry-point")
+void overlayMain() {
+  runApp(const MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: Material(
+      color: Colors.black,
+      child: Center(
+        child: Text(
+          '视频播放中...',
+          style: TextStyle(color: Colors.white, fontSize: 16),
+        ),
+      ),
+    ),
+  ));
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
