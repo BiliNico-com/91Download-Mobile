@@ -114,7 +114,8 @@ jobs:
         echo -e "123456\n123456\nrelease\n\n\n\n\n\n\ny" | keytool -genkeypair -v -keystore release.keystore -alias release -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 2>/dev/null || true
         cd ../..
 
-        # 创建 Kotlin 源码目录和亮度控制插件
+        # 删除旧的 Kotlin 源码目录，创建新的
+        rm -rf android/app/src/main/kotlin/com/example
         mkdir -p android/app/src/main/kotlin/com/bilinico/download_91
         
         cat > android/app/src/main/kotlin/com/bilinico/download_91/BrightnessPlugin.kt << 'KOTLINEOF'
