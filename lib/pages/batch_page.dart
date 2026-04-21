@@ -983,12 +983,16 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
     final isDark = Theme.of(ctx).brightness == Brightness.dark;
     // ✅ 修复：作者模式下显示作者名称
     final displayTitle = isAuthorPageMode ? '作者: $authorName' : '批量爬取';
+    // 主题适配颜色
+    final bgColor = isDark ? Colors.black.withOpacity(0.75) : Colors.white.withOpacity(0.9);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subTextColor = isDark ? Colors.grey : Colors.black54;
     
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Container(
-          color: Colors.black.withOpacity(0.75),
+          color: bgColor,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1022,7 +1026,7 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
                               style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.white,
+                                color: textColor,
                               ),
                             ),
                           )
@@ -1034,7 +1038,7 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
                                   style: TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.w600,
-                                    color: Colors.white,
+                                    color: textColor,
                                   ),
                                 ),
                               )
@@ -1053,7 +1057,7 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
                   child: Text(
                     isAuthorPageMode ? '已加载 $videoCount 个视频 (作者主页)' : '已加载 $videoCount 个视频',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    style: TextStyle(fontSize: 12, color: subTextColor),
                   ),
                 ),
               

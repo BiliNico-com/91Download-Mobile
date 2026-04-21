@@ -293,7 +293,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                         child: BackdropFilter(
                           filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                           child: Container(
-                            color: Colors.black.withOpacity(0.5),
+                            color: isExpanded
+                              ? (Theme.of(context).brightness == Brightness.dark 
+                                  ? Colors.black.withOpacity(0.5) 
+                                  : Colors.white.withOpacity(0.85))
+                              : (Theme.of(context).brightness == Brightness.dark 
+                                  ? Colors.black.withOpacity(0.75) 
+                                  : Colors.white.withOpacity(0.95)),
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -313,13 +319,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             _isAuthorPageMode
-                                              ? Text('作者: $_currentAuthorName', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500))
-                                              : Text('搜索', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500)),
+                                              ? Text('作者: $_currentAuthorName', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87))
+                                              : Text('搜索', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87)),
                                             Text(
                                               _isAuthorPageMode 
                                                 ? '点击作者主页查看视频' 
                                                 : '通过关键词搜索并下载视频',
-                                              style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                              style: TextStyle(fontSize: 12, color: Theme.of(context).brightness == Brightness.dark ? Colors.grey : Colors.black54)),
                                           ],
                                         ),
                                         Spacer(),
