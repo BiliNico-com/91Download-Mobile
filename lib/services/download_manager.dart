@@ -534,8 +534,13 @@ class DownloadManager extends ChangeNotifier {
   
   /// 取消下载（删除任务）
   void cancelTask(String taskId) {
+    Logger().logSync('Download', 'cancelTask 被调用, taskId: $taskId');
+    Logger().logSync('Download', '_taskMap.keys: ${_taskMap.keys.toList()}');
+    Logger().logSync('Download', '_tasks ids: ${_tasks.map((t) => t.id).toList()}');
+    
     final task = _taskMap[taskId];
     if (task != null) {
+      Logger().logSync('Download', '找到任务, 状态: ${task.status}');
       // 如果任务正在下载中，通知爬虫停止并释放槽位
       if (task.status == DownloadStatus.downloading) {
         _crawler?.stop();
@@ -543,13 +548,26 @@ class DownloadManager extends ChangeNotifier {
       }
       // 从所有列表中移除
       _waitingQueue.remove(task);
-      _tasks.remove(task);
+      final removed = _tasks.remove(task);
       _taskMap.remove(taskId);
+      Logger().logSync('Download', '从 _tasks 移除: $removed, 剩余任务数: ${_tasks.length}');
       // 异步删除数据库记录
       _deleteTaskFromDb(taskId);
       // 通知 UI 更新
       notifyListeners();
-      Logger().logSync('Download', '任务已删除: $taskId, 剩余任务数: ${_tasks.length}');
+      Logger().logSync('Download', '已调用 notifyListeners()');
+    } else {
+      Logger().logSync('Download', '任务不存在于 _taskMap 中!');
+      // 尝试从 _tasks 中直接查找并删除
+      final taskInList = _tasks.where((t) => t.id == taskId).firstOrNull;
+      if (taskInList != null) {
+        Logger().logSync('Download', '在 _tasks 中找到任务，尝试直接删除');
+        _tasks.remove(taskInList);
+        _taskMap.remove(taskId);
+        _deleteTaskFromDb(taskId);
+        notifyListeners();
+        Logger().logSync('Download', '直接删除成功，剩余任务数: ${_tasks.length}');
+      }
     }
   }
   
