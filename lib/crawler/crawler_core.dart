@@ -383,6 +383,28 @@ class CrawlerCore {
         duration = durationMatch.group(1)!.trim();
       }
       
+      // 提取上传时间（多种格式）
+      String? uploadDate;
+      // 格式1: <span class="added-time">2024-01-15</span>
+      var dateMatch = RegExp(r'<span[^>]*class="[^"]*added[^"]*"[^>]*>([^<]+)</span>', caseSensitive: false).firstMatch(wellContent);
+      if (dateMatch != null) {
+        uploadDate = dateMatch.group(1)!.trim();
+      }
+      // 格式2: 添加时间：2024-01-15
+      if (uploadDate == null) {
+        dateMatch = RegExp(r'(?:添加|上传|更新)[时日期][：:]\s*([0-9\-/]+)', caseSensitive: false).firstMatch(wellContent);
+        if (dateMatch != null) {
+          uploadDate = dateMatch.group(1)!.trim();
+        }
+      }
+      // 格式3: 2024-01-15 格式的日期
+      if (uploadDate == null) {
+        dateMatch = RegExp(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})').firstMatch(wellContent);
+        if (dateMatch != null) {
+          uploadDate = dateMatch.group(1)!.trim();
+        }
+      }
+      
       // 构造完整 URL
       String videoUrl;
       if (videoHref.startsWith('http')) {
@@ -408,6 +430,7 @@ class CrawlerCore {
         author: author,
         authorId: null, // porn91 没有作者ID
         duration: duration,
+        uploadDate: uploadDate,
       ));
     }
     
@@ -553,6 +576,28 @@ class CrawlerCore {
         if (author.isEmpty) author = null;
       }
       
+      // 提取上传时间（多种格式）
+      String? uploadDate;
+      // 格式1: <span class="added-time">2024-01-15</span>
+      var dateMatch = RegExp(r'<span[^>]*class="[^"]*added[^"]*"[^>]*>([^<]+)</span>', caseSensitive: false).firstMatch(container);
+      if (dateMatch != null) {
+        uploadDate = dateMatch.group(1)!.trim();
+      }
+      // 格式2: 添加时间：2024-01-15
+      if (uploadDate == null) {
+        dateMatch = RegExp(r'(?:添加|上传|更新)[时日期][：:]\s*([0-9\-/]+)', caseSensitive: false).firstMatch(container);
+        if (dateMatch != null) {
+          uploadDate = dateMatch.group(1)!.trim();
+        }
+      }
+      // 格式3: 2024-01-15 格式的日期
+      if (uploadDate == null) {
+        dateMatch = RegExp(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})').firstMatch(container);
+        if (dateMatch != null) {
+          uploadDate = dateMatch.group(1)!.trim();
+        }
+      }
+      
       // 从封面URL提取封面ID
       String? coverId;
       final coverIdMatch = RegExp(r'/(\d+)\.(webp|jpg|png)').firstMatch(cover ?? '');
@@ -571,6 +616,7 @@ class CrawlerCore {
         author: author,
         authorId: authorId,
         duration: duration,
+        uploadDate: uploadDate,
       ));
     }
     
