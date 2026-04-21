@@ -1072,6 +1072,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         autoPlay: true,
         looping: false,
         aspectRatio: _videoPlayerController.value.aspectRatio,
+        showControls: false,  // 禁用自带控制面板，避免进度条拖动时的遮罩效果
         errorBuilder: (context, errorMessage) {
           return Center(
             child: Column(
@@ -1281,6 +1282,63 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         children: [
           Center(
             child: Chewie(controller: _chewieController!),
+          ),
+          // 自定义控制层：点击播放/暂停 + 底部进度条
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () {
+                if (_videoPlayerController.value.isPlaying) {
+                  _videoPlayerController.pause();
+                } else {
+                  _videoPlayerController.play();
+                }
+                setState(() {});
+              },
+              child: ValueListenableBuilder<VideoPlayerValue>(
+                valueListenable: _videoPlayerController,
+                builder: (context, value, child) {
+                  // 底部进度条
+                  return Stack(
+                    children: [
+                      Positioned(
+                        left: 16,
+                        right: 16,
+                        bottom: 24,
+                        child: Row(
+                          children: [
+                            Text(
+                              _formatDuration(value.position),
+                              style: TextStyle(color: Colors.white70, fontSize: 12),
+                            ),
+                            Expanded(
+                              child: Container(
+                                height: 4,
+                                margin: EdgeInsets.symmetric(horizontal: 8),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(2),
+                                  child: LinearProgressIndicator(
+                                    value: value.duration.inMilliseconds > 0
+                                        ? value.position.inMilliseconds / 
+                                          value.duration.inMilliseconds
+                                        : 0,
+                                    backgroundColor: Colors.white24,
+                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Text(
+                              _formatDuration(value.duration),
+                              style: TextStyle(color: Colors.white70, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
           ),
           // 水平进度指示器
           if (_showSeekIndicator)

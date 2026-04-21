@@ -49,6 +49,31 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   @override
   bool get wantKeepAlive => true;  // 保持页面状态
   
+  // 更新返回键回调
+  void _updateWillPopCallback() {
+    final appState = context.read<AppState>();
+    if (_isAuthorPageMode || _isAuthorMode) {
+      appState.onWillPopCallback = () {
+        if (_isAuthorPageMode) {
+          _exitAuthorPageMode();
+          return true;
+        }
+        if (_isAuthorMode) {
+          setState(() {
+            _isAuthorMode = false;
+            _authorResults.clear();
+            _selectedIds.clear();
+          });
+          appState.onWillPopCallback = null;
+          return true;
+        }
+        return false;
+      };
+    } else {
+      appState.onWillPopCallback = null;
+    }
+  }
+  
   @override
   void initState() {
     super.initState();
@@ -58,6 +83,10 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   
   @override
   void dispose() {
+    // 清除返回键回调
+    try {
+      context.read<AppState>().onWillPopCallback = null;
+    } catch (_) {}
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _keywordController.dispose();
@@ -207,6 +236,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         _authorHasMore = true;
         _selectedIds.clear();
       });
+      // 更新返回键回调
+      _updateWillPopCallback();
       // 恢复进入前的滚动位置
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _scrollController.hasClients) {
@@ -232,6 +263,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       _authorHasMore = true;
       _selectedIds.clear();
     });
+    // 更新返回键回调
+    _updateWillPopCallback();
     // 滚动到顶部加载作者视频
     _scrollController.jumpTo(0);
     await _loadMoreAuthorVideos();
@@ -241,27 +274,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   Widget build(BuildContext context) {
     super.build(context);  // 必须调用
     
-    return WillPopScope(
-      onWillPop: () async {
-        // 作者主页模式下拦截返回键 -> 退出作者主页
-        if (_isAuthorPageMode) {
-          _exitAuthorPageMode();
-          return false;
-        }
-        // 作者搜索模式下拦截返回键 -> 退出作者搜索模式
-        if (_isAuthorMode) {
-          setState(() {
-            _isAuthorMode = false;
-            _authorResults.clear();
-            _selectedIds.clear();
-          });
-          return false;
-        }
-        return true;  // 正常返回
-      },
-      child: Consumer<AppState>(
-        builder: (context, appState, _) {
-          return Scaffold(
+    return Consumer<AppState>(
+      builder: (context, appState, _) {
+        return Scaffold(
             extendBodyBehindAppBar: true,
             body: Stack(
               children: [
@@ -368,8 +383,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         ),
       );
     },
-  ),
-);
+  );
 }
   
   /// 覆盖层：翻页控件 + 浮动按钮
@@ -604,7 +618,10 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
             _buildSearchDropdown(
               value: _isAuthorMode,
               items: [DropdownMenuItem(value: false, child: Text('搜视频')), DropdownMenuItem(value: true, child: Text('搜作者'))],
-              onChanged: (v) => setState(() => _isAuthorMode = v!),
+              onChanged: (v) {
+                setState(() => _isAuthorMode = v!);
+                _updateWillPopCallback();
+              },
               isDark: isDark,
             ),
             // 排序下拉（仅视频搜索模式 + original CMS）

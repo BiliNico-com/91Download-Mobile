@@ -16,6 +16,9 @@ class AppState extends ChangeNotifier {
   // 站点配置 - 默认为空，用户必须选择
   String? currentSite;
   
+  // 返回键处理回调（由子页面设置，用于作者模式等特殊状态）
+  bool Function()? onWillPopCallback;
+  
   // 下载目录
   String downloadDir = '';
   bool permissionGranted = false;

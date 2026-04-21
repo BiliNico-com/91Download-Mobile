@@ -135,6 +135,15 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     // 保存当前滚动位置
     _savedScrollOffset = _scrollController.offset;
     
+    // 设置返回键回调，让 MainPage 能处理作者模式的返回
+    appState.onWillPopCallback = () {
+      if (_isAuthorPageMode) {
+        _exitAuthorPageMode();
+        return true;
+      }
+      return false;
+    };
+    
     setState(() {
       _isAuthorPageMode = true;
       _currentAuthorId = authorId;
@@ -152,6 +161,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   
   /// 退出作者主页模式
   void _exitAuthorPageMode() {
+    final appState = context.read<AppState>();
+    // 清除返回键回调
+    appState.onWillPopCallback = null;
+    
     final savedOffset = _savedScrollOffset;
     setState(() {
       _isAuthorPageMode = false;

@@ -63,6 +63,14 @@ class _MainPageState extends State<MainPage> {
   
   // 处理返回键
   Future<bool> _handleWillPop() async {
+    final appState = context.read<AppState>();
+    
+    // 先检查子页面是否需要处理返回事件（如作者模式）
+    if (appState.onWillPopCallback != null) {
+      final handled = appState.onWillPopCallback!();
+      if (handled) return false;
+    }
+    
     // 如果在非第一个页面，返回到第一个页面
     if (_currentIndex != 0) {
       goToPage(0);
