@@ -410,7 +410,8 @@ class DownloadManager extends ChangeNotifier {
       notifyListeners();
       _tryStartNext();
     }
-  
+  }
+
   /// 批量添加任务
   /// 返回 (新添加数量, 重复数量, 覆盖数量)
   Future<Map<String, int>> addTasks(List<VideoInfo> videos, {bool forceRestart = false}) async {
