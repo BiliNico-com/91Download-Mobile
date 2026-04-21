@@ -11,6 +11,7 @@ import '../services/app_state.dart';
 import '../services/download_manager.dart';
 import '../services/brightness_service.dart';
 import '../services/pip_service.dart';
+import '../services/floating_video_service.dart';
 import '../models/video_info.dart' show VideoInfo;
 import '../utils/logger.dart';
 
@@ -1052,6 +1053,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   bool _isPipAvailable = false;
   bool _isInPipMode = false;
   
+  // ====== 悬浮窗 ======
+  bool _isFloatingAvailable = false;
+  bool _isInFloatingMode = false;
+  
   Timer? _hideControlsTimer;
   
   @override
@@ -1065,6 +1070,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       if (mounted) setState(() => _currentVolume = volume);
     });
     _checkPipAvailability();
+    _checkFloatingAvailability();
     _initializePlayer();
   }
   
@@ -1073,6 +1079,56 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       final available = await PipService.isAvailable();
       if (mounted) setState(() => _isPipAvailable = available);
     } catch (e) {}
+  }
+  
+  Future<void> _checkFloatingAvailability() async {
+    try {
+      final available = await FloatingVideoService.isPermissionGranted();
+      if (mounted) setState(() => _isFloatingAvailable = available);
+    } catch (e) {
+      if (mounted) setState(() => _isFloatingAvailable = false);
+    }
+  }
+  
+  Future<void> _enterFloatingMode() async {
+    if (!_isFloatingAvailable) {
+      // 请求权限
+      final granted = await FloatingVideoService.requestPermission();
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('需要悬浮窗权限才能使用此功能'),
+              action: SnackBarAction(
+                label: '去设置',
+                onPressed: () => FloatingVideoService.openSettings(),
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      if (mounted) setState(() => _isFloatingAvailable = true);
+    }
+    
+    // 启动悬浮窗
+    final success = await FloatingVideoService.startFloating(
+      videoPath: widget.filePath,
+      title: widget.title,
+    );
+    
+    if (mounted) {
+      setState(() => _isInFloatingMode = success);
+      if (success) {
+        // 返回上一页，但保持悬浮窗播放
+        Navigator.pop(context);
+      }
+    }
+  }
+  
+  Future<void> _exitFloatingMode() async {
+    await FloatingVideoService.stopFloating();
+    if (mounted) setState(() => _isInFloatingMode = false);
   }
   
   Future<void> _initializePlayer() async {
@@ -1122,7 +1178,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    if (state == AppLifecycleState.paused && _isPipAvailable && !_isInPipMode && _isInitialized) {
+    // 不在悬浮窗模式下才处理 PiP
+    if (!_isInFloatingMode && state == AppLifecycleState.paused && _isPipAvailable && !_isInPipMode && _isInitialized) {
       _enterPipMode();
     }
   }
@@ -1290,7 +1347,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
         child: Stack(
           children: [
             Positioned.fill(child: _buildVideoBody()),
-            if (_showControls && !_isInPipMode) _buildControlsOverlay(),
+            if (_showControls && !_isInPipMode && !_isInFloatingMode) _buildControlsOverlay(),
             if (_showPlayPauseIcon) _buildPlayPauseIndicator(),
           ],
         ),
@@ -1411,6 +1468,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
               if (_isPipAvailable)
                 IconButton(icon: Icon(Icons.picture_in_picture_alt, color: Colors.white),
                     onPressed: _enterPipMode, tooltip: '小窗播放'),
+              IconButton(icon: Icon(Icons.picture_in_picture, color: Colors.white),
+                  onPressed: _enterFloatingMode, tooltip: '悬浮窗播放'),
             ],
           ),
         ),
