@@ -114,9 +114,9 @@ class FloatingVideoService {
   }
   
   /// 更新悬浮窗大小
-  static Future<void> updateSize(int width, int height) async {
+  static Future<void> updateSize(int width, int height, {bool enableDrag = true}) async {
     try {
-      await FlutterOverlayWindow.resizeOverlay(width, height);
+      await FlutterOverlayWindow.resizeOverlay(width, height, enableDrag);
     } catch (e) {
       debugPrint('更新悬浮窗大小失败: $e');
     }
