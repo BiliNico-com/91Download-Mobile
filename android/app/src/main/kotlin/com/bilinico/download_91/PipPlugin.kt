@@ -27,10 +27,14 @@ class PipPlugin private constructor(
         when (call.method) {
             "enterPip" -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val aspectRatio = call.argument<Double>("aspectRatio") ?: 16.0 / 9.0
+                    val aspectRatio = call.argument<Double>("aspectRatio") ?: (16.0 / 9.0)
                     try {
+                        // aspectRatio = width/height，例如 16/9 = 1.778
+                        // Rational 需要 width 和 height 两个整数
+                        val width = (aspectRatio * 100).toInt()
+                        val height = 100
                         val params = PictureInPictureParams.Builder()
-                            .setAspectRatio(Rational(aspectRatio.toInt(), 1))
+                            .setAspectRatio(Rational(width, height))
                             .build()
                         val success = activity.enterPictureInPictureMode(params)
                         result.success(success)

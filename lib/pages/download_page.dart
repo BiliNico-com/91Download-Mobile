@@ -1043,11 +1043,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   bool _showVerticalIndicator = false;
   double _savedBrightness = 0.5;
   
-  // ====== 长按快进快退 ======
+  // ====== 长按倍速播放 ======
   bool _isLongPressing = false;
   String _longPressSide = '';
   bool _showLongPressIndicator = false;
-  Timer? _longPressTimer;
   
   // ====== PiP ======
   bool _isPipAvailable = false;
@@ -1254,30 +1253,21 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       _showLongPressIndicator = true;
       _showControls = false;
     });
-    _doLongPressSeek();
-    _longPressTimer = Timer.periodic(Duration(milliseconds: 500), (_) => _doLongPressSeek());
-  }
-  
-  void _doLongPressSeek() {
-    if (!_isLongPressing) return;
-    final currentPos = _videoPlayerController.value.position;
-    final duration = _videoPlayerController.value.duration;
-    Duration newPos;
-    if (_longPressSide == 'left') {
-      newPos = Duration(milliseconds: (currentPos.inMilliseconds - 5000).clamp(0, duration.inMilliseconds));
-    } else {
-      newPos = Duration(milliseconds: (currentPos.inMilliseconds + 5000).clamp(0, duration.inMilliseconds));
+    // 设置倍速播放
+    _videoPlayerController.setPlaybackSpeed(isLeftSide ? 0.5 : 2.0);
+    if (!_videoPlayerController.value.isPlaying) {
+      _videoPlayerController.play();
     }
-    _seekTo(newPos);
-    setState(() {});
   }
   
   void _onLongPressEnd() {
-    _longPressTimer?.cancel();
-    _longPressTimer = null;
     if (_isLongPressing) {
-      setState(() { _isLongPressing = false; _showLongPressIndicator = false; });
-      _videoPlayerController.play();
+      // 恢复正常速度
+      _videoPlayerController.setPlaybackSpeed(1.0);
+      setState(() { 
+        _isLongPressing = false; 
+        _showLongPressIndicator = false; 
+      });
       _showControlsTemporarily();
     }
   }
@@ -1286,7 +1276,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _hideControlsTimer?.cancel();
-    _longPressTimer?.cancel();
     try { BrightnessService.restoreBrightness(); } catch (_) {}
     _videoPlayerController.dispose();
     _chewieController?.dispose();
@@ -1478,34 +1467,40 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       builder: (context, value, child) {
         final progress = value.duration.inMilliseconds > 0
             ? value.position.inMilliseconds / value.duration.inMilliseconds : 0.0;
-        return GestureDetector(
-          onHorizontalDragUpdate: (details) {
-            final width = MediaQuery.of(context).size.width - 32;
-            final newProgress = ((details.localPosition.dx - 16) / width).clamp(0.0, 1.0);
-            _seekTo(Duration(milliseconds: (newProgress * value.duration.inMilliseconds).round()));
-          },
-          onTapUp: (details) {
-            final width = MediaQuery.of(context).size.width - 32;
-            final newProgress = ((details.localPosition.dx - 16) / width).clamp(0.0, 1.0);
-            _seekTo(Duration(milliseconds: (newProgress * value.duration.inMilliseconds).round()));
-          },
-          child: Container(
-            height: 24,
-            alignment: Alignment.center,
-            child: Stack(
-              children: [
-                Container(height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
-                FractionallySizedBox(
-                  widthFactor: progress.clamp(0.0, 1.0),
-                  child: Container(height: 4, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(2))),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final barWidth = constraints.maxWidth;
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (details) {
+                final tapX = details.localPosition.dx;
+                final newProgress = (tapX / barWidth).clamp(0.0, 1.0);
+                _seekTo(Duration(milliseconds: (newProgress * value.duration.inMilliseconds).round()));
+              },
+              onHorizontalDragUpdate: (details) {
+                final dragX = details.localPosition.dx;
+                final newProgress = (dragX / barWidth).clamp(0.0, 1.0);
+                _seekTo(Duration(milliseconds: (newProgress * value.duration.inMilliseconds).round()));
+              },
+              child: Container(
+                height: 24,
+                alignment: Alignment.center,
+                child: Stack(
+                  children: [
+                    Container(height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+                    FractionallySizedBox(
+                      widthFactor: progress.clamp(0.0, 1.0),
+                      child: Container(height: 4, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(2))),
+                    ),
+                    Positioned(
+                      left: barWidth * progress.clamp(0.0, 1.0) - 6,
+                      child: Container(width: 12, height: 12, decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
+                    ),
+                  ],
                 ),
-                Positioned(
-                  left: (MediaQuery.of(context).size.width - 32) * progress.clamp(0.0, 1.0) - 6,
-                  child: Container(width: 12, height: 12, decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
-                ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
@@ -1578,20 +1573,20 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   }
   
   Widget _buildLongPressIndicator() {
-    final isRewind = _longPressSide == 'left';
-    final currentPos = _videoPlayerController.value.position;
+    final isSlowMotion = _longPressSide == 'left';
     return Center(
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        padding: EdgeInsets.symmetric(horizontal: 32, vertical: 20),
         decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(isRewind ? Icons.replay : Icons.forward, color: Colors.white, size: 48),
+            Icon(isSlowMotion ? Icons.slow_motion_video : Icons.fast_forward, color: Colors.white, size: 48),
             SizedBox(height: 8),
-            Text('${isRewind ? '快退' : '快进'} 5 秒', style: TextStyle(color: Colors.white, fontSize: 16)),
-            SizedBox(height: 4),
-            Text(_formatDuration(currentPos), style: TextStyle(color: Colors.white70, fontSize: 14)),
+            Text(
+              isSlowMotion ? '0.5x 慢速' : '2.0x 快速',
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+            ),
           ],
         ),
       ),
