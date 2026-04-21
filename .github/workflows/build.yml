@@ -56,7 +56,7 @@ jobs:
 
         android {
             namespace "com.bilinico.download_91"
-            compileSdk 35
+            compileSdk 33
             ndkVersion flutter.ndkVersion
 
             compileOptions {
@@ -72,17 +72,30 @@ jobs:
                 main.java.srcDirs += 'src/main/kotlin'
             }
 
+            // 固定签名配置，确保每次编译使用相同签名
+            signingConfigs {
+                release {
+                    keyAlias 'release'
+                    keyPassword '123456'
+                    storeFile file('release.keystore')
+                    storePassword '123456'
+                }
+            }
+
             defaultConfig {
                 applicationId "com.bilinico.download_91"
                 minSdk 21
-                targetSdk 35
+                targetSdk 33
                 versionCode flutterVersionCode.toInteger()
                 versionName flutterVersionName
             }
 
             buildTypes {
                 release {
-                    signingConfig signingConfigs.debug
+                    signingConfig signingConfigs.release
+                }
+                debug {
+                    signingConfig signingConfigs.release
                 }
             }
         }
@@ -92,9 +105,15 @@ jobs:
         }
 
         dependencies {
-            implementation "androidx.core:core-ktx:1.13.1"
+            implementation "androidx.core:core-ktx:1.12.0"
         }
         EOF
+
+        # 创建固定签名文件
+        echo "创建签名文件..."
+        cd android/app
+        echo -e "123456\n123456\nrelease\n\n\n\n\n\n\ny" | keytool -genkeypair -v -keystore release.keystore -alias release -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 2>/dev/null || true
+        cd ../..
 
         # 修复 settings.gradle
         cat > android/settings.gradle << 'EOF'
@@ -123,6 +142,43 @@ jobs:
         }
 
         include ":app"
+        EOF
+
+        # 修复 build.gradle (根目录) - 添加 core-ktx 依赖注入
+        cat > android/build.gradle << 'EOF'
+        allprojects {
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+
+        rootProject.buildDir = '../build'
+
+        // 为所有子项目添加 core-ktx 依赖，修复 screen_brightness_android 的 toUri 错误
+        subprojects { subproject ->
+            afterEvaluate {
+                def hasAndroid = subproject.plugins.hasPlugin('com.android.library') || 
+                                 subproject.plugins.hasPlugin('com.android.application')
+                if (hasAndroid) {
+                    subproject.dependencies {
+                        implementation 'androidx.core:core-ktx:1.12.0'
+                    }
+                }
+            }
+        }
+
+        subprojects {
+            project.buildDir = "${rootProject.buildDir}/${project.name}"
+        }
+
+        subprojects {
+            project.evaluationDependsOn(':app')
+        }
+
+        tasks.register("clean", Delete) {
+            delete rootProject.buildDir
+        }
         EOF
 
         # 确保 gradle.properties 有正确的配置
