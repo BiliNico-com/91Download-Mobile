@@ -1024,6 +1024,10 @@ class CrawlerCore {
       int success = 0;
       var futures = <Future<void>>[];
       
+      // ✅ 进度节流：避免频繁更新UI导致进度条抽动
+      DateTime? lastProgressUpdate;
+      const progressThrottleMs = 200;  // 最小200ms更新一次
+      
       for (var i = 0; i < tsUrls.length; i++) {
         if (_stopFlag) break;
         while (_pauseFlag) {
@@ -1038,7 +1042,13 @@ class CrawlerCore {
           downloaded[index] = ok;
           if (ok) {
             success++;
-            onProgress?.call(success / tsUrls.length, '下载中 $success/${tsUrls.length}');
+            // ✅ 节流更新进度
+            final now = DateTime.now();
+            if (lastProgressUpdate == null || 
+                now.difference(lastProgressUpdate!).inMilliseconds >= progressThrottleMs) {
+              onProgress?.call(success / tsUrls.length, '下载中 $success/${tsUrls.length}');
+              lastProgressUpdate = now;
+            }
           }
         }));
         
@@ -1052,6 +1062,9 @@ class CrawlerCore {
       if (futures.isNotEmpty) {
         await Future.wait(futures);
       }
+      
+      // ✅ 下载完成后强制更新一次最终进度
+      onProgress?.call(success / tsUrls.length, '下载中 $success/${tsUrls.length}');
       
       if (_stopFlag) {
         onLog?.call('下载已停止', 'warn');
@@ -1072,6 +1085,9 @@ class CrawlerCore {
         final stillFailed = <int>[];
         futures = [];
         
+        // ✅ 重试时也使用进度节流
+        DateTime? lastRetryProgressUpdate;
+        
         for (final idx in failedIndices) {
           if (_stopFlag) break;
           
@@ -1082,7 +1098,13 @@ class CrawlerCore {
             if (ok) {
               downloaded[idx] = true;
               success++;
-              onProgress?.call(success / tsUrls.length, '重试中 $success/${tsUrls.length}');
+              // 节流更新
+              final now = DateTime.now();
+              if (lastRetryProgressUpdate == null || 
+                  now.difference(lastRetryProgressUpdate!).inMilliseconds >= progressThrottleMs) {
+                onProgress?.call(success / tsUrls.length, '重试中 $success/${tsUrls.length}');
+                lastRetryProgressUpdate = now;
+              }
             } else {
               stillFailed.add(idx);
             }
@@ -1122,9 +1144,14 @@ class CrawlerCore {
         onLog?.call('将跳过失败的切片继续合并', 'warn');
       }
       
-      // 合并 TS 文件
+      // 合并 TS 文件（带完整性校验）
       onLog?.call('合并文件...', 'info');
-      await _mergeTsFiles(tempDir.path, savePath, downloaded);
+      final mergeOk = await _mergeTsFiles(tempDir.path, savePath, downloaded);
+      if (!mergeOk) {
+        onLog?.call('合并失败：没有有效的切片文件', 'error');
+        await tempDir.delete(recursive: true);
+        return false;
+      }
       
       // 清理临时文件
       await tempDir.delete(recursive: true);
@@ -1162,7 +1189,7 @@ class CrawlerCore {
     return urls;
   }
 
-  /// 下载单个 TS 切片
+  /// 下载单个 TS 切片（带完整性校验）
   Future<bool> _downloadTs(String url, String savePath) async {
     for (var retry = 0; retry < CrawlerConfig.maxRetries; retry++) {
       try {
@@ -1177,10 +1204,32 @@ class CrawlerCore {
           ),
         );
         
+        final bytes = resp.data as List<int>;
+        
+        // ✅ 完整性校验1：检查数据是否为空
+        if (bytes.isEmpty) {
+          Logger().logSync('Download', '切片数据为空: $url');
+          continue;
+        }
+        
+        // ✅ 完整性校验2：检查TS文件魔数（应以0x47开头）
+        // TS同步字节：0x47，有效的TS文件必须以这个字节开头
+        if (bytes[0] != 0x47) {
+          Logger().logSync('Download', 'TS文件魔数校验失败: ${bytes[0].toRadixString(16)}, URL: $url');
+          continue;
+        }
+        
+        // ✅ 完整性校验3：检查文件最小大小（TS文件至少188字节）
+        if (bytes.length < 188) {
+          Logger().logSync('Download', 'TS文件过小: ${bytes.length} bytes, URL: $url');
+          continue;
+        }
+        
         final file = File(savePath);
-        await file.writeAsBytes(resp.data);
+        await file.writeAsBytes(bytes);
         return true;
       } catch (e) {
+        Logger().logSync('Download', '下载切片失败(retry ${retry + 1}): $e');
         if (retry < CrawlerConfig.maxRetries - 1) {
           await Future.delayed(Duration(seconds: 1));
         }
@@ -1234,9 +1283,9 @@ class CrawlerCore {
     }
   }
 
-  /// 合并 TS 文件
+  /// 合并 TS 文件（带完整性校验）
   /// [downloaded] 下载状态列表，用于跳过失败的切片
-  Future<void> _mergeTsFiles(String tempDir, String outputPath, List<bool>? downloaded) async {
+  Future<bool> _mergeTsFiles(String tempDir, String outputPath, List<bool>? downloaded) async {
     final dir = Directory(tempDir);
     final files = await dir.list().toList();
     
@@ -1246,20 +1295,47 @@ class CrawlerCore {
     final outputFile = File(outputPath);
     final sink = outputFile.openWrite();
     
+    int validCount = 0;
+    int skippedCount = 0;
+    
     for (var i = 0; i < files.length; i++) {
       final file = files[i];
       // 如果有下载状态记录，跳过失败的切片
       if (downloaded != null && i < downloaded.length && !downloaded[i]) {
         Logger().logSync('Merge', '跳过缺失切片 ${i + 1}');
+        skippedCount++;
         continue;
       }
       if (file is File) {
-        final bytes = await file.readAsBytes();
-        sink.add(bytes);
+        try {
+          final bytes = await file.readAsBytes();
+          
+          // ✅ 合并前再次校验文件完整性
+          if (bytes.isEmpty) {
+            Logger().logSync('Merge', '跳过空文件: ${file.path}');
+            skippedCount++;
+            continue;
+          }
+          if (bytes[0] != 0x47) {
+            Logger().logSync('Merge', '跳过无效TS文件(魔数错误): ${file.path}');
+            skippedCount++;
+            continue;
+          }
+          
+          sink.add(bytes);
+          validCount++;
+        } catch (e) {
+          Logger().logSync('Merge', '读取文件失败: ${file.path}, $e');
+          skippedCount++;
+        }
       }
     }
     
     await sink.close();
+    
+    // ✅ 返回合并结果
+    onLog?.call('合并完成: $validCount 个有效切片, 跳过 $skippedCount 个', 'info');
+    return validCount > 0;
   }
 
   // ==================== 数据库操作 ====================
