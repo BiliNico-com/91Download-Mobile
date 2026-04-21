@@ -9,7 +9,7 @@ import 'package:dio/dio.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
-import 'config.dart';
+import '../crawler/config.dart';
 import '../models/video_info.dart';
 import '../utils/logger.dart';
 
