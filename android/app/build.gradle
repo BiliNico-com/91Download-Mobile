@@ -40,6 +40,16 @@ android {
         main.java.srcDirs += 'src/main/kotlin'
     }
 
+    // 固定签名配置，确保每次编译使用相同签名
+    signingConfigs {
+        release {
+            keyAlias 'release'
+            keyPassword '123456'
+            storeFile file('release.keystore')
+            storePassword '123456'
+        }
+    }
+
     defaultConfig {
         applicationId "com.example.download_91"
         minSdk 21
@@ -50,7 +60,10 @@ android {
 
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
+        }
+        debug {
+            signingConfig signingConfigs.release
         }
     }
 }
