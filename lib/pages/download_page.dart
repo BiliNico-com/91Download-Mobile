@@ -4,6 +4,8 @@ import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:screen_brightness/screen_brightness.dart';
+import 'package:volume_controller/volume_controller.dart';
 import 'dart:io';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
@@ -790,60 +792,86 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
         }
       },
       child: Card(
-        margin: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        margin: EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         color: selected ? Colors.blue.withOpacity(0.1) : null,
-        child: ListTile(
-          leading: Stack(
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: task.video.cover != null
-                  ? Image.network(task.video.cover!, width: 60, height: 45, fit: BoxFit.cover)
-                  : Container(width: 60, height: 45, color: Colors.grey[300], child: Icon(Icons.video_file, size: 20)),
-              ),
-              // 选择模式下显示勾选框
-              if (_isCompletedSelectMode)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  child: Container(
-                    padding: EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      color: selected ? Colors.blue : Colors.white,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: selected ? Colors.blue : Colors.grey, width: 2),
-                    ),
-                    child: Icon(selected ? Icons.check : null, size: 12, color: Colors.white),
+              // 预览图（放大 + 右下角时长 + 选中标记）
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: task.video.cover != null
+                      ? Image.network(task.video.cover!, width: 96, height: 64, fit: BoxFit.cover)
+                      : Container(width: 96, height: 64, color: Colors.grey[300], child: Icon(Icons.video_file, size: 24)),
                   ),
+                  // 时长标签（右下角）
+                  if (task.video.duration != null && task.video.duration!.isNotEmpty)
+                    Positioned(
+                      right: 4,
+                      bottom: 4,
+                      child: Container(
+                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: Colors.black87,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          task.video.duration!,
+                          style: TextStyle(color: Colors.white, fontSize: 10),
+                        ),
+                      ),
+                    ),
+                  // 选择模式下显示勾选框
+                  if (_isCompletedSelectMode)
+                    Positioned(
+                      top: 2,
+                      left: 2,
+                      child: Container(
+                        padding: EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: selected ? Colors.blue : Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: selected ? Colors.blue : Colors.grey, width: 2),
+                        ),
+                        child: Icon(selected ? Icons.check : null, size: 12, color: Colors.white),
+                      ),
+                    ),
+                ],
+              ),
+              SizedBox(width: 12),
+              // 信息区域
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _formatTitle(task.video),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      '下载于 ${_formatTime(task.endTime)}',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+              // 分享按钮（移除播放按钮，只保留分享）
+              if (!_isCompletedSelectMode)
+                IconButton(
+                  icon: Icon(Icons.share, color: Colors.blue, size: 22),
+                  onPressed: () => _shareVideo(task),
+                  tooltip: '分享',
+                  padding: EdgeInsets.only(left: 4),
+                  constraints: BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
             ],
           ),
-          title: Text(
-            _formatTitle(task.video),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(
-            '下载于 ${_formatTime(task.endTime)}',
-            style: TextStyle(fontSize: 12),
-          ),
-          trailing: _isCompletedSelectMode 
-            ? null 
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: Icon(Icons.play_circle, color: Colors.green),
-                    onPressed: () => _playVideo(task, appState),
-                    tooltip: '播放',
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.share, color: Colors.blue),
-                    onPressed: () => _shareVideo(task),
-                    tooltip: '分享',
-                  ),
-                ],
-              ),
         ),
       ),
     );
@@ -968,7 +996,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
 }
 
-/// 视频播放器页面
+/// 视频播放器页面（支持亮度/音量手势控制）
 class VideoPlayerPage extends StatefulWidget {
   final String filePath;
   final String title;
@@ -997,19 +1025,41 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   Duration _seekPosition = Duration.zero;
   bool _showSeekIndicator = false;
   
+  // 垂直手势：亮度/音量
+  bool _isVerticalDragging = false;
+  String _verticalDragType = ''; // 'brightness' 或 'volume'
+  double _verticalDragStartY = 0;
+  double _verticalDragStartValue = 0.5;
+  double _currentBrightness = 0.5;
+  double _currentVolume = 0.5;
+  bool _showVerticalIndicator = false;
+  double _savedBrightness = 0.5; // 用于恢复原始亮度
+  
   @override
   void initState() {
     super.initState();
+    // 初始化音量监听
+    VolumeController().listener((volume) {
+      if (mounted) {
+        setState(() => _currentVolume = volume);
+      }
+    });
+    _currentVolume = VolumeController().value;
     _initializePlayer();
   }
   
   Future<void> _initializePlayer() async {
     try {
-      
       // 使用文件路径初始化 VideoPlayerController
       _videoPlayerController = VideoPlayerController.file(File(widget.filePath));
       
       await _videoPlayerController.initialize();
+      
+      // 保存并初始化当前屏幕亮度
+      try {
+        _savedBrightness = await ScreenBrightness().current;
+        _currentBrightness = _savedBrightness;
+      } catch (_) {}
       
       _chewieController = ChewieController(
         videoPlayerController: _videoPlayerController,
@@ -1053,6 +1103,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   
   @override
   void dispose() {
+    // 恢复屏幕亮度
+    try {
+      ScreenBrightness().resetScreenBrightness();
+    } catch (_) {}
     _videoPlayerController.dispose();
     _chewieController?.dispose();
     super.dispose();
@@ -1129,6 +1183,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     }
     
     return GestureDetector(
+      // ─── 水平拖拽：快进/快退 ───
       onHorizontalDragStart: (details) {
         if (!_videoPlayerController.value.isInitialized) return;
         setState(() {
@@ -1138,7 +1193,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           _seekPosition = _dragStartPosition;
           _showSeekIndicator = true;
         });
-        // 暂停播放以便拖动
         if (_videoPlayerController.value.isPlaying) {
           _videoPlayerController.pause();
         }
@@ -1155,7 +1209,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         final seekSeconds = (seekRatio * 10).round();
         
         final newPosition = _dragStartPosition + Duration(seconds: seekSeconds);
-        // 限制在有效范围内
         _seekPosition = Duration(
           milliseconds: newPosition.inMilliseconds.clamp(0, totalDuration.inMilliseconds),
         );
@@ -1165,7 +1218,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       onHorizontalDragEnd: (details) {
         if (!_isDragging) return;
         
-        // 跳转到目标位置
         _videoPlayerController.seekTo(_seekPosition);
         
         setState(() {
@@ -1173,15 +1225,58 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           _showSeekIndicator = false;
         });
         
-        // 恢复播放
         _videoPlayerController.play();
+      },
+      // ─── 垂直拖拽：左侧调亮度，右侧调音量 ───
+      onVerticalDragStart: (details) {
+        if (!_videoPlayerController.value.isInitialized) return;
+        final screenWidth = MediaQuery.of(context).size.width;
+        final isLeftSide = details.globalPosition.dx < screenWidth / 2;
+        
+        setState(() {
+          _isVerticalDragging = true;
+          _verticalDragStartY = details.globalPosition.dy;
+          _verticalDragType = isLeftSide ? 'brightness' : 'volume';
+          _verticalDragStartValue = isLeftSide ? _currentBrightness : _currentVolume;
+          _showVerticalIndicator = true;
+        });
+      },
+      onVerticalDragUpdate: (details) {
+        if (!_isVerticalDragging) return;
+        
+        final screenHeight = MediaQuery.of(context).size.height;
+        final dy = details.globalPosition.dy - _verticalDragStartY;
+        
+        // 向下滑动 dy 为正 → 减小值（变暗/变小声）
+        // 向上滑动 dy 为负 → 增大值（变亮/变大声）
+        final change = -dy / screenHeight; // 归一化到 0~1
+        var newValue = (_verticalDragStartValue + change).clamp(0.0, 1.0);
+        
+        setState(() {
+          if (_verticalDragType == 'brightness') {
+            _currentBrightness = newValue;
+            try {
+              ScreenBrightness().setScreenBrightness(newValue);
+            } catch (_) {}
+          } else {
+            _currentVolume = newValue;
+            VolumeController().setVolume(newValue, showSystemUI: false);
+          }
+        });
+      },
+      onVerticalDragEnd: (details) {
+        if (!_isVerticalDragging) return;
+        setState(() {
+          _isVerticalDragging = false;
+          _showVerticalIndicator = false;
+        });
       },
       child: Stack(
         children: [
           Center(
             child: Chewie(controller: _chewieController!),
           ),
-          // 进度指示器
+          // 水平进度指示器
           if (_showSeekIndicator)
             Center(
               child: Container(
@@ -1190,13 +1285,69 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                   color: Colors.black54,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text(
-                  '${_formatDuration(_seekPosition)} / ${_formatDuration(_videoPlayerController.value.duration)}',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _seekPosition < _dragStartPosition 
+                        ? Icons.replay_10 
+                        : Icons.forward_10,
+                      color: Colors.white,
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      '${_formatDuration(_seekPosition)} / ${_formatDuration(_videoPlayerController.value.duration)}',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          // 亮度/音量指示器（左侧或右侧垂直显示）
+          if (_showVerticalIndicator)
+            Positioned(
+              top: 80,
+              left: _verticalDragType == 'brightness' ? 24 : null,
+              right: _verticalDragType == 'volume' ? 24 : null,
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _verticalDragType == 'brightness'
+                        ? (_currentBrightness > 0.5 ? Icons.brightness_high : Icons.brightness_low)
+                        : (_currentVolume > 0.5 ? Icons.volume_up : Icons.volume_down),
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                    SizedBox(height: 12),
+                    SizedBox(
+                      width: 120,
+                      height: 4,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: LinearProgressIndicator(
+                          value: _verticalDragType == 'brightness' ? _currentBrightness : _currentVolume,
+                          backgroundColor: Colors.white24,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      '${(_verticalDragType == 'brightness' ? _currentBrightness : _currentVolume * 100).round()}%',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ],
                 ),
               ),
             ),

@@ -43,6 +43,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   bool _showBackToTop = false;
   String _status = '就绪';  // 就绪状态
   
+  // 进入作者主页前的滚动位置（返回时恢复）
+  double _savedScrollOffset = 0;
+  
   @override
   bool get wantKeepAlive => true;  // 保持页面状态
   
@@ -196,17 +199,30 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   /// 退出作者主页模式
   void _exitAuthorPageMode() {
     if (_isAuthorPageMode) {
+      final savedOffset = _savedScrollOffset;
       setState(() {
         _isAuthorPageMode = false;
         _authorVideos.clear();
         _authorCurrentPage = 0;
         _authorHasMore = true;
+        _selectedIds.clear();
+      });
+      // 恢复进入前的滚动位置
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scrollController.hasClients) {
+          final maxOffset = _scrollController.position.maxScrollExtent;
+          if (savedOffset <= maxOffset) {
+            _scrollController.jumpTo(savedOffset);
+          }
+        }
       });
     }
   }
 
   /// 进入作者主页模式
   Future<void> _enterAuthorPageMode(AuthorInfo author) async {
+    // 保存当前滚动位置
+    _savedScrollOffset = _scrollController.offset;
     setState(() {
       _isAuthorPageMode = true;
       _currentAuthorId = author.id;
@@ -214,7 +230,10 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       _authorVideos.clear();
       _authorCurrentPage = 0;
       _authorHasMore = true;
+      _selectedIds.clear();
     });
+    // 滚动到顶部加载作者视频
+    _scrollController.jumpTo(0);
     await _loadMoreAuthorVideos();
   }
 
@@ -237,13 +256,15 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
             extendBodyBehindAppBar: true,
             body: Stack(
               children: [
-                CustomScrollView(
+                RefreshIndicator(
+                  onRefresh: _onRefresh,
+                  color: Colors.blue,
+                  backgroundColor: Colors.white,
+                  displacement: 40,
+                  child: CustomScrollView(
                   controller: _scrollController,
+                  physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
-                    // ✅ 下拉刷新
-                    CupertinoSliverRefreshControl(
-                      onRefresh: _onRefresh,
-                    ),
                     // SliverAppBar：标题区域（滚动时隐藏）+ 搜索区域（始终可见）
                     SliverAppBar(
                       pinned: true,
@@ -324,7 +345,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                   child: SizedBox(height: 100),
                 ),
               ],
-            ),
+              ),
+              ),
             // 覆盖层：翻页控件 + 浮动按钮
             ..._buildOverlays(appState),
           ],
@@ -338,8 +360,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   /// 覆盖层：翻页控件 + 浮动按钮
   List<Widget> _buildOverlays(AppState appState) {
     return [
-      // 页码跳转悬浮胶囊（仅视频搜索模式显示）
-      if (!_isAuthorMode) _buildBottomPageNavigation(appState),
+      // 页码跳转悬浮胶囊（仅视频搜索模式显示，作者主页模式隐藏）
+      if (!_isAuthorMode && !_isAuthorPageMode) _buildBottomPageNavigation(appState),
       // 回顶部按钮
       if (_showBackToTop && appState.showBackToTop)
         Positioned(
@@ -446,6 +468,58 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     final siteType = appState.crawler?.siteType ?? 'original';
     final showSort = !_isAuthorMode && siteType != 'porn91';
     final isDark = appState.isDarkMode;
+    
+    // 作者主页模式下，隐藏下拉菜单，只显示返回按钮和搜索框
+    if (_isAuthorPageMode) {
+      return Container(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: Container(
+          height: 44,
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: isDark ? Colors.white.withOpacity(0.08) : Colors.grey.shade300,
+              width: 0.5,
+            ),
+            boxShadow: isDark
+                ? [BoxShadow(color: Colors.white.withOpacity(0.03), blurRadius: 1, spreadRadius: 0.5)]
+                : [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 8, offset: const Offset(0, 2))],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 14),
+                  child: Text(
+                    '$_currentAuthorName 的视频',
+                    style: TextStyle(
+                      color: isDark ? Colors.white.withOpacity(0.9) : Colors.black87,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ),
+              // 蓝色搜索按钮（刷新）
+              GestureDetector(
+                onTap: _onRefresh,
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  margin: const EdgeInsets.only(right: 4),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF2E7AE6) : const Color(0xFF3A7BF7),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.refresh, color: Colors.white, size: 20),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -925,7 +999,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     });
   }
 
-  /// 列表模式的单个视频项
+  /// 列表模式的单个视频项（与批量页保持一致）
   Widget _buildVideoListItem(VideoInfo video, AppState appState, int totalCount) {
     final isSelected = _selectedIds.contains(video.id);
     
@@ -937,66 +1011,43 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           padding: EdgeInsets.all(12),
           child: Row(
             children: [
-              // 缩略图 + 时长 + 选中标记
+              // 封面图（与批量页一致：120x68）
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  width: 120, 
-                  height: 80,
+                  width: 120,
+                  height: 68,
                   color: Colors.grey[800],
-                  child: video.cover != null
-                    ? Stack(
-                        children: [
-                          Center(
-                            child: Image.network(video.cover!, width: 120, height: 80, fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Icon(Icons.video_file, size: 32, color: Colors.white54)),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (video.cover != null)
+                        Image.network(
+                          video.cover!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Icon(Icons.video_library, color: Colors.grey),
+                        ),
+                      if (appState.privacyMode)
+                        BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                          child: Container(color: Colors.transparent),
+                        ),
+                      // 选中标记（与批量页一致）
+                      if (isSelected)
+                        Positioned(top: 4, left: 4, child: Icon(Icons.check_circle, color: Colors.blue, size: 20)),
+                      // 时长标签
+                      if (video.duration != null)
+                        Positioned(
+                          right: 4,
+                          bottom: 4,
+                          child: Container(
+                            padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                            decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(4)),
+                            child: Text(video.duration!, style: TextStyle(color: Colors.white, fontSize: 10)),
                           ),
-                          // 毛玻璃模糊遮罩
-                          if (appState.privacyMode)
-                            Positioned.fill(
-                              child: ClipRect(
-                                child: BackdropFilter(
-                                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                                  child: Container(
-                                    color: Colors.black.withOpacity(0.3),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          // 选中标记（左上角）
-                          if (isSelected)
-                            Positioned(
-                              top: 4,
-                              left: 4,
-                              child: Container(
-                                padding: EdgeInsets.all(2),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(Icons.check, size: 12, color: Colors.white),
-                              ),
-                            ),
-                          // 时长标签（右下角）
-                          if (video.duration != null)
-                            Positioned(
-                              bottom: 4,
-                              right: 4,
-                              child: Container(
-                                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.black87,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  video.duration!,
-                                  style: TextStyle(color: Colors.white, fontSize: 10),
-                                ),
-                              ),
-                            ),
-                        ],
-                      )
-                    : Icon(Icons.video_file, size: 32, color: Colors.white54),
+                        ),
+                    ],
+                  ),
                 ),
               ),
               SizedBox(width: 12),
@@ -1005,19 +1056,36 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      video.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 14),
-                    ),
-                    if (video.author != null) ...[
-                      SizedBox(height: 4),
-                      Text(
-                        video.author!,
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                    ],
+                    Text(video.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14)),
+                    SizedBox(height: 4),
+                    // 作者（有 authorId 可点击跳转，否则只显示）
+                    if (video.author != null && video.author!.isNotEmpty)
+                      video.authorId != null && video.authorId!.isNotEmpty
+                        ? GestureDetector(
+                            onTap: () => _enterAuthorPageMode(AuthorInfo(id: video.authorId!, name: video.author!, profileUrl: '')),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.person_outline, size: 14, color: Colors.blue),
+                                SizedBox(width: 2),
+                                Text(
+                                  video.author!,
+                                  style: TextStyle(fontSize: 12, color: Colors.blue),
+                                ),
+                              ],
+                            ),
+                          )
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.person_outline, size: 14, color: Colors.grey),
+                              SizedBox(width: 2),
+                              Text(
+                                video.author!,
+                                style: TextStyle(fontSize: 12, color: Colors.grey),
+                              ),
+                            ],
+                          ),
                   ],
                 ),
               ),
@@ -1108,13 +1176,38 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12),
                   ),
-                  if (video.author != null) ...[
-                    SizedBox(height: 2),
-                    Text(
-                      video.author!,
-                      style: TextStyle(fontSize: 10, color: Colors.grey),
-                    ),
-                  ],
+                  // 作者（有 authorId 可点击跳转，否则只显示）
+                  if (video.author != null && video.author!.isNotEmpty)
+                    video.authorId != null && video.authorId!.isNotEmpty
+                      ? GestureDetector(
+                          onTap: () => _enterAuthorPageMode(AuthorInfo(id: video.authorId!, name: video.author!, profileUrl: '')),
+                          child: Padding(
+                            padding: EdgeInsets.fromLTRB(0, 2, 8, 0),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.person_outline, size: 12, color: Colors.blue),
+                                SizedBox(width: 2),
+                                Text(
+                                  video.author!,
+                                  style: TextStyle(fontSize: 10, color: Colors.blue),
+                                ),
+                                Icon(Icons.chevron_right, size: 12, color: Colors.blue),
+                              ],
+                            ),
+                          ),
+                        )
+                      : Padding(
+                          padding: EdgeInsets.fromLTRB(0, 2, 8, 0),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.person_outline, size: 12, color: Colors.grey),
+                              SizedBox(width: 2),
+                              Text(video.author!, style: TextStyle(fontSize: 10, color: Colors.grey)),
+                            ],
+                          ),
+                        ),
                 ],
               ),
             ),

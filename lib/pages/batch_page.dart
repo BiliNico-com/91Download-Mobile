@@ -35,6 +35,9 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   List<VideoInfo> _authorVideos = [];
   int _authorCurrentPage = 0;
   bool _authorHasMore = true;
+  
+  // 进入作者主页前的滚动位置（返回时恢复）
+  double _savedScrollOffset = 0;
 
   // ─── 新增：滚动折叠比例 ───
   double _collapseRatio = 0.0;
@@ -129,6 +132,9 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     final crawler = appState.crawler;
     if (crawler == null) return;
     
+    // 保存当前滚动位置
+    _savedScrollOffset = _scrollController.offset;
+    
     setState(() {
       _isAuthorPageMode = true;
       _currentAuthorId = authorId;
@@ -136,13 +142,17 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       _authorVideos.clear();
       _authorCurrentPage = 0;
       _authorHasMore = true;
+      _selectedIds.clear();
     });
     
+    // 滚动到顶部加载作者视频
+    _scrollController.jumpTo(0);
     await _loadMoreAuthorVideos();
   }
   
   /// 退出作者主页模式
   void _exitAuthorPageMode() {
+    final savedOffset = _savedScrollOffset;
     setState(() {
       _isAuthorPageMode = false;
       _authorVideos.clear();
@@ -150,7 +160,15 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       _currentAuthorName = '';
       _selectedIds.clear();
     });
-    _scrollToTop();
+    // 恢复进入前的滚动位置
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scrollController.hasClients) {
+        final maxOffset = _scrollController.position.maxScrollExtent;
+        if (savedOffset <= maxOffset) {
+          _scrollController.jumpTo(savedOffset);
+        }
+      }
+    });
   }
   
   /// 加载更多作者视频
@@ -265,14 +283,15 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           extendBodyBehindAppBar: true,
           body: Stack(
             children: [
-              CustomScrollView(
+              RefreshIndicator(
+                onRefresh: _onRefresh,
+                color: Colors.blue,
+                backgroundColor: Colors.white,
+                displacement: 40,
+                child: CustomScrollView(
                 controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
-                  // ✅ 下拉刷新（只在顶部时触发）
-                  CupertinoSliverRefreshControl(
-                    onRefresh: _onRefresh,
-                  ),
-                  
                   // ══════════════════════════════════════
                   //  自定义 Header（替代原 SliverAppBar）
                   // ══════════════════════════════════════
@@ -331,6 +350,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     child: SizedBox(height: 100),
                   ),
                 ],
+                ),
               ),
               // 悬浮覆盖层
               ..._buildOverlays(appState),
@@ -363,7 +383,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
 
   List<Widget> _buildOverlays(AppState appState) {
     return [
-      _buildBottomPageNavigation(),
+      // 页码跳转（作者主页模式隐藏）
+      if (!_isAuthorPageMode) _buildBottomPageNavigation(),
       if (_showBackToTop && appState.showBackToTop)
         Positioned(
           bottom: (appState.backToTopPosition == 'right' && _selectedIds.isNotEmpty) ? 160.0 : 80.0,
