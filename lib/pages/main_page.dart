@@ -18,6 +18,10 @@ class _MainPageState extends State<MainPage> {
   int _currentIndex = 0;
   late PageController _pageController;
   
+  // 双击退出相关
+  DateTime? _lastPressedTime;
+  static const _exitTimeout = Duration(seconds: 2);
+  
   final _pageNames = ['批量爬取', '搜索', '下载', '设置'];
   final _pages = const [
     BatchPage(),
@@ -30,9 +34,6 @@ class _MainPageState extends State<MainPage> {
   void initState() {
     super.initState();
     _pageController = PageController();
-    // 记录初始页面
-    Future.microtask(() {
-    });
   }
   
   @override
@@ -59,46 +60,83 @@ class _MainPageState extends State<MainPage> {
       curve: Curves.easeInOut,
     );
   }
+  
+  // 处理返回键
+  Future<bool> _handleWillPop() async {
+    // 如果在非第一个页面，返回到第一个页面
+    if (_currentIndex != 0) {
+      goToPage(0);
+      return false;
+    }
+    
+    // 在第一个页面，检查双击退出
+    final now = DateTime.now();
+    if (_lastPressedTime == null || now.difference(_lastPressedTime!) > _exitTimeout) {
+      // 第一次点击，显示提示
+      _lastPressedTime = now;
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('再按一次退出程序'),
+          duration: _exitTimeout,
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(
+            bottom: MediaQuery.of(context).size.height - 100,
+            left: 16,
+            right: 16,
+          ),
+        ),
+      );
+      return false;
+    }
+    
+    // 第二次点击，退出程序
+    return true;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: PageView(
-        controller: _pageController,
-        onPageChanged: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        children: _pages,
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          goToPage(index);
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.download_rounded),
-            selectedIcon: Icon(Icons.download),
-            label: '批量',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.search_rounded),
-            selectedIcon: Icon(Icons.search),
-            label: '搜索',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.history_rounded),
-            selectedIcon: Icon(Icons.history),
-            label: '已下载',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_rounded),
-            selectedIcon: Icon(Icons.settings),
-            label: '设置',
-          ),
-        ],
+    return WillPopScope(
+      onWillPop: _handleWillPop,
+      child: Scaffold(
+        body: PageView(
+          controller: _pageController,
+          physics: const NeverScrollableScrollPhysics(), // 禁用侧滑切换页面
+          onPageChanged: (index) {
+            setState(() {
+              _currentIndex = index;
+            });
+          },
+          children: _pages,
+        ),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _currentIndex,
+          onDestinationSelected: (index) {
+            goToPage(index);
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.download_rounded),
+              selectedIcon: Icon(Icons.download),
+              label: '批量',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.search_rounded),
+              selectedIcon: Icon(Icons.search),
+              label: '搜索',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.history_rounded),
+              selectedIcon: Icon(Icons.history),
+              label: '已下载',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.settings_rounded),
+              selectedIcon: Icon(Icons.settings),
+              label: '设置',
+            ),
+          ],
+        ),
       ),
     );
   }
