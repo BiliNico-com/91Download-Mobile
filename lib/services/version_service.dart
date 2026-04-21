@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// 版本信息
 class VersionInfo {
@@ -38,7 +39,7 @@ class VersionInfo {
 class VersionService {
   static const String _versionUrl = 'https://raw.githubusercontent.com/BiliNico-com/91Download-Mobile/main/version.json';
   static const String _currentVersion = '1.0.5';
-  static const int _currentBuild = 300;  // 自动更新：git rev-list --count HEAD
+  static const int _currentBuild = 310;  // 自动更新：git rev-list --count HEAD
 
   static String get currentVersion => _currentVersion;
   static int get currentBuild => _currentBuild;
@@ -85,6 +86,18 @@ class VersionService {
   /// 下载并安装APK
   Future<bool> downloadAndInstall(VersionInfo version, void Function(double)? onProgress) async {
     try {
+      // 检查并请求安装权限
+      if (Platform.isAndroid) {
+        final status = await Permission.requestInstallPackages.status;
+        if (!status.isGranted) {
+          final result = await Permission.requestInstallPackages.request();
+          if (!result.isGranted) {
+            debugPrint('安装权限被拒绝');
+            return false;
+          }
+        }
+      }
+      
       // 获取下载目录
       final dir = await getExternalStorageDirectory();
       if (dir == null) return false;
