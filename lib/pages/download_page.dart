@@ -1044,7 +1044,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         setState(() => _currentVolume = volume);
       }
     });
-    _currentVolume = VolumeController().value;
+    // 异步获取初始音量
+    VolumeController().getVolume().then((volume) {
+      if (mounted) {
+        setState(() => _currentVolume = volume);
+      }
+    });
     _initializePlayer();
   }
   
