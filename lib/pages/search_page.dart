@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import '../services/app_state.dart';
+import '../services/followed_authors_service.dart';
 import '../models/video_info.dart';
 import '../utils/logger.dart';
 
@@ -334,7 +335,14 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             _isAuthorPageMode
-                                              ? Text('作者: $_currentAuthorName', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87))
+                                              ? Row(
+                                                  children: [
+                                                    Text('作者: $_currentAuthorName', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87)),
+                                                    SizedBox(width: 12),
+                                                    // 关注按钮
+                                                    _buildFollowButton(appState),
+                                                  ],
+                                                )
                                               : Text('搜索', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87)),
                                             Text(
                                               _isAuthorPageMode 
@@ -416,6 +424,52 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           ),
         ),
     ];
+  }
+
+  /// 构建关注按钮
+  Widget _buildFollowButton(AppState appState) {
+    final isFollowed = appState.followedAuthorsService.followedList
+        .any((a) => a.authorId == _currentAuthorId);
+    
+    return GestureDetector(
+      onTap: () async {
+        if (isFollowed) {
+          await appState.followedAuthorsService.unfollow(_currentAuthorId);
+        } else {
+          await appState.followedAuthorsService.follow(_currentAuthorId, _currentAuthorName);
+        }
+        if (mounted) setState(() {});
+      },
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isFollowed ? Colors.red.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isFollowed ? Colors.red : Colors.blue,
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isFollowed ? Icons.favorite : Icons.favorite_border,
+              size: 16,
+              color: isFollowed ? Colors.red : Colors.blue,
+            ),
+            SizedBox(width: 4),
+            Text(
+              isFollowed ? '已关注' : '关注',
+              style: TextStyle(
+                fontSize: 13,
+                color: isFollowed ? Colors.red : Colors.blue,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// AppBar右侧操作按钮

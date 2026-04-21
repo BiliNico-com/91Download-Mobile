@@ -1071,17 +1071,65 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
                           child: Icon(Icons.arrow_back, size: 20, color: Colors.blue),
                         ),
                       ),
-                    // 左侧：展开时显示标题，收起时根据模式显示
+                    // 左侧：展开时显示标题+关注按钮（作者模式），收起时根据模式显示
                     collapseRatio < 0.5
                         ? Expanded(
-                            child: Text(
-                              displayTitle,
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w600,
-                                color: textColor,
-                              ),
-                            ),
+                            child: isAuthorPageMode
+                                ? Row(
+                                    children: [
+                                      Text(
+                                        displayTitle,
+                                        style: TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w600,
+                                          color: textColor,
+                                        ),
+                                      ),
+                                      SizedBox(width: 8),
+                                      // 展开状态下也显示关注按钮
+                                      if (onFollowToggle != null)
+                                        GestureDetector(
+                                          onTap: onFollowToggle,
+                                          child: Container(
+                                            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              color: isFollowed ? Colors.red.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
+                                              borderRadius: BorderRadius.circular(16),
+                                              border: Border.all(
+                                                color: isFollowed ? Colors.red : Colors.blue,
+                                                width: 1,
+                                              ),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  isFollowed ? Icons.favorite : Icons.favorite_border,
+                                                  size: 16,
+                                                  color: isFollowed ? Colors.red : Colors.blue,
+                                                ),
+                                                SizedBox(width: 4),
+                                                Text(
+                                                  isFollowed ? '已关注' : '关注',
+                                                  style: TextStyle(
+                                                    fontSize: 13,
+                                                    color: isFollowed ? Colors.red : Colors.blue,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  )
+                                : Text(
+                                    displayTitle,
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w600,
+                                      color: textColor,
+                                    ),
+                                  ),
                           )
                         // 收起时：作者模式显示作者名+关注按钮，非作者模式显示下拉选择器
                         : isAuthorPageMode
@@ -1097,7 +1145,7 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
                                       ),
                                     ),
                                     SizedBox(width: 8),
-                                    // 关注按钮
+                                    // 收起状态下的关注按钮
                                     if (onFollowToggle != null)
                                       GestureDetector(
                                         onTap: onFollowToggle,
