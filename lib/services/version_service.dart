@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 /// 版本信息
@@ -103,18 +102,6 @@ class VersionService {
   /// 下载并安装APK
   Future<bool> downloadAndInstall(VersionInfo version, void Function(double)? onProgress) async {
     try {
-      // 检查并请求安装权限
-      if (Platform.isAndroid) {
-        final status = await Permission.requestInstallPackages.status;
-        if (!status.isGranted) {
-          final result = await Permission.requestInstallPackages.request();
-          if (!result.isGranted) {
-            debugPrint('安装权限被拒绝');
-            return false;
-          }
-        }
-      }
-      
       // 获取下载目录
       final dir = await getExternalStorageDirectory();
       if (dir == null) return false;
@@ -124,8 +111,8 @@ class VersionService {
       
       // 如果文件已存在，直接安装
       if (await file.exists()) {
-        await OpenFilex.open(filePath);
-        return true;
+        final result = await OpenFilex.open(filePath);
+        return result.type == ResultType.done;
       }
       
       // 下载APK
@@ -139,9 +126,9 @@ class VersionService {
         },
       );
       
-      // 安装APK
-      await OpenFilex.open(filePath);
-      return true;
+      // 安装APK - 系统会自动处理安装权限请求
+      final result = await OpenFilex.open(filePath);
+      return result.type == ResultType.done;
     } catch (e) {
       debugPrint('下载更新失败: $e');
       return false;
