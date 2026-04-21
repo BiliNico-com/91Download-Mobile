@@ -105,7 +105,6 @@ jobs:
         }
 
         dependencies {
-            implementation "androidx.core:core-ktx:1.12.0"
         }
         EOF
 
@@ -144,7 +143,7 @@ jobs:
         include ":app"
         EOF
 
-        # 修复 build.gradle (根目录) - 添加 core-ktx 依赖注入
+        # 修复 build.gradle (根目录)
         cat > android/build.gradle << 'EOF'
         allprojects {
             repositories {
@@ -154,19 +153,6 @@ jobs:
         }
 
         rootProject.buildDir = '../build'
-
-        // 为所有子项目添加 core-ktx 依赖，修复 screen_brightness_android 的 toUri 错误
-        subprojects { subproject ->
-            afterEvaluate {
-                def hasAndroid = subproject.plugins.hasPlugin('com.android.library') || 
-                                 subproject.plugins.hasPlugin('com.android.application')
-                if (hasAndroid) {
-                    subproject.dependencies {
-                        implementation 'androidx.core:core-ktx:1.12.0'
-                    }
-                }
-            }
-        }
 
         subprojects {
             project.buildDir = "${rootProject.buildDir}/${project.name}"

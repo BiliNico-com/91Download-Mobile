@@ -71,8 +71,3 @@ android {
 flutter {
     source '../..'
 }
-
-dependencies {
-    // 修复 screen_brightness_android 的 toUri 编译错误
-    implementation "androidx.core:core-ktx:1.12.0"
-}

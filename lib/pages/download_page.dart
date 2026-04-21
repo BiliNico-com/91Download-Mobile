@@ -4,11 +4,11 @@ import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:screen_brightness/screen_brightness.dart';
 import 'package:volume_controller/volume_controller.dart';
 import 'dart:io';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
+import '../services/brightness_service.dart';
 import '../models/video_info.dart' show VideoInfo;
 import '../utils/logger.dart';
 
@@ -1062,8 +1062,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       
       // 保存并初始化当前屏幕亮度
       try {
-        _savedBrightness = await ScreenBrightness().current;
+        _savedBrightness = await BrightnessService.getBrightness();
         _currentBrightness = _savedBrightness;
+        await BrightnessService.saveBrightness();
       } catch (_) {}
       
       _chewieController = ChewieController(
@@ -1110,7 +1111,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   void dispose() {
     // 恢复屏幕亮度
     try {
-      ScreenBrightness().resetScreenBrightness();
+      BrightnessService.restoreBrightness();
     } catch (_) {}
     _videoPlayerController.dispose();
     _chewieController?.dispose();
@@ -1261,7 +1262,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           if (_verticalDragType == 'brightness') {
             _currentBrightness = newValue;
             try {
-              ScreenBrightness().setScreenBrightness(newValue);
+              BrightnessService.setBrightness(newValue);
             } catch (_) {}
           } else {
             _currentVolume = newValue;
