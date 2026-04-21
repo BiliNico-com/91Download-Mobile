@@ -1350,7 +1350,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                     ),
                     SizedBox(height: 8),
                     Text(
-                      '${(_verticalDragType == 'brightness' ? _currentBrightness : _currentVolume * 100).round()}%',
+                      '${((_verticalDragType == 'brightness' ? _currentBrightness : _currentVolume) * 100).round()}%',
                       style: TextStyle(color: Colors.white, fontSize: 13),
                     ),
                   ],
