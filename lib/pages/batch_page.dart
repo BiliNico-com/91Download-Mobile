@@ -344,15 +344,18 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                       privacyMode: appState.privacyMode,
                       isAuthorPageMode: _isAuthorPageMode,
                       authorName: _currentAuthorName,
-                      isFollowed: _isAuthorPageMode && appState.followedAuthorsService.followedList
-                          .any((a) => a.authorId == _currentAuthorId),
+                      // 使用 isFollowedSync 同步方法快速判断关注状态
+                      isFollowed: _isAuthorPageMode && appState.followedAuthorsService.isFollowedSync(_currentAuthorId),
                       onBack: _isAuthorPageMode ? _exitAuthorPageMode : null,
                       onFollowToggle: _isAuthorPageMode ? () async {
-                        if (appState.followedAuthorsService.followedList.any((a) => a.authorId == _currentAuthorId)) {
+                        // 使用 isFollowedSync 判断当前状态
+                        final currentlyFollowed = appState.followedAuthorsService.isFollowedSync(_currentAuthorId);
+                        if (currentlyFollowed) {
                           await appState.followedAuthorsService.unfollow(_currentAuthorId);
                         } else {
                           await appState.followedAuthorsService.follow(_currentAuthorId, _currentAuthorName);
                         }
+                        // 刷新 UI（notifyListeners 已在 follow/unfollow 中调用，这里确保 setState 触发重建）
                         if (mounted) setState(() {});
                       } : null,
                       onTypeChanged: (v) async {

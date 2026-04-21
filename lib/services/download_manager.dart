@@ -532,21 +532,24 @@ class DownloadManager extends ChangeNotifier {
     }
   }
   
-  /// 取消下载
+  /// 取消下载（删除任务）
   void cancelTask(String taskId) {
     final task = _taskMap[taskId];
     if (task != null) {
-      // ✅ 如果任务正在下载中，通知爬虫停止并释放槽位
+      // 如果任务正在下载中，通知爬虫停止并释放槽位
       if (task.status == DownloadStatus.downloading) {
         _crawler?.stop();
         // finally 块会处理 _activeDownloads-- 和 reset()
       }
-      // 从等待队列中移除
+      // 从所有列表中移除
       _waitingQueue.remove(task);
       _tasks.remove(task);
       _taskMap.remove(taskId);
+      // 异步删除数据库记录
       _deleteTaskFromDb(taskId);
+      // 通知 UI 更新
       notifyListeners();
+      Logger().logSync('Download', '任务已删除: $taskId, 剩余任务数: ${_tasks.length}');
     }
   }
   

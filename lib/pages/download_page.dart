@@ -469,7 +469,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   /// 删除选中任务（带确认对话框，询问是否删除本地文件）
   Future<void> _deleteSelectedWithConfirm(AppState appState) async {
     final count = _selectedIds.length;
-    bool deleteFile = true;  // ✅ 默认勾选删除文件
+    bool deleteFile = true;  // 默认勾选删除文件
     
     final result = await showDialog<Map<String, bool>>(
       context: context,
@@ -517,17 +517,19 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
       ),
     );
     
-    print('删除对话框返回结果: $result');
-    
     if (result != null && result['deleteFile'] != null) {
       final shouldDeleteFile = result['deleteFile']!;
       final idsToDelete = _selectedIds.toList();
+      int deletedCount = 0;
       
-      print('准备删除 ${idsToDelete.length} 个任务, 删除文件: $shouldDeleteFile');
+      // 先清空选择状态，防止 UI 混乱
+      setState(() {
+        _selectedIds.clear();
+        _isCompletedSelectMode = false;
+      });
       
       for (final id in idsToDelete) {
         final task = appState.downloadManager.getTask(id);
-        print('任务 $id: ${task != null ? "存在" : "不存在"}');
         
         // 删除本地文件
         if (shouldDeleteFile && task != null && task.filePath != null && task.filePath!.isNotEmpty) {
@@ -535,12 +537,9 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             final file = File(task.filePath!);
             if (await file.exists()) {
               await file.delete();
-              print('已删除文件: ${task.filePath}');
-            } else {
-              print('文件不存在: ${task.filePath}');
             }
           } catch (e) {
-            print('删除文件失败: $e');
+            // 忽略删除文件错误
           }
         }
         
@@ -548,30 +547,22 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
         if (appState.crawler != null) {
           try {
             await appState.crawler!.deleteDownloadHistory(id);
-            print('已删除历史记录: $id');
           } catch (e) {
-            print('删除历史记录失败: $e');
+            // 忽略删除历史记录错误
           }
         }
         
-        // 删除任务
+        // 删除任务（会触发 notifyListeners 更新 UI）
         appState.downloadManager.cancelTask(id);
-        print('已取消任务: $id');
+        deletedCount++;
       }
-      
-      setState(() {
-        _selectedIds.clear();
-        _isCompletedSelectMode = false;
-      });
       
       // 显示删除成功提示
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已删除 ${idsToDelete.length} 个记录')),
+          SnackBar(content: Text('已删除 $deletedCount 个记录')),
         );
       }
-    } else {
-      print('删除操作被取消或返回值异常');
     }
   }
   

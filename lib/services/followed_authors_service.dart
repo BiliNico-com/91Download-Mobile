@@ -129,6 +129,12 @@ class FollowedAuthorsService extends ChangeNotifier {
     }
   }
 
+  /// 同步检查作者是否已关注（仅从缓存判断，可能不准确但快速）
+  /// 用于 UI 快速判断，如果需要准确结果请使用 isFollowed()
+  bool isFollowedSync(String authorId) {
+    return _followedCache[authorId] ?? false;
+  }
+
   /// 检查作者是否已关注
   Future<bool> isFollowed(String authorId) async {
     // 先检查缓存
