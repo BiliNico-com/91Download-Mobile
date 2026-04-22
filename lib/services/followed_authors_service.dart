@@ -123,6 +123,9 @@ class FollowedAuthorsService extends ChangeNotifier {
         _followedCache[author.authorId] = true;
       }
       
+      debugPrint('[FollowedAuthors] 加载关注列表完成，共 ${_followedList.length} 个作者');
+      debugPrint('[FollowedAuthors] 缓存: $_followedCache');
+      
       notifyListeners();
     } catch (e) {
       debugPrint('[FollowedAuthors] 加载关注列表失败: $e');
@@ -132,7 +135,9 @@ class FollowedAuthorsService extends ChangeNotifier {
   /// 同步检查作者是否已关注（仅从缓存判断，可能不准确但快速）
   /// 用于 UI 快速判断，如果需要准确结果请使用 isFollowed()
   bool isFollowedSync(String authorId) {
-    return _followedCache[authorId] ?? false;
+    final result = _followedCache[authorId] ?? false;
+    debugPrint('[FollowedAuthors] isFollowedSync($authorId) = $result, 缓存大小: ${_followedCache.length}');
+    return result;
   }
 
   /// 检查作者是否已关注

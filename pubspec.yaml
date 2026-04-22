@@ -2,7 +2,7 @@ name: download_91
 description: 91Download 移动端视频下载器
 
 publish_to: 'none'
-version: 1.0.5+315
+version: 1.0.5+316
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

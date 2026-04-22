@@ -505,6 +505,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   /// 构建作者行（列表模式）- 不包含关注按钮，关注按钮在作者主页
   Widget _buildAuthorRowWithFollow(VideoInfo video, AppState appState) {
     final isFollowed = appState.followedAuthorsService.isFollowedSync(video.authorId ?? '');
+    debugPrint('[BatchPage] 作者: ${video.author}, authorId: ${video.authorId}, 已关注: $isFollowed');
     return GestureDetector(
       onTap: () => _enterAuthorPageMode(video.authorId!, video.author!),
       child: Row(
