@@ -157,6 +157,7 @@ class AppState extends ChangeNotifier {
     maxConcurrentTasks = prefs.getInt('maxConcurrentTasks') ?? 2;
     maxConcurrentSegments = prefs.getInt('maxConcurrentSegments') ?? 32;
     appLockEnabled = prefs.getBool('appLockEnabled') ?? false;
+    privacyMode = prefs.getBool('privacyMode') ?? false;
     
     notifyListeners();
   }
@@ -179,6 +180,7 @@ class AppState extends ChangeNotifier {
     await prefs.setInt('maxConcurrentTasks', maxConcurrentTasks);
     await prefs.setInt('maxConcurrentSegments', maxConcurrentSegments);
     await prefs.setBool('appLockEnabled', appLockEnabled);
+    await prefs.setBool('privacyMode', privacyMode);
   }
 
   // 请求存储权限 - 适配 Android 13+ 的细粒度媒体权限
@@ -424,6 +426,7 @@ class AppState extends ChangeNotifier {
   // 切换隐私模式
   void togglePrivacyMode() {
     privacyMode = !privacyMode;
+    _saveSettings();
     notifyListeners();
   }
   

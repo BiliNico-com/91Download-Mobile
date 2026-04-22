@@ -504,6 +504,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
 
   /// 构建作者行（列表模式）- 不包含关注按钮，关注按钮在作者主页
   Widget _buildAuthorRowWithFollow(VideoInfo video, AppState appState) {
+    final isFollowed = appState.followedAuthorsService.isFollowedSync(video.authorId ?? '');
     return GestureDetector(
       onTap: () => _enterAuthorPageMode(video.authorId!, video.author!),
       child: Row(
@@ -515,6 +516,17 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
             video.author!,
             style: TextStyle(fontSize: 12, color: Colors.blue),
           ),
+          if (isFollowed) ...[
+            SizedBox(width: 4),
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.8),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Text('已关注', style: TextStyle(fontSize: 9, color: Colors.white)),
+            ),
+          ],
         ],
       ),
     );
@@ -632,6 +644,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     final isSelected = _selectedIds.contains(video.id);
     final hasAuthor = video.author != null && video.author!.isNotEmpty &&
                       video.authorId != null && video.authorId!.isNotEmpty;
+    final isFollowed = hasAuthor && appState.followedAuthorsService.isFollowedSync(video.authorId!);
     
     return GestureDetector(
       onTap: () {
@@ -706,6 +719,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                               video.author!.length > 8 ? video.author!.substring(0, 8) + '...' : video.author!,
                               style: TextStyle(color: Colors.white, fontSize: 9),
                             ),
+                            if (isFollowed) ...[
+                              SizedBox(width: 3),
+                              Text('❤️', style: TextStyle(fontSize: 8)),
+                            ],
                           ],
                         ),
                       ),
@@ -744,6 +761,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
 
   /// 构建网格模式下的作者行（不包含关注按钮）
   Widget _buildGridAuthorRow(VideoInfo video, AppState appState) {
+    final isFollowed = appState.followedAuthorsService.isFollowedSync(video.authorId ?? '');
     return GestureDetector(
       onTap: () => _enterAuthorPageMode(video.authorId!, video.author!),
       child: Padding(
@@ -757,6 +775,17 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
               video.author!.length > 8 ? video.author!.substring(0, 8) + '..' : video.author!,
               style: TextStyle(fontSize: 10, color: Colors.blue),
             ),
+            if (isFollowed) ...[
+              SizedBox(width: 4),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.8),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text('已关注', style: TextStyle(fontSize: 8, color: Colors.white)),
+              ),
+            ],
             Icon(Icons.chevron_right, size: 12, color: Colors.blue),
           ],
         ),

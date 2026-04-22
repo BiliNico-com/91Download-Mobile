@@ -1147,19 +1147,35 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     // 作者（有 authorId 可点击跳转，否则只显示）
                     if (video.author != null && video.author!.isNotEmpty)
                       video.authorId != null && video.authorId!.isNotEmpty
-                        ? GestureDetector(
-                            onTap: () => _enterAuthorPageMode(AuthorInfo(id: video.authorId!, name: video.author!, profileUrl: '')),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.person_outline, size: 14, color: Colors.blue),
-                                SizedBox(width: 2),
-                                Text(
-                                  video.author!,
-                                  style: TextStyle(fontSize: 12, color: Colors.blue),
+                        ? Builder(
+                            builder: (context) {
+                              final isFollowed = appState.followedAuthorsService.isFollowedSync(video.authorId!);
+                              return GestureDetector(
+                                onTap: () => _enterAuthorPageMode(AuthorInfo(id: video.authorId!, name: video.author!, profileUrl: '')),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.person_outline, size: 14, color: Colors.blue),
+                                    SizedBox(width: 2),
+                                    Text(
+                                      video.author!,
+                                      style: TextStyle(fontSize: 12, color: Colors.blue),
+                                    ),
+                                    if (isFollowed) ...[
+                                      SizedBox(width: 4),
+                                      Container(
+                                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.withOpacity(0.8),
+                                          borderRadius: BorderRadius.circular(3),
+                                        ),
+                                        child: Text('已关注', style: TextStyle(fontSize: 9, color: Colors.white)),
+                                      ),
+                                    ],
+                                  ],
                                 ),
-                              ],
-                            ),
+                              );
+                            },
                           )
                         : Row(
                             mainAxisSize: MainAxisSize.min,
@@ -1265,23 +1281,39 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                   // 作者（有 authorId 可点击跳转，否则只显示）
                   if (video.author != null && video.author!.isNotEmpty)
                     video.authorId != null && video.authorId!.isNotEmpty
-                      ? GestureDetector(
-                          onTap: () => _enterAuthorPageMode(AuthorInfo(id: video.authorId!, name: video.author!, profileUrl: '')),
-                          child: Padding(
-                            padding: EdgeInsets.fromLTRB(0, 2, 8, 0),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.person_outline, size: 12, color: Colors.blue),
-                                SizedBox(width: 2),
-                                Text(
-                                  video.author!,
-                                  style: TextStyle(fontSize: 10, color: Colors.blue),
+                      ? Builder(
+                          builder: (context) {
+                            final isFollowed = appState.followedAuthorsService.isFollowedSync(video.authorId!);
+                            return GestureDetector(
+                              onTap: () => _enterAuthorPageMode(AuthorInfo(id: video.authorId!, name: video.author!, profileUrl: '')),
+                              child: Padding(
+                                padding: EdgeInsets.fromLTRB(0, 2, 8, 0),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.person_outline, size: 12, color: Colors.blue),
+                                    SizedBox(width: 2),
+                                    Text(
+                                      video.author!,
+                                      style: TextStyle(fontSize: 10, color: Colors.blue),
+                                    ),
+                                    if (isFollowed) ...[
+                                      SizedBox(width: 3),
+                                      Container(
+                                        padding: EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.withOpacity(0.8),
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
+                                        child: Text('已关注', style: TextStyle(fontSize: 7, color: Colors.white)),
+                                      ),
+                                    ],
+                                    Icon(Icons.chevron_right, size: 12, color: Colors.blue),
+                                  ],
                                 ),
-                                Icon(Icons.chevron_right, size: 12, color: Colors.blue),
-                              ],
-                            ),
-                          ),
+                              ),
+                            );
+                          },
                         )
                       : Padding(
                           padding: EdgeInsets.fromLTRB(0, 2, 8, 0),
