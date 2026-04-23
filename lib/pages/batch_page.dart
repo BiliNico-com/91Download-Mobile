@@ -754,6 +754,22 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                       ],
                     ),
                   ),
+                // 上传时间
+                if (video.uploadDate != null && video.uploadDate!.isNotEmpty)
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(8, 0, 8, 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.access_time, size: 10, color: Colors.grey),
+                        SizedBox(width: 2),
+                        Text(
+                          video.uploadDate!,
+                          style: TextStyle(fontSize: 9, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
           ],
         ),
       ),
