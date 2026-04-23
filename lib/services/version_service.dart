@@ -6,16 +6,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 class VersionInfo {
   final String version;
   final int buildNumber;
-  final String? downloadUrl;
-  final String? releaseDate;
-  final List<String>? releaseNotes;
+  final String downloadUrl;
+  final String releaseDate;
+  final List<String> releaseNotes;
 
   VersionInfo({
     required this.version,
     required this.buildNumber,
-    this.downloadUrl,
-    this.releaseDate,
-    this.releaseNotes,
+    required this.downloadUrl,
+    this.releaseDate = '',
+    this.releaseNotes = const [],
   });
 
   @override
