@@ -266,10 +266,10 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
-                        Colors.black.withValues(alpha: 0.6),
+                        Colors.black.withOpacity(0.6),
                         Colors.transparent,
                         Colors.transparent,
-                        Colors.black.withValues(alpha: 0.6),
+                        Colors.black.withOpacity(0.6),
                       ],
                       stops: [0.0, 0.15, 0.85, 1.0],
                     ),
