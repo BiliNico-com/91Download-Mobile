@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -139,19 +140,21 @@ class VersionService {
 
   /// 从 GitHub Release API 获取最新版本
   static Future<VersionInfo?> _fetchLatestRelease() async {
-    final client = HttpClient();
     try {
-      final uri = Uri.https(
-        'api.github.com', '/repos/$_owner/$_repo/releases/latest',
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 15),
+        headers: {'User-Agent': '91Download-App/$fullVersion'},
+      ));
+
+      final response = await dio.get(
+        'https://api.github.com/repos/$_owner/$_repo/releases/latest',
       );
-      
-      final request = await client.getUrl(uri);
-      request.headers.set('User-Agent', '91Download-App/$fullVersion');
-      final response = await request.close();
-      
+
       if (response.statusCode == 200) {
-        final body = await utf8.decoder.bind(response).join();
-        return _parseRelease(body);
+        return _parseRelease(response.data is String
+            ? response.data as String
+            : jsonEncode(response.data));
       } else if (response.statusCode == 404) {
         debugPrint('[VersionService] No releases found (404)');
         return null;
@@ -159,12 +162,13 @@ class VersionService {
         debugPrint('[VersionService] API error: ${response.statusCode}');
         return null;
       }
+    } on DioException catch (e) {
+      debugPrint('[VersionService] network error (${e.type}): ${e.message}');
+      return null;
     } catch (e, stackTrace) {
       debugPrint('[VersionService] fetch error: $e');
       debugPrint('[VersionService] $stackTrace');
       return null;
-    } finally {
-      client.close();
     }
   }
 
@@ -242,42 +246,29 @@ class VersionService {
   /// 下载并安装更新
   static Future<bool> downloadAndInstall(VersionInfo version, void Function(double) onProgress) async {
     try {
-      final client = HttpClient();
-      final uri = Uri.parse(version.downloadUrl);
-      
-      final request = await client.getUrl(uri);
-      final response = await request.close();
-      
-      if (response.statusCode != 200) {
-        debugPrint('[VersionService] Download failed: ${response.statusCode}');
-        return false;
-      }
-      
-      // 获取文件大小
-      final contentLength = response.contentLength ?? -1;
-      
-      // 写入临时文件
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 60),
+      ));
+
       final tempDir = await Directory.systemTemp.createTemp('update_');
       final apkFile = File('${tempDir.path}/update.apk');
-      final sink = apkFile.openWrite();
-      
-      int downloaded = 0;
-      await for (final chunk in response) {
-        sink.add(chunk);
-        downloaded += chunk.length;
-        if (contentLength > 0) {
-          onProgress(downloaded / contentLength);
-        }
-      }
-      
-      await sink.close();
-      client.close();
-      
+
+      await dio.download(
+        version.downloadUrl,
+        apkFile.path,
+        onReceiveProgress: (received, total) {
+          if (total > 0) {
+            onProgress(received / total);
+          }
+        },
+      );
+
       debugPrint('[VersionService] Download complete: ${apkFile.path}');
-      
-      // 安装 APK
-      // TODO: 使用 open_filex 或系统安装器打开 APK
       return true;
+    } on DioException catch (e) {
+      debugPrint('[VersionService] download error (${e.type}): ${e.message}');
+      return false;
     } catch (e, stackTrace) {
       debugPrint('[VersionService] downloadAndInstall error: $e');
       debugPrint('[VersionService] $stackTrace');
