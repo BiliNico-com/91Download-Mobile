@@ -225,9 +225,9 @@ class VersionService {
       return VersionInfo(
         version: version,
         buildNumber: buildNumber,
-        downloadUrl: downloadUrl,
-        releaseDate: dateMatch?.group(1),
-        releaseNotes: notes,
+        downloadUrl: downloadUrl ?? '',
+        releaseDate: dateMatch?.group(1) ?? '',
+        releaseNotes: notes ?? const [],
       );
     } catch (e) {
       debugPrint('[VersionService] parse release error: $e');
