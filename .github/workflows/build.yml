@@ -208,7 +208,14 @@ jobs:
 
         class PipPlugin(private val activity: Activity) {
             companion object {
-                const val CHANNEL = "com.bilinico.download_91/pip"
+                const val CHANNEL = "com.bilinico/download_91/pip"
+
+                fun registerWith(messenger: io.flutter.plugin.common.BinaryMessenger, activity: Activity) {
+                    val plugin = PipPlugin(activity)
+                    MethodChannel(messenger, CHANNEL).setMethodCallHandler { call, result ->
+                        plugin.handleMethodCall(call, result)
+                    }
+                }
             }
 
             fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
