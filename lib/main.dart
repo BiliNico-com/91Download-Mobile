@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:video_player/video_player.dart';
 import 'dart:io';
+import 'dart:async';
 import 'pages/main_page.dart';
 import 'pages/pin_input_dialog.dart';
 import 'services/app_state.dart';
@@ -32,18 +33,18 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
   bool _showControls = true;
   double _windowWidth = 360;
   double _windowHeight = 240;
+  Timer? _hideControlsTimer;
   
   @override
   void initState() {
     super.initState();
     _listenToMessages();
-    // 自动隐藏控件
-    _startHideControlsTimer();
   }
   
-  void _startHideControlsTimer() {
-    Future.delayed(Duration(seconds: 3), () {
-      if (mounted && _isPlaying) {
+  void _restartHideControlsTimer() {
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = Timer(Duration(seconds: 4), () {
+      if (mounted && _isPlaying && _showControls) {
         setState(() => _showControls = false);
       }
     });
@@ -92,9 +93,12 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
         setState(() {
           _isInitialized = true;
           _isPlaying = true;
+          _showControls = true; // 确保控件显示
         });
         _controller!.play();
         _controller!.setLooping(true);
+        // 启动自动隐藏控件计时器
+        _restartHideControlsTimer();
       }
     } catch (e) {
       print('[OverlayVideo] 加载视频失败: $e');
@@ -113,6 +117,26 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
         _isPlaying = true;
       }
     });
+  }
+  
+  // 后退10秒
+  void _seekBackward() {
+    if (_controller == null) return;
+    final currentPos = _controller!.value.position;
+    final newPos = Duration(
+      seconds: (currentPos.inSeconds - 10).clamp(0, _controller!.value.duration.inSeconds)
+    );
+    _controller!.seekTo(newPos);
+  }
+  
+  // 前进10秒
+  void _seekForward() {
+    if (_controller == null) return;
+    final currentPos = _controller!.value.position;
+    final newPos = Duration(
+      seconds: (currentPos.inSeconds + 10).clamp(0, _controller!.value.duration.inSeconds)
+    );
+    _controller!.seekTo(newPos);
   }
   
   // 双指缩放调整大小
@@ -173,13 +197,17 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
     setState(() {
       _showControls = !_showControls;
     });
+    // 如果显示控件且正在播放，启动自动隐藏计时器
     if (_showControls && _isPlaying) {
-      _startHideControlsTimer();
+      _restartHideControlsTimer();
+    } else {
+      _hideControlsTimer?.cancel();
     }
   }
   
   @override
   void dispose() {
+    _hideControlsTimer?.cancel();
     _controller?.dispose();
     super.dispose();
   }
@@ -224,68 +252,85 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
               // 控件层
               if (_showControls)
                 Container(
-                  color: Colors.black45,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withValues(alpha: 0.6),
+                        Colors.transparent,
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.6),
+                      ],
+                      stops: [0.0, 0.15, 0.85, 1.0],
+                    ),
+                  ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // 顶部栏 - 关闭按钮
+                      // 顶部栏 - 右上角关闭按钮
                       Container(
-                        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: EdgeInsets.all(6),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             GestureDetector(
                               onTap: _closeOverlay,
                               child: Container(
-                                padding: EdgeInsets.all(8),
-                                child: Icon(Icons.close, color: Colors.white, size: 24),
+                                padding: EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black45,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(Icons.close, color: Colors.white, size: 18),
                               ),
                             ),
                           ],
                         ),
                       ),
                       
-                      // 中间播放/暂停按钮
-                      GestureDetector(
-                        onTap: _togglePlayPause,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black54,
-                            shape: BoxShape.circle,
-                          ),
-                          padding: EdgeInsets.all(12),
-                          child: Icon(
-                            _isPlaying ? Icons.pause : Icons.play_arrow,
-                            color: Colors.white,
-                            size: 32,
-                          ),
+                      // 中间空白区域
+                      Expanded(child: Container()),
+                      
+                      // 底部三个控制按钮
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            // 后退10秒按钮
+                            GestureDetector(
+                              onTap: _seekBackward,
+                              child: Container(
+                                padding: EdgeInsets.all(8),
+                                child: Icon(Icons.replay_10, color: Colors.white, size: 24),
+                              ),
+                            ),
+                            SizedBox(width: 16),
+                            // 播放/暂停按钮
+                            GestureDetector(
+                              onTap: _togglePlayPause,
+                              child: Container(
+                                padding: EdgeInsets.all(8),
+                                child: Icon(
+                                  _isPlaying ? Icons.pause : Icons.play_arrow,
+                                  color: Colors.white,
+                                  size: 32,
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 16),
+                            // 前进10秒按钮
+                            GestureDetector(
+                              onTap: _seekForward,
+                              child: Container(
+                                padding: EdgeInsets.all(8),
+                                child: Icon(Icons.forward_10, color: Colors.white, size: 24),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      
-                      // 底部进度条
-                      if (_isInitialized && _controller != null)
-                        Container(
-                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              LinearProgressIndicator(
-                                value: _controller!.value.duration.inMilliseconds > 0
-                                    ? _controller!.value.position.inMilliseconds / _controller!.value.duration.inMilliseconds
-                                    : 0.0,
-                                backgroundColor: Colors.white24,
-                                valueColor: AlwaysStoppedAnimation(Colors.blue),
-                              ),
-                              SizedBox(height: 4),
-                              Text(
-                                '${_formatDuration(_controller!.value.position)} / ${_formatDuration(_controller!.value.duration)}',
-                                style: TextStyle(color: Colors.white70, fontSize: 11),
-                              ),
-                            ],
-                          ),
-                        )
-                      else
-                        SizedBox(height: 20),
                     ],
                   ),
                 ),
