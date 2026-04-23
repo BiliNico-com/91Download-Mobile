@@ -1031,13 +1031,15 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   /// 下载更新
   Future<void> _downloadUpdate(VersionInfo version) async {
     double progress = 0;
+    StateSetter? setDialogState;
     
     // 显示下载进度对话框
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
+        builder: (context, setState) {
+          setDialogState = setState;
           return AlertDialog(
             title: Text('正在下载更新'),
             content: Column(
@@ -1062,6 +1064,10 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     final versionService = VersionService();
     final success = await versionService.downloadAndInstall(version, (p) {
       progress = p;
+      // 刷新对话框UI
+      if (setDialogState != null) {
+        setDialogState!(() {});
+      }
     });
     
     if (mounted) {

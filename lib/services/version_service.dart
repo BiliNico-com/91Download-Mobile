@@ -119,9 +119,16 @@ class VersionService {
       await _dio.download(
         version.downloadUrl,
         filePath,
+        options: Options(receiveTimeout: Duration(minutes: 10)),
         onReceiveProgress: (received, total) {
-          if (total > 0 && onProgress != null) {
-            onProgress(received / total);
+          if (onProgress != null) {
+            if (total > 0) {
+              onProgress(received / total);
+            } else {
+              // 如果没有 total，显示已下载大小（MB）
+              // 这里用负数标记，让 UI 知道
+              onProgress(-received / (100 * 1024 * 1024)); // 转换为假百分比
+            }
           }
         },
       );
