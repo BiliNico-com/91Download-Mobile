@@ -37,24 +37,8 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
   void initState() {
     super.initState();
     _listenToMessages();
-    _listenToResize();
     // 自动隐藏控件
     _startHideControlsTimer();
-  }
-  
-  void _listenToResize() {
-    FlutterOverlayWindow.overlayListener.listen((event) {
-      if (event is Map) {
-        final width = event['width'] as num?;
-        final height = event['height'] as num?;
-        if (width != null && height != null) {
-          setState(() {
-            _windowWidth = width.toDouble();
-            _windowHeight = height.toDouble();
-          });
-        }
-      }
-    });
   }
   
   void _startHideControlsTimer() {
@@ -68,9 +52,20 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
   void _listenToMessages() {
     FlutterOverlayWindow.overlayListener.listen((event) {
       if (event is Map) {
+        // 处理视频路径
         final path = event['path'] as String?;
         if (path != null && path != _videoPath) {
           _loadVideo(path);
+        }
+        
+        // 处理窗口大小
+        final width = event['width'] as num?;
+        final height = event['height'] as num?;
+        if (width != null && height != null) {
+          setState(() {
+            _windowWidth = width.toDouble();
+            _windowHeight = height.toDouble();
+          });
         }
         
         // 处理命令

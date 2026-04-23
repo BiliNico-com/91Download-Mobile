@@ -39,6 +39,8 @@ class VersionInfo {
 class VersionService {
   // 从 GitHub Releases API 获取最新版本信息
   static const String _releasesUrl = 'https://api.github.com/repos/BiliNico-com/91Download-Mobile/releases/latest';
+  // 备用：直接读取 version.json
+  static const String _versionJsonUrl = 'https://raw.githubusercontent.com/BiliNico-com/91Download-Mobile/main/version.json';
   
   static String _currentVersion = '1.0.5';
   static int _currentBuild = 0;
@@ -66,6 +68,7 @@ class VersionService {
 
   /// 检查更新
   Future<VersionInfo?> checkUpdate() async {
+    // 先尝试 GitHub Releases API
     try {
       final response = await _dio.get(_releasesUrl, options: Options(
         receiveTimeout: Duration(seconds: 10),
@@ -124,8 +127,24 @@ class VersionService {
         );
       }
     } catch (e) {
-      debugPrint('检查更新失败: $e');
+      debugPrint('GitHub API 检查更新失败: $e，尝试备用方案...');
     }
+    
+    // 备用：读取 version.json
+    try {
+      final response = await _dio.get(_versionJsonUrl, options: Options(
+        receiveTimeout: Duration(seconds: 10),
+      ));
+      
+      if (response.statusCode == 200) {
+        final data = response.data;
+        final json = data is String ? jsonDecode(data) : data;
+        return VersionInfo.fromJson(json);
+      }
+    } catch (e) {
+      debugPrint('备用方案检查更新失败: $e');
+    }
+    
     return null;
   }
 
