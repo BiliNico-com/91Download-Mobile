@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/logger.dart';
 
 class VersionInfo {
   final String version;
@@ -78,10 +79,10 @@ class VersionService {
       await prefs.setInt('app_build_number', buildNumber);
       await prefs.setString('app_version', version);
       
-      debugPrint('[VersionService] 初始化完成: $fullVersion');
+      Logger().logSync('Version', '初始化完成: $fullVersion');
     } catch (e, stackTrace) {
-      debugPrint('[VersionService] init error: $e');
-      debugPrint('[VersionService] $stackTrace');
+      Logger().logSync('Version', 'init error: $e');
+      Logger().logSync('Version', '$stackTrace');
     }
   }
 
@@ -102,7 +103,7 @@ class VersionService {
     isCheckingUpdate = true;
     
     try {
-      debugPrint('[VersionService] 正在检查更新...');
+      Logger().logSync('Version', '正在检查更新...');
       
       // 方案1：GitHub Release API（唯一真实来源）
       final release = await _fetchLatestRelease();
@@ -113,19 +114,19 @@ class VersionService {
         final storedBuild = await getStoredBuildNumber();
         if (release.buildNumber > storedBuild || 
             (release.buildNumber == 0 && release.version != localVersion.version)) {
-          debugPrint('[VersionService] 发现新版本: ${release} > v${localVersion.version}.$storedBuild');
+          Logger().logSync('Version', '发现新版本: ${release} > v${localVersion.version}.$storedBuild');
           return release;
         }
         
-        debugPrint('[VersionService] 当前已是最新版本');
+        Logger().logSync('Version', '当前已是最新版本');
         return null;
       }
       
-      debugPrint('[VersionService] 未获取到远程版本信息');
+      Logger().logSync('Version', '未获取到远程版本信息');
       return null;
     } catch (e, stackTrace) {
-      debugPrint('[VersionService] checkUpdate error: $e');
-      debugPrint('[VersionService] $stackTrace');
+      Logger().logSync('Version', 'checkUpdate error: $e');
+      Logger().logSync('Version', '$stackTrace');
       return null;
     } finally {
       isCheckingUpdate = false;
@@ -142,7 +143,7 @@ class VersionService {
   /// 从 GitHub Release API 获取最新版本
   static Future<VersionInfo?> _fetchLatestRelease() async {
     const apiUrl = 'https://api.github.com/repos/$_owner/$_repo/releases/latest';
-    debugPrint('[VersionService] 开始请求: $apiUrl');
+    Logger().logSync('Version', '开始请求: $apiUrl');
     
     try {
       final dio = Dio(BaseOptions(
@@ -153,47 +154,47 @@ class VersionService {
 
       final response = await dio.get(apiUrl);
       
-      debugPrint('[VersionService] 响应状态码: ${response.statusCode}');
-      debugPrint('[VersionService] 响应头: ${response.headers.map}');
+      Logger().logSync('Version', '响应状态码: ${response.statusCode}');
+      Logger().logSync('Version', '响应头: ${response.headers.map}');
 
       if (response.statusCode == 200) {
-        debugPrint('[VersionService] 响应数据长度: ${response.data.toString().length}');
+        Logger().logSync('Version', '响应数据长度: ${response.data.toString().length}');
         final result = _parseRelease(response.data is String
             ? response.data as String
             : jsonEncode(response.data));
         if (result != null) {
-          debugPrint('[VersionService] 解析成功: version=${result.version}, buildNumber=${result.buildNumber}');
+          Logger().logSync('Version', '解析成功: version=${result.version}, buildNumber=${result.buildNumber}');
         } else {
-          debugPrint('[VersionService] 解析失败，请检查JSON格式');
+          Logger().logSync('Version', '解析失败，请检查JSON格式');
         }
         return result;
       } else if (response.statusCode == 404) {
-        debugPrint('[VersionService] No releases found (404)');
+        Logger().logSync('Version', 'No releases found (404)');
         return null;
       } else {
-        debugPrint('[VersionService] API error: ${response.statusCode}, body: ${response.data}');
+        Logger().logSync('Version', 'API error: ${response.statusCode}, body: ${response.data}');
         return null;
       }
     } on DioException catch (e) {
-      debugPrint('[VersionService] ❌ DioException:');
-      debugPrint('[VersionService]   type: ${e.type}');
-      debugPrint('[VersionService]   message: ${e.message}');
-      debugPrint('[VersionService]   error: ${e.error}');
+      Logger().logSync('Version', '❌ DioException:');
+      Logger().logSync('Version', '  type: ${e.type}');
+      Logger().logSync('Version', '  message: ${e.message}');
+      Logger().logSync('Version', '  error: ${e.error}');
       if (e.response != null) {
-        debugPrint('[VersionService]   statusCode: ${e.response?.statusCode}');
-        debugPrint('[VersionService]   responseData: ${e.response?.data}');
+        Logger().logSync('Version', '  statusCode: ${e.response?.statusCode}');
+        Logger().logSync('Version', '  responseData: ${e.response?.data}');
       }
       if (e.type == DioExceptionType.connectionTimeout) {
-        debugPrint('[VersionService]   连接超时，请检查网络');
+        Logger().logSync('Version', '  连接超时，请检查网络');
       } else if (e.type == DioExceptionType.receiveTimeout) {
-        debugPrint('[VersionService]   接收超时，服务器响应慢');
+        Logger().logSync('Version', '  接收超时，服务器响应慢');
       } else if (e.type == DioExceptionType.unknown) {
-        debugPrint('[VersionService]   未知网络错误，可能是DNS解析失败或无网络');
+        Logger().logSync('Version', '  未知网络错误，可能是DNS解析失败或无网络');
       }
       return null;
     } catch (e, stackTrace) {
-      debugPrint('[VersionService] ❌ fetch error: $e');
-      debugPrint('[VersionService] $stackTrace');
+      Logger().logSync('Version', '❌ fetch error: $e');
+      Logger().logSync('Version', '$stackTrace');
       return null;
     }
   }
@@ -264,7 +265,7 @@ class VersionService {
         releaseNotes: notes ?? const [],
       );
     } catch (e) {
-      debugPrint('[VersionService] parse release error: $e');
+      Logger().logSync('Version', 'parse release error: $e');
       return null;
     }
   }
@@ -290,20 +291,20 @@ class VersionService {
         },
       );
 
-      debugPrint('[VersionService] Download complete: ${apkFile.path}');
+      Logger().logSync('Version', 'Download complete: ${apkFile.path}');
 
       // 调用系统安装器
       final result = await OpenFilex.open(apkFile.path);
       if (result.type != ResultType.done) {
-        debugPrint('[VersionService] Open installer result: ${result.type} ${result.message}');
+        Logger().logSync('Version', 'Open installer result: ${result.type} ${result.message}');
       }
       return true;
     } on DioException catch (e) {
-      debugPrint('[VersionService] download error (${e.type}): ${e.message}');
+      Logger().logSync('Version', 'download error (${e.type}): ${e.message}');
       return false;
     } catch (e, stackTrace) {
-      debugPrint('[VersionService] downloadAndInstall error: $e');
-      debugPrint('[VersionService] $stackTrace');
+      Logger().logSync('Version', 'downloadAndInstall error: $e');
+      Logger().logSync('Version', '$stackTrace');
       return false;
     }
   }

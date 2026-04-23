@@ -55,31 +55,31 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
           ),
           body: ListView(
             children: [
-              // 1. 当前站点选择
+              // 1. 当前站点选择（折叠）
               _buildSiteSection(appState),
               
-              // 2. 下载目录设置
+              // 2. 下载目录设置（折叠）
               _buildDownloadDirSection(appState),
               
-              // 2.5 下载并发设置
+              // 3. 下载并发设置（折叠）
               _buildDownloadConcurrencySection(appState),
               
-              // 3. 浏览设置
+              // 4. 浏览设置（折叠）
               _buildBrowseSection(appState),
               
-              // 4. 主题模式设置
+              // 5. 主题模式设置（折叠）
               _buildThemeSection(appState),
               
-              // 5. 应用锁设置
+              // 6. 应用锁设置（不折叠）
               _buildAppLockSection(appState),
               
-              // 6. 权限状态展示
+              // 7. 权限状态展示（折叠）
               _buildPermissionSection(appState),
               
-              // 7. 调试设置（默认折叠）
+              // 8. 调试设置（折叠）
               _buildDebugSection(appState),
               
-              // 8. 关于页面
+              // 9. 关于页面 + 检查更新（不折叠）
               _buildAboutSection(),
               
               // 底部间距
@@ -91,57 +91,58 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
   }
 
-  /// 1. 当前站点选择区域
+  /// 1. 当前站点选择区域（折叠）
   Widget _buildSiteSection(AppState appState) {
     return Card(
-      margin: EdgeInsets.all(16),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.language, size: 20, color: Colors.blue),
+      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: true,  // 站点选择默认展开
+          leading: Icon(Icons.language, size: 20, color: Colors.blue),
+          title: Row(
+            children: [
+              Text('当前站点', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              if (!appState.isSiteSelected) ...[
                 SizedBox(width: 8),
-                Text('当前站点', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                if (!appState.isSiteSelected) ...[
-                  SizedBox(width: 8),
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text('请选择', style: TextStyle(color: Colors.orange, fontSize: 12)),
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                ],
+                  child: Text('请选择', style: TextStyle(color: Colors.orange, fontSize: 12)),
+                ),
               ],
-            ),
-            SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: appState.currentSite,
-              hint: Text('请选择站点', style: TextStyle(color: Colors.grey)),
-              decoration: InputDecoration(
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              ),
-              items: CrawlerConfig.availableSites.map((site) {
-                return DropdownMenuItem(
-                  value: site,
-                  child: Text(site),
-                );
-              }).toList(),
-              onChanged: (site) async {
-                if (site != null) {
-                  print('[Settings] 选择站点: $site');
-                  appState.changeSite(site);
-                  print('[Settings] 站点已切换, currentSite=${appState.currentSite}');
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('已切换到 $site')),
+            ],
+          ),
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: DropdownButtonFormField<String>(
+                value: appState.currentSite,
+                hint: Text('请选择站点', style: TextStyle(color: Colors.grey)),
+                decoration: InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                items: CrawlerConfig.availableSites.map((site) {
+                  return DropdownMenuItem(
+                    value: site,
+                    child: Text(site),
                   );
-                }
-              },
+                }).toList(),
+                onChanged: (site) async {
+                  if (site != null) {
+                    print('[Settings] 选择站点: $site');
+                    appState.changeSite(site);
+                    print('[Settings] 站点已切换, currentSite=${appState.currentSite}');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('已切换到 $site')),
+                    );
+                  }
+                },
+              ),
             ),
           ],
         ),

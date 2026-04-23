@@ -1,1 +1,1 @@
-{"version": "1.0.5", "build_number": 357, "download_url": "https://github.com/BiliNico-com/91Download-Mobile/releases/latest/download/app-release.apk", "release_notes": "- 检查更新失败时输出详细日志\n- 修复ml0987更新日期不显示的问题\n- 大图模式更新日期移到封面左下角", "release_date": "2026-04-24"}
+{"version": "1.0.5", "build_number": 358, "download_url": "https://github.com/BiliNico-com/91Download-Mobile/releases/latest/download/app-release.apk", "release_notes": "- 检查更新日志输出到日志文件\n- 检查更新失败时输出详细日志\n- 修复ml0987更新日期不显示的问题", "release_date": "2026-04-24"}
