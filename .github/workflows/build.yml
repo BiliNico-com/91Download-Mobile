@@ -409,6 +409,21 @@ jobs:
         
         echo "Build config fixed"
     
+    - name: Sync version with CI run_number
+      run: |
+        # 将 pubspec.yaml 的 build number 同步为 github.run_number
+        # 这样构建出的 APK 内嵌版本号与 Release tag 完全一致
+        RUN_NUM="${{ github.run_number }}"
+        sed -i "s/^version: \(.*\)+[0-9]*/version: \1+${RUN_NUM}/" pubspec.yaml
+        
+        # 同步 version.json（备用方案也保持一致）
+        if [ -f version.json ]; then
+          sed -i "s/\"build_number\": [0-9]*/\"build_number\": ${RUN_NUM}/" version.json
+        fi
+        
+        echo "Version synced to: $(grep '^version:' pubspec.yaml)"
+        cat pubspec.yaml | head -6
+
     - name: Install dependencies
       run: flutter pub get
     
