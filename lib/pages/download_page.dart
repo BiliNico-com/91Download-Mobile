@@ -926,10 +926,12 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   /// 播放视频
   void _playVideo(DownloadTask task, AppState appState) async {
     
-    // 检查是否有悬浮窗正在播放，如果有则先关闭
-    if (FloatingVideoService.isFloating) {
+    // 无条件关闭悬浮窗，避免状态不同步导致灰屏
+    try {
       await FloatingVideoService.stopFloating();
-      await Future.delayed(Duration(milliseconds: 300));
+      await Future.delayed(Duration(milliseconds: 500));
+    } catch (e) {
+      debugPrint('[DownloadPage] 关闭悬浮窗时出错: $e');
     }
     
     if (task.filePath == null || task.filePath!.isEmpty) {

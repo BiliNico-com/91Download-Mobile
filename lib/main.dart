@@ -255,74 +255,60 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       home: Material(
-        color: Colors.transparent,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.3),
-                  blurRadius: 8,
-                  spreadRadius: 2,
+        color: Colors.black,
+        child: GestureDetector(
+          onTap: _toggleControls,
+          onDoubleTap: _onDoubleTap,
+          onScaleStart: _onScaleStart,
+          onScaleUpdate: _onScaleUpdate,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // 视频内容
+              if (_isInitialized && _controller != null)
+                Center(
+                  child: AspectRatio(
+                    aspectRatio: _controller!.value.aspectRatio,
+                    child: VideoPlayer(_controller!),
+                  ),
+                )
+              else if (_hasError)
+                Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.error_outline, color: Colors.red, size: 36),
+                      SizedBox(height: 12),
+                      Text(
+                        '视频加载失败',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                      SizedBox(height: 8),
+                      TextButton(
+                        onPressed: () {
+                          if (_videoPath != null) {
+                            _loadVideo(_videoPath!);
+                          }
+                        },
+                        child: Text('重试', style: TextStyle(color: Colors.blue, fontSize: 13)),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(color: Colors.white),
+                      SizedBox(height: 16),
+                      Text(
+                        '加载视频中...',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
-            child: GestureDetector(
-              onTap: _toggleControls,
-              onDoubleTap: _onDoubleTap,
-              onScaleStart: _onScaleStart,
-              onScaleUpdate: _onScaleUpdate,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  // 视频内容
-                  if (_isInitialized && _controller != null)
-                    Center(
-                      child: AspectRatio(
-                        aspectRatio: _controller!.value.aspectRatio,
-                        child: VideoPlayer(_controller!),
-                      ),
-                    )
-                  else if (_hasError)
-                    Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.error_outline, color: Colors.red, size: 36),
-                          SizedBox(height: 12),
-                          Text(
-                            '视频加载失败',
-                            style: TextStyle(color: Colors.white70, fontSize: 13),
-                          ),
-                          SizedBox(height: 8),
-                          TextButton(
-                            onPressed: () {
-                              if (_videoPath != null) {
-                                _loadVideo(_videoPath!);
-                              }
-                            },
-                            child: Text('重试', style: TextStyle(color: Colors.blue, fontSize: 13)),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CircularProgressIndicator(color: Colors.white),
-                          SizedBox(height: 16),
-                          Text(
-                            '加载视频中...',
-                            style: TextStyle(color: Colors.white70, fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ),
               
               // 控件层
               if (_showControls)
@@ -414,8 +400,6 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
                   ),
                 ),
             ],
-          ),
-        ),
           ),
         ),
       ),
