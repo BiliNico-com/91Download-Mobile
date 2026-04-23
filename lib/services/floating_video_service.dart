@@ -167,8 +167,19 @@ class NativeFloatingService {
 }
 
 // ========== 兼容别名：保持原有 API 不变 ==========
-// 以下别名确保使用 FloatingVideoService 的代码无需修改
+// 由于 Dart 不继承静态成员，这里手动转发所有静态方法
 
-/// @Deprecated 使用 [NativeFloatingService] 替代
-/// 保留此别名以兼容现有代码
-class FloatingVideoService extends NativeFloatingService {}
+class FloatingVideoService {
+  static bool get isFloating => NativeFloatingService.isFloating;
+  static String? get currentVideoPath => NativeFloatingService.currentVideoPath;
+  
+  static Future<bool> isPermissionGranted() => NativeFloatingService.isPermissionGranted();
+  static Future<bool> requestPermission() => NativeFloatingService.requestPermission();
+  static Future<void> openSettings() => NativeFloatingService.openSettings();
+  static Future<bool> startFloating({required String videoPath, required String title}) =>
+      NativeFloatingService.startFloating(videoPath: videoPath, title: title);
+  static Future<bool> stopFloating() => NativeFloatingService.stopFloating();
+  static Future<void> pause() => NativeFloatingService.pause();
+  static Future<void> play() => NativeFloatingService.play();
+  static Future<void> seekTo(int positionMs) => NativeFloatingService.seekTo(positionMs);
+}
