@@ -62,3 +62,9 @@ assets/network_log_*.txt
 **/ios/Flutter/flutter_assets/
 **/ios/ServiceDefinitions.json
 **/ios/Runner/GeneratedPluginRegistrant.*
+
+# Platform / dev files (local only)
+.coze/
+AGENTS.md
+crawler_api.md
+assets/
