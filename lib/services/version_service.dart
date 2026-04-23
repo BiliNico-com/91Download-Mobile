@@ -37,7 +37,8 @@ class VersionInfo {
 
 /// 版本服务
 class VersionService {
-  static const String _versionUrl = 'https://raw.githubusercontent.com/BiliNico-com/91Download-Mobile/main/version.json';
+  // 从 GitHub Releases API 获取最新版本信息
+  static const String _releasesUrl = 'https://api.github.com/repos/BiliNico-com/91Download-Mobile/releases/latest';
   
   static String _currentVersion = '1.0.5';
   static int _currentBuild = 0;
@@ -66,14 +67,61 @@ class VersionService {
   /// 检查更新
   Future<VersionInfo?> checkUpdate() async {
     try {
-      final response = await _dio.get(_versionUrl, options: Options(
+      final response = await _dio.get(_releasesUrl, options: Options(
         receiveTimeout: Duration(seconds: 10),
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+        },
       ));
       
       if (response.statusCode == 200) {
         final data = response.data;
-        final json = data is String ? jsonDecode(data) : data;
-        return VersionInfo.fromJson(json);
+        // 解析 GitHub Release API 响应
+        final tagName = data['tag_name'] as String? ?? '';
+        final assets = data['assets'] as List? ?? [];
+        final body = data['body'] as String? ?? '';
+        final publishedAt = data['published_at'] as String? ?? '';
+        
+        // 解析版本号，格式: v1.0.5.322 或 build322
+        String version = '1.0.5';
+        int buildNumber = 0;
+        
+        if (tagName.startsWith('v')) {
+          // 格式: v1.0.5.322
+          final parts = tagName.substring(1).split('.');
+          if (parts.length >= 3) {
+            version = '${parts[0]}.${parts[1]}.${parts[2]}';
+          }
+          if (parts.length >= 4) {
+            buildNumber = int.tryParse(parts[3]) ?? 0;
+          }
+        } else if (tagName.startsWith('build')) {
+          // 格式: build322
+          buildNumber = int.tryParse(tagName.substring(5)) ?? 0;
+        }
+        
+        // 获取 APK 下载链接
+        String downloadUrl = '';
+        for (final asset in assets) {
+          final name = asset['name'] as String? ?? '';
+          if (name.endsWith('.apk')) {
+            downloadUrl = asset['browser_download_url'] as String? ?? '';
+            break;
+          }
+        }
+        
+        if (downloadUrl.isEmpty) {
+          // 使用默认链接
+          downloadUrl = 'https://github.com/BiliNico-com/91Download-Mobile/releases/latest/download/app-release.apk';
+        }
+        
+        return VersionInfo(
+          version: version,
+          buildNumber: buildNumber,
+          downloadUrl: downloadUrl,
+          releaseNotes: body,
+          releaseDate: publishedAt.split('T').first,
+        );
       }
     } catch (e) {
       debugPrint('检查更新失败: $e');

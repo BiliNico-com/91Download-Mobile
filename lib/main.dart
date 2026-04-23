@@ -30,13 +30,31 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
   bool _isInitialized = false;
   bool _isPlaying = false;
   bool _showControls = true;
+  double _windowWidth = 360;
+  double _windowHeight = 240;
   
   @override
   void initState() {
     super.initState();
     _listenToMessages();
+    _listenToResize();
     // 自动隐藏控件
     _startHideControlsTimer();
+  }
+  
+  void _listenToResize() {
+    FlutterOverlayWindow.overlayListener.listen((event) {
+      if (event is Map) {
+        final width = event['width'] as num?;
+        final height = event['height'] as num?;
+        if (width != null && height != null) {
+          setState(() {
+            _windowWidth = width.toDouble();
+            _windowHeight = height.toDouble();
+          });
+        }
+      }
+    });
   }
   
   void _startHideControlsTimer() {
@@ -99,6 +117,23 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
         _controller!.play();
         _isPlaying = true;
       }
+    });
+  }
+  
+  void _resizeOverlay(int delta) async {
+    final newWidth = (_windowWidth + delta).clamp(240.0, 600.0);
+    final aspectRatio = _controller?.value.aspectRatio ?? 16 / 9;
+    final newHeight = (newWidth / aspectRatio).clamp(180.0, 400.0);
+    
+    await FlutterOverlayWindow.resizeOverlay(
+      newWidth.round(),
+      newHeight.round(),
+      true,
+    );
+    
+    setState(() {
+      _windowWidth = newWidth;
+      _windowHeight = newHeight;
     });
   }
   
@@ -169,13 +204,32 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            // 返回按钮
+                            // 关闭按钮
                             GestureDetector(
                               onTap: _closeOverlay,
                               child: Container(
                                 padding: EdgeInsets.all(4),
                                 child: Icon(Icons.close, color: Colors.white, size: 20),
                               ),
+                            ),
+                            // 大小调整按钮
+                            Row(
+                              children: [
+                                GestureDetector(
+                                  onTap: () => _resizeOverlay(-40),
+                                  child: Container(
+                                    padding: EdgeInsets.all(4),
+                                    child: Icon(Icons.zoom_out, color: Colors.white, size: 18),
+                                  ),
+                                ),
+                                GestureDetector(
+                                  onTap: () => _resizeOverlay(40),
+                                  child: Container(
+                                    padding: EdgeInsets.all(4),
+                                    child: Icon(Icons.zoom_in, color: Colors.white, size: 18),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
