@@ -1100,6 +1100,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   bool _isFloatingAvailable = false;
   bool _isInFloatingMode = false;
   
+  // ====== 控件锁定 ======
+  bool _controlsLocked = false;
+  
   Timer? _hideControlsTimer;
   
   @override
@@ -1134,9 +1137,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   }
   
   Future<void> _enterFloatingMode() async {
+    debugPrint('[FloatingMode] 开始进入悬浮模式');
     if (!_isFloatingAvailable) {
+      debugPrint('[FloatingMode] 悬浮窗权限未授予，请求中...');
       // 请求权限
       final granted = await FloatingVideoService.requestPermission();
+      debugPrint('[FloatingMode] 权限请求结果: $granted');
       if (!granted) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1150,17 +1156,24 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       if (mounted) setState(() => _isFloatingAvailable = true);
     }
     
+    debugPrint('[FloatingMode] 启动悬浮窗，文件: ${widget.filePath}');
     // 启动悬浮窗
     final success = await FloatingVideoService.startFloating(
       videoPath: widget.filePath,
       title: widget.title,
     );
     
+    debugPrint('[FloatingMode] 悬浮窗启动结果: $success');
+    
     if (mounted) {
       setState(() => _isInFloatingMode = success);
       if (success) {
         // 返回上一页，但保持悬浮窗播放
         Navigator.pop(context);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('悬浮窗启动失败，请检查权限设置')),
+        );
       }
     }
   }
@@ -1239,10 +1252,25 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   }
   
   void _startHideControlsTimer() {
+    // 控件锁定时不自动隐藏
+    if (_controlsLocked) return;
     _hideControlsTimer?.cancel();
     _hideControlsTimer = Timer(Duration(seconds: 3), () {
       if (mounted && !_isHorizontalDragging && !_isVerticalDragging && !_isLongPressing) {
         setState(() => _showControls = false);
+      }
+    });
+  }
+  
+  void _toggleControlsLock() {
+    setState(() {
+      _controlsLocked = !_controlsLocked;
+      if (_controlsLocked) {
+        // 锁定时取消隐藏计时器，保持控件显示
+        _hideControlsTimer?.cancel();
+      } else {
+        // 解锁时重新开始计时
+        _startHideControlsTimer();
       }
     });
   }
@@ -1567,6 +1595,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
                     final pos = _videoPlayerController.value.position;
                     _seekTo(Duration(milliseconds: pos.inMilliseconds + 5000));
                   }),
+                  // 锁定控件按钮
+                  IconButton(
+                    icon: Icon(_controlsLocked ? Icons.lock : Icons.lock_open, 
+                        color: _controlsLocked ? Colors.blue : Colors.white, size: 24), 
+                    onPressed: _toggleControlsLock,
+                    tooltip: _controlsLocked ? '解锁控件' : '锁定控件',
+                  ),
                   Spacer(),
                   ValueListenableBuilder<VideoPlayerValue>(
                     valueListenable: _videoPlayerController,
