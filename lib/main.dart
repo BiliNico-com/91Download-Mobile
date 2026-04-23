@@ -135,13 +135,21 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
   }
   
   // 双击返回主应用
-  void _onDoubleTap() {
+  void _onDoubleTap() async {
+    // 先暂停视频
+    await _controller?.pause();
+    
     // 发送消息让主应用知道要恢复播放
-    FlutterOverlayWindow.shareData({
+    await FlutterOverlayWindow.shareData({
       'action': 'returnToApp',
       'position': _controller?.value.position.inMilliseconds ?? 0,
     });
-    _closeOverlay();
+    
+    // 等待消息发送
+    await Future.delayed(Duration(milliseconds: 100));
+    
+    // 关闭悬浮窗
+    await FlutterOverlayWindow.closeOverlay();
   }
   
   void _closeOverlay() async {
@@ -243,77 +251,73 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
                       // 底部：进度条 + 角标拖动
                       if (_isInitialized && _controller != null)
                         Container(
-                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          child: Stack(
-                            clipBehavior: Clip.none,
+                          padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Column(
-                                mainAxisSize: MainAxisSize.min,
+                              LinearProgressIndicator(
+                                value: _controller!.value.duration.inMilliseconds > 0
+                                    ? _controller!.value.position.inMilliseconds / _controller!.value.duration.inMilliseconds
+                                    : 0.0,
+                                backgroundColor: Colors.white24,
+                                valueColor: AlwaysStoppedAnimation(Colors.blue),
+                              ),
+                              SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  LinearProgressIndicator(
-                                    value: _controller!.value.duration.inMilliseconds > 0
-                                        ? _controller!.value.position.inMilliseconds / _controller!.value.duration.inMilliseconds
-                                        : 0.0,
-                                    backgroundColor: Colors.white24,
-                                    valueColor: AlwaysStoppedAnimation(Colors.blue),
+                                  // 左下角拖动手柄
+                                  GestureDetector(
+                                    onHorizontalDragUpdate: (details) => _handleResizeDrag(details, false),
+                                    child: Container(
+                                      width: 36,
+                                      height: 24,
+                                      alignment: Alignment.center,
+                                      child: Container(
+                                        width: 12,
+                                        height: 4,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white54,
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                  SizedBox(height: 4),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        _formatDuration(_controller!.value.position),
-                                        style: TextStyle(color: Colors.white70, fontSize: 10),
+                                  // 时间显示
+                                  Expanded(
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          _formatDuration(_controller!.value.position),
+                                          style: TextStyle(color: Colors.white70, fontSize: 10),
+                                        ),
+                                        SizedBox(width: 8),
+                                        Text(
+                                          '/ ${_formatDuration(_controller!.value.duration)}',
+                                          style: TextStyle(color: Colors.white54, fontSize: 10),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  // 右下角拖动手柄
+                                  GestureDetector(
+                                    onHorizontalDragUpdate: (details) => _handleResizeDrag(details, true),
+                                    child: Container(
+                                      width: 36,
+                                      height: 24,
+                                      alignment: Alignment.center,
+                                      child: Container(
+                                        width: 12,
+                                        height: 4,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white54,
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
                                       ),
-                                      Text(
-                                        _formatDuration(_controller!.value.duration),
-                                        style: TextStyle(color: Colors.white70, fontSize: 10),
-                                      ),
-                                    ],
+                                    ),
                                   ),
                                 ],
-                              ),
-                              // 左下角拖动手柄
-                              Positioned(
-                                left: -8,
-                                bottom: -4,
-                                child: GestureDetector(
-                                  onHorizontalDragUpdate: (details) => _handleResizeDrag(details, false),
-                                  child: Container(
-                                    width: 32,
-                                    height: 32,
-                                    alignment: Alignment.center,
-                                    child: Container(
-                                      width: 8,
-                                      height: 8,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white54,
-                                        shape: BoxShape.circle,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              // 右下角拖动手柄
-                              Positioned(
-                                right: -8,
-                                bottom: -4,
-                                child: GestureDetector(
-                                  onHorizontalDragUpdate: (details) => _handleResizeDrag(details, true),
-                                  child: Container(
-                                    width: 32,
-                                    height: 32,
-                                    alignment: Alignment.center,
-                                    child: Container(
-                                      width: 8,
-                                      height: 8,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white54,
-                                        shape: BoxShape.circle,
-                                      ),
-                                    ),
-                                  ),
-                                ),
                               ),
                             ],
                           ),

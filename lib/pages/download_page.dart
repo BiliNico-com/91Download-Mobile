@@ -1199,8 +1199,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     if (mounted) {
       setState(() => _isInFloatingMode = success);
       if (success) {
-        // 返回上一页，但保持悬浮窗播放
-        Navigator.pop(context);
+        // 暂停当前播放，悬浮窗会继续播放
+        _videoPlayerController?.pause();
+        // 隐藏控件，显示悬浮窗播放中的提示
+        _showControls = false;
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('悬浮窗启动失败，请检查权限设置')),
@@ -1456,6 +1458,40 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
             Positioned.fill(child: _buildVideoBody()),
             if (_showControls && !_isInPipMode && !_isInFloatingMode) _buildControlsOverlay(),
             if (_showPlayPauseIcon) _buildPlayPauseIndicator(),
+            // 悬浮窗播放中提示
+            if (_isInFloatingMode) _buildFloatingModeOverlay(),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildFloatingModeOverlay() {
+    return Container(
+      color: Colors.black87,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.picture_in_picture_alt, color: Colors.white54, size: 64),
+            SizedBox(height: 16),
+            Text(
+              '视频正在悬浮窗中播放',
+              style: TextStyle(color: Colors.white70, fontSize: 16),
+            ),
+            SizedBox(height: 8),
+            Text(
+              '双击悬浮窗可返回此页面',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+            SizedBox(height: 24),
+            TextButton(
+              onPressed: () async {
+                await FloatingVideoService.stopFloating();
+                setState(() => _isInFloatingMode = false);
+              },
+              child: Text('关闭悬浮窗'),
+            ),
           ],
         ),
       ),
