@@ -926,6 +926,12 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   /// 播放视频
   void _playVideo(DownloadTask task, AppState appState) async {
     
+    // 检查是否有悬浮窗正在播放，如果有则先关闭
+    if (FloatingVideoService.isFloating) {
+      await FloatingVideoService.stopFloating();
+      await Future.delayed(Duration(milliseconds: 300));
+    }
+    
     if (task.filePath == null || task.filePath!.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

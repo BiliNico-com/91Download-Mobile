@@ -336,6 +336,7 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
                           children: [
                             GestureDetector(
                               onTap: _closeOverlay,
+                              behavior: HitTestBehavior.opaque,
                               child: Container(
                                 padding: EdgeInsets.all(4),
                                 decoration: BoxDecoration(
@@ -361,6 +362,7 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
                             // 后退10秒按钮
                             GestureDetector(
                               onTap: _seekBackward,
+                              behavior: HitTestBehavior.opaque,
                               child: Container(
                                 padding: EdgeInsets.all(8),
                                 child: Icon(Icons.replay_10, color: Colors.white, size: 24),
@@ -370,6 +372,7 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
                             // 播放/暂停按钮
                             GestureDetector(
                               onTap: _togglePlayPause,
+                              behavior: HitTestBehavior.opaque,
                               child: Container(
                                 padding: EdgeInsets.all(8),
                                 child: Icon(
@@ -383,6 +386,7 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
                             // 前进10秒按钮
                             GestureDetector(
                               onTap: _seekForward,
+                              behavior: HitTestBehavior.opaque,
                               child: Container(
                                 padding: EdgeInsets.all(8),
                                 child: Icon(Icons.forward_10, color: Colors.white, size: 24),
