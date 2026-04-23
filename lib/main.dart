@@ -31,14 +31,28 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
   bool _isInitialized = false;
   bool _isPlaying = false;
   bool _showControls = true;
+  bool _hasError = false;
+  String _errorMessage = '';
   double _windowWidth = 320;
   double _windowHeight = 200;
   Timer? _hideControlsTimer;
+  StreamSubscription<dynamic>? _messageSubscription;
   
   @override
   void initState() {
     super.initState();
     _listenToMessages();
+  }
+
+  @override
+  void dispose() {
+    // 修复：正确清理消息订阅，防止内存泄漏
+    _messageSubscription?.cancel();
+    _messageSubscription = null;
+    _hideControlsTimer?.cancel();
+    _controller?.dispose();
+    _controller = null;
+    super.dispose();
   }
   
   void _restartHideControlsTimer() {
@@ -51,7 +65,9 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
   }
   
   void _listenToMessages() {
-    FlutterOverlayWindow.overlayListener.listen((event) {
+    // 修复：保存订阅引用，防止重复订阅导致内存泄漏
+    _messageSubscription?.cancel();
+    _messageSubscription = FlutterOverlayWindow.overlayListener.listen((event) {
       if (event is Map) {
         // 处理视频路径
         final path = event['path'] as String?;
@@ -86,6 +102,16 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
       await _controller?.dispose();
       
       _videoPath = path;
+      _hasError = false;
+      _errorMessage = '';
+      
+      if (mounted) {
+        setState(() {
+          _isInitialized = false;
+          _isPlaying = false;
+        });
+      }
+      
       _controller = VideoPlayerController.file(File(path));
       await _controller!.initialize();
       
@@ -100,8 +126,17 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
         // 启动自动隐藏控件计时器
         _restartHideControlsTimer();
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      // 修复：视频加载失败时设置错误状态，允许用户看到错误提示
       print('[OverlayVideo] 加载视频失败: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      if (mounted) {
+        setState(() {
+          _isInitialized = false;
+          _hasError = true;
+          _errorMessage = e.toString();
+        });
+      }
     }
   }
   
@@ -216,6 +251,7 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
   
   @override
   void dispose() {
+    _messageSubscription?.cancel();
     _hideControlsTimer?.cancel();
     _controller?.dispose();
     super.dispose();
@@ -241,6 +277,29 @@ class _OverlayVideoAppState extends State<OverlayVideoApp> {
                   child: AspectRatio(
                     aspectRatio: _controller!.value.aspectRatio,
                     child: VideoPlayer(_controller!),
+                  ),
+                )
+              else if (_hasError)
+                Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.error_outline, color: Colors.red, size: 36),
+                      SizedBox(height: 12),
+                      Text(
+                        '视频加载失败',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                      SizedBox(height: 8),
+                      TextButton(
+                        onPressed: () {
+                          if (_videoPath != null) {
+                            _loadVideo(_videoPath!);
+                          }
+                        },
+                        child: Text('重试', style: TextStyle(color: Colors.blue, fontSize: 13)),
+                      ),
+                    ],
                   ),
                 )
               else

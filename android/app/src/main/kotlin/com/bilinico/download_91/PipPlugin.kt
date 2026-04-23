@@ -55,8 +55,11 @@ class PipPlugin private constructor(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity.isInPictureInPictureMode) {
                     val aspectRatio = call.argument<Double>("aspectRatio") ?: 16.0 / 9.0
                     try {
+                        // 修复：使用与 enterPip 相同的宽高比转换方式，避免 toInt 截断丢失精度
+                        val width = (aspectRatio * 100).toInt()
+                        val height = 100
                         val params = PictureInPictureParams.Builder()
-                            .setAspectRatio(Rational(aspectRatio.toInt(), 1))
+                            .setAspectRatio(Rational(width, height))
                             .build()
                         activity.setPictureInPictureParams(params)
                         result.success(true)

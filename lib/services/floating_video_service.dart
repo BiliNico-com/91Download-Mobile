@@ -82,6 +82,13 @@ class FloatingVideoService {
       print('[FloatingVideo] 开始启动悬浮窗, videoPath: $videoPath');
       logger.logSync('FloatingVideo', '开始启动悬浮窗, videoPath: $videoPath');
       
+      // 如果已有悬浮窗在运行，先关闭
+      if (_isFloating) {
+        print('[FloatingVideo] 检测到已有悬浮窗运行，先关闭...');
+        await stopFloating();
+        await Future.delayed(Duration(milliseconds: 300));
+      }
+      
       // 检查权限
       if (!await isPermissionGranted()) {
         debugPrint('[FloatingVideo] 悬浮窗权限未授权，请求中...');
@@ -168,16 +175,21 @@ class FloatingVideoService {
   /// 关闭悬浮窗
   static Future<bool> stopFloating() async {
     try {
-      if (_isFloating) {
-        await FlutterOverlayWindow.closeOverlay();
-        _isFloating = false;
-        _currentVideoPath = null;
-        _currentTitle = null;
-      }
+      // 修复：始终尝试关闭悬浮窗并重置状态，即使 _isFloating 为 false
+      // 这样可以处理异常情况（如进程被杀死后状态不一致）
+      await FlutterOverlayWindow.closeOverlay();
+      final wasFloating = _isFloating;
+      _isFloating = false;
+      _currentVideoPath = null;
+      _currentTitle = null;
       return true;
     } catch (e) {
       debugPrint('关闭悬浮窗失败: $e');
       logger.logSync('FloatingVideo', '关闭悬浮窗失败: $e');
+      // 修复：即使关闭失败也重置状态，避免状态残留
+      _isFloating = false;
+      _currentVideoPath = null;
+      _currentTitle = null;
       return false;
     }
   }
