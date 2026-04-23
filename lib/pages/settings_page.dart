@@ -1005,7 +1005,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   color: Colors.grey.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text(version.releaseNotes, style: TextStyle(fontSize: 13)),
+                child: Text(version.releaseNotes.join('\n'), style: TextStyle(fontSize: 13)),
               ),
             ],
           ],

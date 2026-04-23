@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -20,6 +21,8 @@ class VersionInfo {
 
   @override
   String toString() => 'v$version.$buildNumber';
+
+  String get fullVersion => 'v$version.$buildNumber';
 }
 
 /// 版本服务 - 基于GitHub Release API的版本检查
@@ -35,7 +38,7 @@ class VersionService {
   static const _repo = '91Download-Mobile';
   
   /// 本地版本信息（来自 PackageInfo，即 APK 编译时 pubspec.yaml 的值）
-  static VersionInfo localVersion = VersionInfo(version: '0.0.0', buildNumber: 0);
+  static VersionInfo localVersion = VersionInfo(version: '0.0.0', buildNumber: 0, downloadUrl: '');
   
   /// 远程版本信息（来自 GitHub Release API）
   static VersionInfo? remoteVersion;
@@ -65,6 +68,7 @@ class VersionService {
       localVersion = VersionInfo(
         version: version,
         buildNumber: buildNumber,
+        downloadUrl: '',
       );
       
       // 写入 SharedPreferences 作为持久化记录
@@ -146,7 +150,7 @@ class VersionService {
       final response = await request.close();
       
       if (response.statusCode == 200) {
-        final body = await response.transform<String>().join();
+        final body = await utf8.decoder.bind(response).join();
         return _parseRelease(body);
       } else if (response.statusCode == 404) {
         debugPrint('[VersionService] No releases found (404)');
@@ -196,12 +200,12 @@ class VersionService {
       
       if (digits.length >= 3) {
         version = '${digits[0]}.${digits[1]}.${digits[2]}';
-        buildNumber = int.parse(digits.length > 3 ? digits.last : digits[2]);
+        buildNumber = int.parse(digits.length > 3 ? (digits.last ?? '0') : (digits[2] ?? '0'));
       } else if (digits.length == 2) {
         version = '1.${digits[0]}';
-        buildNumber = int.parse(digits[1]);
+        buildNumber = int.parse(digits[1] ?? '0');
       } else if (digits.length == 1) {
-        buildNumber = int.parse(digits[0]);
+        buildNumber = int.parse(digits[0] ?? '0');
         version = '1.0.0';
       }
       
@@ -232,6 +236,52 @@ class VersionService {
     } catch (e) {
       debugPrint('[VersionService] parse release error: $e');
       return null;
+    }
+  }
+
+  /// 下载并安装更新
+  static Future<bool> downloadAndInstall(VersionInfo version, void Function(double) onProgress) async {
+    try {
+      final client = HttpClient();
+      final uri = Uri.parse(version.downloadUrl);
+      
+      final request = await client.getUrl(uri);
+      final response = await request.close();
+      
+      if (response.statusCode != 200) {
+        debugPrint('[VersionService] Download failed: ${response.statusCode}');
+        return false;
+      }
+      
+      // 获取文件大小
+      final contentLength = response.contentLength ?? -1;
+      
+      // 写入临时文件
+      final tempDir = await Directory.systemTemp.createTemp('update_');
+      final apkFile = File('${tempDir.path}/update.apk');
+      final sink = apkFile.openWrite();
+      
+      int downloaded = 0;
+      await for (final chunk in response) {
+        sink.add(chunk);
+        downloaded += chunk.length;
+        if (contentLength > 0) {
+          onProgress(downloaded / contentLength);
+        }
+      }
+      
+      await sink.close();
+      await client.close();
+      
+      debugPrint('[VersionService] Download complete: ${apkFile.path}');
+      
+      // 安装 APK
+      // TODO: 使用 open_filex 或系统安装器打开 APK
+      return true;
+    } catch (e, stackTrace) {
+      debugPrint('[VersionService] downloadAndInstall error: $e');
+      debugPrint('[VersionService] $stackTrace');
+      return false;
     }
   }
 }
