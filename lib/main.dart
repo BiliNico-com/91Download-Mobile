@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
+import 'package:video_player/video_player.dart';
+import 'dart:io';
 import 'pages/main_page.dart';
 import 'pages/pin_input_dialog.dart';
 import 'services/app_state.dart';
@@ -10,30 +13,248 @@ import 'utils/logger.dart';
 /// 悬浮窗入口点 - 必须是顶级函数
 @pragma("vm:entry-point")
 void overlayMain() {
-  runApp(const MaterialApp(
-    debugShowCheckedModeBanner: false,
-    home: Material(
-      color: Colors.black,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.play_circle_outline, color: Colors.white, size: 48),
-            SizedBox(height: 8),
-            Text(
-              '视频播放中...',
-              style: TextStyle(color: Colors.white, fontSize: 16),
-            ),
-            SizedBox(height: 4),
-            Text(
-              '返回应用可继续控制',
-              style: TextStyle(color: Colors.white54, fontSize: 12),
-            ),
-          ],
+  runApp(const OverlayVideoApp());
+}
+
+/// 悬浮窗视频播放应用
+class OverlayVideoApp extends StatefulWidget {
+  const OverlayVideoApp({super.key});
+
+  @override
+  State<OverlayVideoApp> createState() => _OverlayVideoAppState();
+}
+
+class _OverlayVideoAppState extends State<OverlayVideoApp> {
+  VideoPlayerController? _controller;
+  String? _videoPath;
+  bool _isInitialized = false;
+  bool _isPlaying = false;
+  bool _showControls = true;
+  
+  @override
+  void initState() {
+    super.initState();
+    _listenToMessages();
+    // 自动隐藏控件
+    _startHideControlsTimer();
+  }
+  
+  void _startHideControlsTimer() {
+    Future.delayed(Duration(seconds: 3), () {
+      if (mounted && _isPlaying) {
+        setState(() => _showControls = false);
+      }
+    });
+  }
+  
+  void _listenToMessages() {
+    FlutterOverlayWindow.overlayListener.listen((event) {
+      if (event is Map) {
+        final path = event['path'] as String?;
+        if (path != null && path != _videoPath) {
+          _loadVideo(path);
+        }
+        
+        // 处理命令
+        final command = event['command'] as String?;
+        if (command == 'togglePlayPause' && _controller != null) {
+          _togglePlayPause();
+        } else if (command == 'close') {
+          _closeOverlay();
+        }
+      }
+    });
+  }
+  
+  Future<void> _loadVideo(String path) async {
+    try {
+      // 释放旧的控制器
+      await _controller?.dispose();
+      
+      _videoPath = path;
+      _controller = VideoPlayerController.file(File(path));
+      await _controller!.initialize();
+      
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+          _isPlaying = true;
+        });
+        _controller!.play();
+        _controller!.setLooping(true);
+      }
+    } catch (e) {
+      print('[OverlayVideo] 加载视频失败: $e');
+    }
+  }
+  
+  void _togglePlayPause() {
+    if (_controller == null) return;
+    
+    setState(() {
+      if (_controller!.value.isPlaying) {
+        _controller!.pause();
+        _isPlaying = false;
+      } else {
+        _controller!.play();
+        _isPlaying = true;
+      }
+    });
+  }
+  
+  void _closeOverlay() async {
+    await _controller?.pause();
+    await FlutterOverlayWindow.closeOverlay();
+  }
+  
+  void _toggleControls() {
+    setState(() {
+      _showControls = !_showControls;
+    });
+    if (_showControls && _isPlaying) {
+      _startHideControlsTimer();
+    }
+  }
+  
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Material(
+        color: Colors.black,
+        child: GestureDetector(
+          onTap: _toggleControls,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // 视频内容
+              if (_isInitialized && _controller != null)
+                Center(
+                  child: AspectRatio(
+                    aspectRatio: _controller!.value.aspectRatio,
+                    child: VideoPlayer(_controller!),
+                  ),
+                )
+              else
+                Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(color: Colors.white),
+                      SizedBox(height: 16),
+                      Text(
+                        '加载视频中...',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              
+              // 控件层
+              if (_showControls)
+                Container(
+                  color: Colors.black45,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // 顶部栏
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            // 返回按钮
+                            GestureDetector(
+                              onTap: _closeOverlay,
+                              child: Container(
+                                padding: EdgeInsets.all(4),
+                                child: Icon(Icons.close, color: Colors.white, size: 20),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      
+                      // 中间播放/暂停按钮
+                      GestureDetector(
+                        onTap: _togglePlayPause,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            shape: BoxShape.circle,
+                          ),
+                          padding: EdgeInsets.all(12),
+                          child: Icon(
+                            _isPlaying ? Icons.pause : Icons.play_arrow,
+                            color: Colors.white,
+                            size: 32,
+                          ),
+                        ),
+                      ),
+                      
+                      // 底部进度条
+                      if (_isInitialized && _controller != null)
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          child: ValueListenableBuilder<VideoPlayerValue>(
+                            valueListenable: _controller!,
+                            builder: (context, value, child) {
+                              final position = value.position;
+                              final duration = value.duration;
+                              final progress = duration.inMilliseconds > 0
+                                  ? position.inMilliseconds / duration.inMilliseconds
+                                  : 0.0;
+                              
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  LinearProgressIndicator(
+                                    value: progress,
+                                    backgroundColor: Colors.white24,
+                                    valueColor: AlwaysStoppedAnimation(Colors.blue),
+                                  ),
+                                  SizedBox(height: 4),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        _formatDuration(position),
+                                        style: TextStyle(color: Colors.white70, fontSize: 10),
+                                      ),
+                                      Text(
+                                        _formatDuration(duration),
+                                        style: TextStyle(color: Colors.white70, fontSize: 10),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        )
+                      else
+                        SizedBox(height: 20),
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
-    ),
-  ));
+    );
+  }
+  
+  String _formatDuration(Duration d) {
+    final minutes = d.inMinutes;
+    final seconds = d.inSeconds.remainder(60);
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
 }
 
 void main() async {

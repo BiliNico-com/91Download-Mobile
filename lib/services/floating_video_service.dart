@@ -73,8 +73,8 @@ class FloatingVideoService {
       debugPrint('[FloatingVideo] 调用 showOverlay...');
       logger.logSync('FloatingVideo', '调用 showOverlay...');
       await FlutterOverlayWindow.showOverlay(
-        height: 180,
-        width: 280,
+        height: 240,
+        width: 320,
         alignment: OverlayAlignment.centerRight,
         flag: OverlayFlag.defaultFlag,
         overlayTitle: title,
@@ -87,8 +87,8 @@ class FloatingVideoService {
       debugPrint('[FloatingVideo] showOverlay 调用成功');
       logger.logSync('FloatingVideo', 'showOverlay 调用成功');
       
-      // 发送视频信息到悬浮窗
-      await Future.delayed(Duration(milliseconds: 500));
+      // 发送视频信息到悬浮窗（等待悬浮窗初始化完成）
+      await Future.delayed(Duration(milliseconds: 800));
       await _sendVideoToOverlay(videoPath, title);
       
       return true;
