@@ -141,6 +141,9 @@ class VersionService {
 
   /// 从 GitHub Release API 获取最新版本
   static Future<VersionInfo?> _fetchLatestRelease() async {
+    const apiUrl = 'https://api.github.com/repos/$_owner/$_repo/releases/latest';
+    debugPrint('[VersionService] 开始请求: $apiUrl');
+    
     try {
       final dio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 10),
@@ -148,26 +151,48 @@ class VersionService {
         headers: {'User-Agent': '91Download-App/$fullVersion'},
       ));
 
-      final response = await dio.get(
-        'https://api.github.com/repos/$_owner/$_repo/releases/latest',
-      );
+      final response = await dio.get(apiUrl);
+      
+      debugPrint('[VersionService] 响应状态码: ${response.statusCode}');
+      debugPrint('[VersionService] 响应头: ${response.headers.map}');
 
       if (response.statusCode == 200) {
-        return _parseRelease(response.data is String
+        debugPrint('[VersionService] 响应数据长度: ${response.data.toString().length}');
+        final result = _parseRelease(response.data is String
             ? response.data as String
             : jsonEncode(response.data));
+        if (result != null) {
+          debugPrint('[VersionService] 解析成功: version=${result.version}, buildNumber=${result.buildNumber}');
+        } else {
+          debugPrint('[VersionService] 解析失败，请检查JSON格式');
+        }
+        return result;
       } else if (response.statusCode == 404) {
         debugPrint('[VersionService] No releases found (404)');
         return null;
       } else {
-        debugPrint('[VersionService] API error: ${response.statusCode}');
+        debugPrint('[VersionService] API error: ${response.statusCode}, body: ${response.data}');
         return null;
       }
     } on DioException catch (e) {
-      debugPrint('[VersionService] network error (${e.type}): ${e.message}');
+      debugPrint('[VersionService] ❌ DioException:');
+      debugPrint('[VersionService]   type: ${e.type}');
+      debugPrint('[VersionService]   message: ${e.message}');
+      debugPrint('[VersionService]   error: ${e.error}');
+      if (e.response != null) {
+        debugPrint('[VersionService]   statusCode: ${e.response?.statusCode}');
+        debugPrint('[VersionService]   responseData: ${e.response?.data}');
+      }
+      if (e.type == DioExceptionType.connectionTimeout) {
+        debugPrint('[VersionService]   连接超时，请检查网络');
+      } else if (e.type == DioExceptionType.receiveTimeout) {
+        debugPrint('[VersionService]   接收超时，服务器响应慢');
+      } else if (e.type == DioExceptionType.unknown) {
+        debugPrint('[VersionService]   未知网络错误，可能是DNS解析失败或无网络');
+      }
       return null;
     } catch (e, stackTrace) {
-      debugPrint('[VersionService] fetch error: $e');
+      debugPrint('[VersionService] ❌ fetch error: $e');
       debugPrint('[VersionService] $stackTrace');
       return null;
     }

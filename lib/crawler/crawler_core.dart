@@ -638,7 +638,7 @@ class CrawlerCore {
       }
       
       // 详细日志
-      Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$videoId, 封面ID=$coverId, 作者=$author, 作者ID=$authorId, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
+      Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$videoId, 封面ID=$coverId, 作者=$author, 作者ID=$authorId, 时长=$duration, 更新时间=$uploadDate, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
       
       videos.add(VideoInfo(
         id: videoId,
