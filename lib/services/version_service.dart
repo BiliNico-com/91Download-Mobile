@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -248,7 +249,7 @@ class VersionService {
     try {
       final dio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 60),
+        receiveTimeout: const Duration(seconds: 120),
       ));
 
       final tempDir = await Directory.systemTemp.createTemp('update_');
@@ -265,6 +266,12 @@ class VersionService {
       );
 
       debugPrint('[VersionService] Download complete: ${apkFile.path}');
+
+      // 调用系统安装器
+      final result = await OpenFilex.open(apkFile.path);
+      if (result.type != ResultType.done) {
+        debugPrint('[VersionService] Open installer result: ${result.type} ${result.message}');
+      }
       return true;
     } on DioException catch (e) {
       debugPrint('[VersionService] download error (${e.type}): ${e.message}');

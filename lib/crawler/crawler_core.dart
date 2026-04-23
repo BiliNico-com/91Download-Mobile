@@ -399,22 +399,29 @@ class CrawlerCore {
         duration = durationMatch.group(1)!.trim();
       }
       
-      // 提取上传时间（多种格式）
+      // 提取上传时间（多种格式：绝对日期 + 相对时间）
       String? uploadDate;
-      // 格式1: <span class="added-time">2024-01-15</span>
+      // 格式1: <span class="added-time">2024-01-15</span> 或 <span class="added-time">3天前</span>
       var dateMatch = RegExp(r'<span[^>]*class="[^"]*added[^"]*"[^>]*>([^<]+)</span>', caseSensitive: false).firstMatch(wellContent);
       if (dateMatch != null) {
         uploadDate = dateMatch.group(1)!.trim();
       }
-      // 格式2: 添加时间：2024-01-15
-      if (uploadDate == null) {
-        dateMatch = RegExp(r'(?:添加|上传|更新)[时日期][：:]\s*([0-9\-/]+)', caseSensitive: false).firstMatch(wellContent);
+      // 格式2: 添加/上传/更新 时间标签（中文）
+      if (uploadDate == null || uploadDate!.isEmpty) {
+        dateMatch = RegExp(r'(?:添加|上传|更新)[时日期\s]*[：:]\s*(.+?)(?:<|\s*$)', caseSensitive: false).firstMatch(wellContent);
         if (dateMatch != null) {
           uploadDate = dateMatch.group(1)!.trim();
         }
       }
-      // 格式3: 2024-01-15 格式的日期
-      if (uploadDate == null) {
+      // 格式3: 相对时间（X天前 / X小时前 / X分钟前 / 刚刚）
+      if (uploadDate == null || uploadDate!.isEmpty) {
+        dateMatch = RegExp(r'(\d+\s*[天时分秒钟]?\s*前|刚刚|刚才)', caseSensitive: false).firstMatch(wellContent);
+        if (dateMatch != null) {
+          uploadDate = dateMatch.group(1)!.trim();
+        }
+      }
+      // 格式4: 绝对日期 YYYY-MM-DD 或 YYYY/MM/DD
+      if (uploadDate == null || uploadDate!.isEmpty) {
         dateMatch = RegExp(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})').firstMatch(wellContent);
         if (dateMatch != null) {
           uploadDate = dateMatch.group(1)!.trim();
@@ -592,22 +599,29 @@ class CrawlerCore {
         if (author.isEmpty) author = null;
       }
       
-      // 提取上传时间（多种格式）
+      // 提取上传时间（多种格式：绝对日期 + 相对时间）
       String? uploadDate;
-      // 格式1: <span class="added-time">2024-01-15</span>
+      // 格式1: <span class="added-time">2024-01-15</span> 或 <span class="added-time">3天前</span>
       var dateMatch = RegExp(r'<span[^>]*class="[^"]*added[^"]*"[^>]*>([^<]+)</span>', caseSensitive: false).firstMatch(container);
       if (dateMatch != null) {
         uploadDate = dateMatch.group(1)!.trim();
       }
-      // 格式2: 添加时间：2024-01-15
-      if (uploadDate == null) {
-        dateMatch = RegExp(r'(?:添加|上传|更新)[时日期][：:]\s*([0-9\-/]+)', caseSensitive: false).firstMatch(container);
+      // 格式2: 添加/上传/更新 时间标签（中文）
+      if (uploadDate == null || uploadDate!.isEmpty) {
+        dateMatch = RegExp(r'(?:添加|上传|更新)[时日期\s]*[：:]\s*(.+?)(?:<|\s*$)', caseSensitive: false).firstMatch(container);
         if (dateMatch != null) {
           uploadDate = dateMatch.group(1)!.trim();
         }
       }
-      // 格式3: 2024-01-15 格式的日期
-      if (uploadDate == null) {
+      // 格式3: 相对时间（X天前 / X小时前 / X分钟前 / 刚刚）
+      if (uploadDate == null || uploadDate!.isEmpty) {
+        dateMatch = RegExp(r'(\d+\s*[天时分秒钟]?\s*前|刚刚|刚才)', caseSensitive: false).firstMatch(container);
+        if (dateMatch != null) {
+          uploadDate = dateMatch.group(1)!.trim();
+        }
+      }
+      // 格式4: 绝对日期 YYYY-MM-DD 或 YYYY/MM/DD
+      if (uploadDate == null || uploadDate!.isEmpty) {
         dateMatch = RegExp(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})').firstMatch(container);
         if (dateMatch != null) {
           uploadDate = dateMatch.group(1)!.trim();
