@@ -55,8 +55,8 @@ class NativeFloatingService {
   /// 计算合适的悬浮窗尺寸
   static (int width, int height) _calculateWindowSize() {
     // 固定较大默认尺寸，适合大多数手机屏幕
-    const defaultWidth = 400;
-    const defaultHeight = 250;
+    const defaultWidth = 540;
+    const defaultHeight = 360;
     
     print('[NativeFloating] 窗口大小: ${defaultWidth}x$defaultHeight');
     return (defaultWidth, defaultHeight);

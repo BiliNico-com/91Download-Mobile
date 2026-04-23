@@ -68,8 +68,8 @@ class FloatingWindowService : Service() {
     private var lastTapTime = 0L
 
     // 窗口参数
-    private var windowWidth = 400
-    private var windowHeight = 250
+    private var windowWidth = 540
+    private var windowHeight = 360
     private var params: WindowManager.LayoutParams? = null
 
     // 控件自动隐藏
@@ -128,8 +128,8 @@ class FloatingWindowService : Service() {
             ACTION_START -> {
                 val path = intent.getStringExtra(EXTRA_VIDEO_PATH) ?: return START_NOT_STICKY
                 val title = intent.getStringExtra(EXTRA_TITLE) ?: ""
-                windowWidth = intent.getIntExtra(EXTRA_WIDTH, 400)
-                windowHeight = intent.getIntExtra(EXTRA_HEIGHT, 250)
+                windowWidth = intent.getIntExtra(EXTRA_WIDTH, 540)
+                windowHeight = intent.getIntExtra(EXTRA_HEIGHT, 360)
                 showFloatingWindow(path, title)
             }
             ACTION_STOP -> stopFloating()
