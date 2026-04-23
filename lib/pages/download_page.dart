@@ -1129,20 +1129,29 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   
   Future<void> _checkFloatingAvailability() async {
     try {
+      print('[FloatingMode] 检查悬浮窗权限...');
+      logger.logSync('FloatingMode', '检查悬浮窗权限...');
       final available = await FloatingVideoService.isPermissionGranted();
+      print('[FloatingMode] 悬浮窗权限状态: $available');
+      logger.logSync('FloatingMode', '悬浮窗权限状态: $available');
       if (mounted) setState(() => _isFloatingAvailable = available);
     } catch (e) {
+      print('[FloatingMode] 检查权限失败: $e');
+      logger.logSync('FloatingMode', '检查权限失败: $e');
       if (mounted) setState(() => _isFloatingAvailable = false);
     }
   }
   
   Future<void> _enterFloatingMode() async {
-    debugPrint('[FloatingMode] 开始进入悬浮模式');
+    print('[FloatingMode] 开始进入悬浮模式');
+    logger.logSync('FloatingMode', '开始进入悬浮模式');
     if (!_isFloatingAvailable) {
-      debugPrint('[FloatingMode] 悬浮窗权限未授予，请求中...');
+      print('[FloatingMode] 悬浮窗权限未授予，请求中...');
+      logger.logSync('FloatingMode', '悬浮窗权限未授予，请求中...');
       // 请求权限
       final granted = await FloatingVideoService.requestPermission();
-      debugPrint('[FloatingMode] 权限请求结果: $granted');
+      print('[FloatingMode] 权限请求结果: $granted');
+      logger.logSync('FloatingMode', '权限请求结果: $granted');
       if (!granted) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1156,14 +1165,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       if (mounted) setState(() => _isFloatingAvailable = true);
     }
     
-    debugPrint('[FloatingMode] 启动悬浮窗，文件: ${widget.filePath}');
+    print('[FloatingMode] 启动悬浮窗，文件: ${widget.filePath}');
+    logger.logSync('FloatingMode', '启动悬浮窗，文件: ${widget.filePath}');
     // 启动悬浮窗
     final success = await FloatingVideoService.startFloating(
       videoPath: widget.filePath,
       title: widget.title,
     );
     
-    debugPrint('[FloatingMode] 悬浮窗启动结果: $success');
+    print('[FloatingMode] 悬浮窗启动结果: $success');
+    logger.logSync('FloatingMode', '悬浮窗启动结果: $success');
     
     if (mounted) {
       setState(() => _isInFloatingMode = success);

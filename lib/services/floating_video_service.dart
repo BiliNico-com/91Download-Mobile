@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
+import '../utils/logger.dart';
 
 /// 悬浮窗视频播放服务
 /// 使用 flutter_overlay_window 插件实现悬浮窗功能
@@ -35,7 +36,7 @@ class FloatingVideoService {
       final result = await FlutterOverlayWindow.requestPermission();
       return result ?? false;
     } catch (e) {
-      debugPrint('请求悬浮窗权限失败: $e');
+      logger.logSync('FloatingVideo', '请求悬浮窗权限失败: $e');
       return false;
     }
   }
@@ -48,24 +49,29 @@ class FloatingVideoService {
     required String title,
   }) async {
     try {
-      debugPrint('[FloatingVideo] 开始启动悬浮窗, videoPath: $videoPath');
+      print('[FloatingVideo] 开始启动悬浮窗, videoPath: $videoPath');
+      logger.logSync('FloatingVideo', '开始启动悬浮窗, videoPath: $videoPath');
       
       // 检查权限
       if (!await isPermissionGranted()) {
         debugPrint('[FloatingVideo] 悬浮窗权限未授权，请求中...');
+        logger.logSync('FloatingVideo', '悬浮窗权限未授权，请求中...');
         final granted = await requestPermission();
         if (!granted) {
           debugPrint('[FloatingVideo] 悬浮窗权限被拒绝');
+        logger.logSync('FloatingVideo', '悬浮窗权限被拒绝');
           return false;
         }
       }
       
       debugPrint('[FloatingVideo] 悬浮窗权限已授权');
+      logger.logSync('FloatingVideo', '悬浮窗权限已授权');
       _currentVideoPath = videoPath;
       _currentTitle = title;
       
       // 显示悬浮窗 - 使用正确的命名参数
       debugPrint('[FloatingVideo] 调用 showOverlay...');
+      logger.logSync('FloatingVideo', '调用 showOverlay...');
       await FlutterOverlayWindow.showOverlay(
         height: 180,
         width: 280,
@@ -79,6 +85,7 @@ class FloatingVideoService {
       
       _isFloating = true;
       debugPrint('[FloatingVideo] showOverlay 调用成功');
+      logger.logSync('FloatingVideo', 'showOverlay 调用成功');
       
       // 发送视频信息到悬浮窗
       await Future.delayed(Duration(milliseconds: 500));
@@ -87,6 +94,7 @@ class FloatingVideoService {
       return true;
     } catch (e) {
       debugPrint('[FloatingVideo] 启动悬浮窗失败: $e');
+      logger.logSync('FloatingVideo', '启动悬浮窗失败: $e');
       return false;
     }
   }
@@ -101,6 +109,7 @@ class FloatingVideoService {
       });
     } catch (e) {
       debugPrint('发送视频信息到悬浮窗失败: $e');
+      logger.logSync('FloatingVideo', '发送视频信息到悬浮窗失败: $e');
     }
   }
   
@@ -116,6 +125,7 @@ class FloatingVideoService {
       return true;
     } catch (e) {
       debugPrint('关闭悬浮窗失败: $e');
+      logger.logSync('FloatingVideo', '关闭悬浮窗失败: $e');
       return false;
     }
   }
@@ -126,6 +136,7 @@ class FloatingVideoService {
       await FlutterOverlayWindow.resizeOverlay(width, height, enableDrag);
     } catch (e) {
       debugPrint('更新悬浮窗大小失败: $e');
+      logger.logSync('FloatingVideo', '更新悬浮窗大小失败: $e');
     }
   }
   
@@ -138,6 +149,7 @@ class FloatingVideoService {
       });
     } catch (e) {
       debugPrint('发送命令到悬浮窗失败: $e');
+      logger.logSync('FloatingVideo', '发送命令到悬浮窗失败: $e');
     }
   }
   
