@@ -1,5 +1,9 @@
 package com.bilinico.download_91
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
@@ -13,6 +17,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import androidx.annotation.RequiresApi
+import androidx.core.app.NotificationCompat
 
 /**
  * 原生悬浮窗视频播放服务
@@ -32,6 +37,10 @@ class FloatingWindowService : Service() {
         const val EXTRA_WIDTH = "extra_width"
         const val EXTRA_HEIGHT = "extra_height"
         const val EXTRA_SEEK_POS = "extra_seek_pos"
+
+        private const val NOTIFICATION_CHANNEL_ID = "floating_window_channel"
+        private const val NOTIFICATION_CHANNEL_NAME = "悬浮窗播放"
+        private const val NOTIFICATION_ID = 1001
 
         var instance: FloatingWindowService? = null
             private set
@@ -69,6 +78,47 @@ class FloatingWindowService : Service() {
         super.onCreate()
         instance = this
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        createNotificationChannel()
+        startForeground(NOTIFICATION_ID, buildNotification("悬浮窗播放服务运行中"))
+    }
+
+    /**
+     * 创建通知渠道（Android 8.0+ 必须）
+     */
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                NOTIFICATION_CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "视频悬浮窗播放时显示的通知"
+                setShowBadge(false)
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    /**
+     * 构建前台服务通知
+     */
+    private fun buildNotification(contentText: String): Notification {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setContentTitle("91Download 悬浮窗播放")
+            .setContentText(contentText)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
