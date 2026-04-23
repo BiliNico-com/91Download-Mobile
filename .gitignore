@@ -53,6 +53,9 @@ app.*.map.json
 **/ios/Flutter/Flutter.framework
 **/ios/Flutter/Flutter.podspec
 **/ios/Flutter/Generated.xcconfig
+
+# Debug logs
+assets/network_log_*.txt
 **/ios/Flutter/app.flx
 **/ios/Flutter/app.zip
 **/ios/Flutter/engine
