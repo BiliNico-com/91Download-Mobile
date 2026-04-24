@@ -1,1 +1,1 @@
-{"version": "1.0.5", "build_number": 361, "download_url": "https://github.com/BiliNico-com/91Download-Mobile/releases/latest/download/app-release.apk", "release_notes": "- 关注页面直接加载作者视频\n- 悬浮窗关闭自动退出遮罩模式\n- 悬浮窗播放时点击未下载视频仍可勾选下载", "release_date": "2026-04-24"}
+{"version": "1.0.5", "build_number": 361, "download_url": "https://github.com/BiliNico-com/91Download-Mobile/releases/latest/download/app-release.apk", "release_notes": "- 版本检查改用爬取 release 页面\n- 关注页面直接加载作者视频\n- 悬浮窗关闭自动退出遮罩模式", "release_date": "2026-04-24"}
