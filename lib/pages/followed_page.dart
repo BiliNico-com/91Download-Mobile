@@ -39,7 +39,21 @@ class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClie
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    // 清除返回回调
+    final appState = context.read<AppState>();
+    if (appState.onWillPopCallback == _handleBackPress) {
+      appState.onWillPopCallback = null;
+    }
     super.dispose();
+  }
+  
+  /// 处理返回事件（供 MainPage 调用）
+  bool _handleBackPress() {
+    if (_isAuthorMode) {
+      _exitAuthorMode();
+      return true; // 已处理
+    }
+    return false; // 未处理
   }
 
   void _onScroll() {
@@ -56,46 +70,37 @@ class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClie
     final appState = context.watch<AppState>();
     final followedList = appState.followedAuthorsService.followedList;
 
-    return WillPopScope(
-      onWillPop: () async {
-        if (_isAuthorMode) {
-          _exitAuthorMode();
-          return false;
-        }
-        return true;
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: _isAuthorMode 
-              ? Row(
-                  children: [
-                    Icon(Icons.arrow_back, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(_currentAuthorName, 
-                        style: TextStyle(fontSize: 16),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+    return Scaffold(
+      appBar: AppBar(
+        title: _isAuthorMode 
+            ? Row(
+                children: [
+                  Icon(Icons.arrow_back, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(_currentAuthorName, 
+                      style: TextStyle(fontSize: 16),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  ],
-                )
-              : Text('已关注 (${followedList.length})'),
-          centerTitle: true,
-        ),
-        body: followedList.isEmpty
-            ? _buildEmptyState()
-            : _isAuthorMode 
-                ? _buildAuthorVideoList(appState)
-                : _buildAuthorGrid(followedList, appState),
-        floatingActionButton: _isAuthorMode && _selectedIds.isNotEmpty
-            ? FloatingActionButton.extended(
-                onPressed: () => _downloadSelected(appState),
-                icon: Icon(Icons.download),
-                label: Text('下载 (${_selectedIds.length})'),
-                backgroundColor: Colors.blue,
+                  ),
+                ],
               )
-            : null,
+            : Text('已关注 (${followedList.length})'),
+        centerTitle: true,
       ),
+      body: followedList.isEmpty
+          ? _buildEmptyState()
+          : _isAuthorMode 
+              ? _buildAuthorVideoList(appState)
+              : _buildAuthorGrid(followedList, appState),
+      floatingActionButton: _isAuthorMode && _selectedIds.isNotEmpty
+          ? FloatingActionButton.extended(
+              onPressed: () => _downloadSelected(appState),
+              icon: Icon(Icons.download),
+              label: Text('下载 (${_selectedIds.length})'),
+              backgroundColor: Colors.blue,
+            )
+          : null,
     );
   }
 
@@ -338,12 +343,46 @@ class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClie
       _selectedIds.clear();
       _isLoading = true;
     });
+    
+    // 设置返回回调
+    appState.onWillPopCallback = _handleBackPress;
 
-    await _loadMoreVideos();
+    // 直接加载第一页
+    try {
+      Logger().log('FollowedPage', '开始加载作者 $authorId');
+      final videos = await crawler.getAuthorVideos(authorId, page: 1);
+      Logger().log('FollowedPage', '获取到 ${videos.length} 个视频');
+      
+      if (mounted) {
+        setState(() {
+          if (videos.isNotEmpty) {
+            _authorVideos.addAll(videos);
+            _currentPage = 1;
+          }
+          _hasMore = videos.isNotEmpty;
+          _isLoading = false;
+        });
+      }
+    } catch (e, stack) {
+      Logger().log('FollowedPage', '加载作者视频失败: $e');
+      Logger().log('FollowedPage', '堆栈: $stack');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载失败: $e')),
+        );
+      }
+    }
   }
 
   /// 退出作者模式
   void _exitAuthorMode() {
+    // 清除返回回调
+    final appState = context.read<AppState>();
+    if (appState.onWillPopCallback == _handleBackPress) {
+      appState.onWillPopCallback = null;
+    }
+    
     setState(() {
       _isAuthorMode = false;
       _currentAuthorId = '';
@@ -359,13 +398,25 @@ class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClie
 
     final appState = context.read<AppState>();
     final crawler = appState.crawler;
-    if (crawler == null) return;
+    if (crawler == null) {
+      Logger().log('FollowedPage', 'crawler 为 null，无法加载');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('请先选择站点')),
+        );
+      }
+      return;
+    }
 
     setState(() => _isLoading = true);
+    Logger().log('FollowedPage', '开始加载作者 $_currentAuthorId 第 ${_currentPage + 1} 页');
 
     try {
       final nextPage = _currentPage + 1;
       final videos = await crawler.getAuthorVideos(_currentAuthorId, page: nextPage);
+      
+      Logger().log('FollowedPage', '获取到 ${videos.length} 个视频');
       
       if (mounted) {
         setState(() {
@@ -377,8 +428,9 @@ class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClie
           _isLoading = false;
         });
       }
-    } catch (e) {
+    } catch (e, stack) {
       Logger().log('FollowedPage', '加载作者视频失败: $e');
+      Logger().log('FollowedPage', '堆栈: $stack');
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
