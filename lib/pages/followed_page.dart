@@ -87,18 +87,64 @@ class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClie
               )
             : Text('已关注 (${followedList.length})'),
         centerTitle: true,
+        actions: _isAuthorMode && _authorVideos.isNotEmpty
+            ? [
+                // 全选/取消全选
+                IconButton(
+                  icon: Icon(_selectedIds.length == _authorVideos.length 
+                      ? Icons.deselect 
+                      : Icons.select_all),
+                  onPressed: () {
+                    setState(() {
+                      if (_selectedIds.length == _authorVideos.length) {
+                        _selectedIds.clear();
+                      } else {
+                        _selectedIds = _authorVideos.map((v) => v.id).toSet();
+                      }
+                    });
+                  },
+                  tooltip: _selectedIds.length == _authorVideos.length ? '取消全选' : '全选',
+                ),
+              ]
+            : null,
       ),
       body: followedList.isEmpty
           ? _buildEmptyState()
           : _isAuthorMode 
               ? _buildAuthorVideoList(appState)
               : _buildAuthorGrid(followedList, appState),
-      floatingActionButton: _isAuthorMode && _selectedIds.isNotEmpty
-          ? FloatingActionButton.extended(
-              onPressed: () => _downloadSelected(appState),
-              icon: Icon(Icons.download),
-              label: Text('下载 (${_selectedIds.length})'),
-              backgroundColor: Colors.blue,
+      floatingActionButton: _isAuthorMode
+          ? Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                // 回到顶部按钮
+                if (_authorVideos.isNotEmpty)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: FloatingActionButton(
+                      heroTag: 'scrollTop',
+                      mini: true,
+                      onPressed: () {
+                        _scrollController.animateTo(
+                          0,
+                          duration: Duration(milliseconds: 300),
+                          curve: Curves.easeOut,
+                        );
+                      },
+                      child: Icon(Icons.arrow_upward),
+                      backgroundColor: Colors.grey[700],
+                    ),
+                  ),
+                // 下载按钮
+                if (_selectedIds.isNotEmpty)
+                  FloatingActionButton.extended(
+                    heroTag: 'download',
+                    onPressed: () => _downloadSelected(appState),
+                    icon: Icon(Icons.download),
+                    label: Text('下载 (${_selectedIds.length})'),
+                    backgroundColor: Colors.blue,
+                  ),
+              ],
             )
           : null,
     );
