@@ -140,39 +140,33 @@ class VersionService {
            remote.version != localVersion.version;
   }
 
-  /// 从 GitHub Release API 获取最新版本
+  /// 从 GitHub Release 页面获取最新版本（爬取页面，不受 API 限制）
   static Future<VersionInfo?> _fetchLatestRelease() async {
-    const apiUrl = 'https://api.github.com/repos/$_owner/$_repo/releases/latest';
-    Logger().logSync('Version', '开始请求: $apiUrl');
+    const releaseUrl = 'https://github.com/$_owner/$_repo/releases/latest';
+    Logger().logSync('Version', '开始请求: $releaseUrl');
     
     try {
       final dio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 10),
         receiveTimeout: const Duration(seconds: 15),
-        headers: {'User-Agent': '91Download-App/$fullVersion'},
+        headers: {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
       ));
 
-      final response = await dio.get(apiUrl);
+      final response = await dio.get(releaseUrl);
       
       Logger().logSync('Version', '响应状态码: ${response.statusCode}');
-      Logger().logSync('Version', '响应头: ${response.headers.map}');
 
       if (response.statusCode == 200) {
-        Logger().logSync('Version', '响应数据长度: ${response.data.toString().length}');
-        final result = _parseRelease(response.data is String
-            ? response.data as String
-            : jsonEncode(response.data));
+        final html = response.data.toString();
+        final result = _parseReleasePage(html);
         if (result != null) {
           Logger().logSync('Version', '解析成功: version=${result.version}, buildNumber=${result.buildNumber}');
         } else {
-          Logger().logSync('Version', '解析失败，请检查JSON格式');
+          Logger().logSync('Version', '解析失败，请检查HTML格式');
         }
         return result;
-      } else if (response.statusCode == 404) {
-        Logger().logSync('Version', 'No releases found (404)');
-        return null;
       } else {
-        Logger().logSync('Version', 'API error: ${response.statusCode}, body: ${response.data}');
+        Logger().logSync('Version', '请求失败: ${response.statusCode}');
         return null;
       }
     } on DioException catch (e) {
@@ -184,81 +178,34 @@ class VersionService {
         Logger().logSync('Version', '  statusCode: ${e.response?.statusCode}');
         Logger().logSync('Version', '  responseData: ${e.response?.data}');
       }
-      if (e.type == DioExceptionType.connectionTimeout) {
-        Logger().logSync('Version', '  连接超时，请检查网络');
-      } else if (e.type == DioExceptionType.receiveTimeout) {
-        Logger().logSync('Version', '  接收超时，服务器响应慢');
-      } else if (e.type == DioExceptionType.unknown) {
-        Logger().logSync('Version', '  未知网络错误，可能是DNS解析失败或无网络');
-      }
       return null;
     } catch (e, stackTrace) {
       Logger().logSync('Version', '❌ fetch error: $e');
-      Logger().logSync('Version', '$stackTrace');
       return null;
     }
   }
 
-  /// 解析 GitHub Release JSON
-  static VersionInfo? _parseRelease(String jsonBody) {
+  /// 解析 GitHub Release 页面 HTML
+  static VersionInfo? _parseReleasePage(String html) {
     try {
-      // 简单JSON解析（避免引入额外依赖）
-      final tagMatch = RegExp(r'"tag_name"\s*:\s*"([^"]+)"').firstMatch(jsonBody);
-      final nameMatch = RegExp(r'"name"\s*:\s*"([^"]+)"').firstMatch(jsonBody);
-      final dateMatch = RegExp(r'"published_at"\s*:\s*"([^"]+)"').firstMatch(jsonBody);
-      final bodyMatch = RegExp(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)"', dotAll: true).firstMatch(jsonBody);
-
-      // 提取下载URL
-      String? downloadUrl;
-      final assetRegex = RegExp(r'"browser_download_url"\s*:\s*"([^"]+\.apk[^"]*)"');
-      final assetMatch = assetRegex.firstMatch(jsonBody);
-      if (assetMatch != null) {
-        downloadUrl = assetMatch.group(1);
-      } else {
-        // 默认使用 latest release 页面
-        downloadUrl = 'https://github.com/$_owner/$_repo/releases/latest/download/app-release.apk';
+      // 从标题或标签解析版本号，格式：v1.0.5.389
+      final tagMatch = RegExp(r'v1\.0\.5\.(\d+)').firstMatch(html);
+      if (tagMatch == null) {
+        Logger().logSync('Version', '未找到版本号');
+        return null;
       }
 
-      // 解析 tag_name 为 version + buildNumber
-      // 格式: "v1.0.359" 或 "v1.0.5+359"
-      // 主版本号固定为 1.0.5，tag中最后一段大数字是 buildNumber
-      String tagName = tagMatch?.group(1) ?? '';
-      if (!tagName.startsWith('v')) tagName = 'v$tagName';
+      final buildNumber = int.tryParse(tagMatch.group(1)!) ?? 0;
       
-      // 主版本号固定为 1.0.5
-      const String mainVersion = '1.0.5';
-      
-      // 提取所有数字
-      final digits = RegExp(r'(\d+)').allMatches(tagName).map((m) => m.group(1)).toList();
-      int buildNumber = 0;
-      
-      if (digits.isNotEmpty) {
-        // 最后一个数字是 buildNumber
-        buildNumber = int.tryParse(digits.last ?? '0') ?? 0;
-      }
-      
-      Logger().logSync('Version', 'tag解析: $tagName → version=$mainVersion, buildNumber=$buildNumber');
-      
-      // 解析 release notes
-      List<String>? notes;
-      if (bodyMatch != null) {
-        final bodyText = bodyMatch.group(1)?.replaceAll('\\n', '\n') ?? '';
-        notes = bodyText.split('\n')
-            .where((l) => l.trim().isNotEmpty)
-            .map((l) => l.replaceAll(RegExp(r'^-\s*'), '').trim())
-            .where((l) => l.isNotEmpty)
-            .toList();
-      }
-
       return VersionInfo(
-        version: mainVersion,
+        version: '1.0.5',
         buildNumber: buildNumber,
-        downloadUrl: downloadUrl ?? '',
-        releaseDate: dateMatch?.group(1) ?? '',
-        releaseNotes: notes ?? const [],
+        downloadUrl: 'https://github.com/$_owner/$_repo/releases/latest/download/app-release.apk',
+        releaseDate: '',
+        releaseNotes: [],
       );
     } catch (e) {
-      Logger().logSync('Version', 'parse release error: $e');
+      Logger().logSync('Version', 'parse release page error: $e');
       return null;
     }
   }
