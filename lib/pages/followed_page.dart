@@ -16,7 +16,7 @@ class FollowedPage extends StatefulWidget {
 
 class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClientMixin {
   @override
-  bool get wantKeepAlive = true;
+  bool get wantKeepAlive => true;
 
   // 作者模式状态
   bool _isAuthorMode = false;
