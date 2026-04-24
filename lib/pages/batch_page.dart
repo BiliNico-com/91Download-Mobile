@@ -244,7 +244,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   Future<void> _switchToFloatingVideo(VideoInfo video) async {
     try {
       // 从下载历史获取本地文件路径
-      final crawler = await CrawlerFactory.getCrawler();
+      final appState = context.read<AppState>();
+      final crawler = appState.crawler;
       final localPath = await crawler?.getDownloadedPath(video.id);
 
       if (localPath != null && localPath.isNotEmpty) {
