@@ -1469,7 +1469,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(msg),
-            duration: Duration(seconds: 3),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
             action: SnackBarAction(
               label: '查看',
               onPressed: () {
