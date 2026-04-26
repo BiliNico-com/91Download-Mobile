@@ -600,6 +600,10 @@ class DownloadManager extends ChangeNotifier {
     if (_db == null) return;
     
     try {
+      // 已完成任务优先用 endTime，否则用 startTime
+      final timeToSave = (task.status == DownloadStatus.completed && task.endTime != null)
+          ? task.endTime!
+          : task.startTime;
       await _db!.insert(
         'download_tasks',
         {
@@ -612,7 +616,7 @@ class DownloadManager extends ChangeNotifier {
           'status': task.status.index,
           'file_path': task.filePath,
           'error': task.error,
-          'download_time': task.startTime.toIso8601String(),
+          'download_time': timeToSave.toIso8601String(),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
