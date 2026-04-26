@@ -186,7 +186,10 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       });
     } else {
       setState(() {
-        _results.addAll(newResults);
+        // 去重：过滤掉已存在的视频
+        final existingIds = _results.map((v) => v.id).toSet();
+        final uniqueNewResults = newResults.where((v) => !existingIds.contains(v.id)).toList();
+        _results.addAll(uniqueNewResults);
         _loadedPage = nextPage;
         _currentPage = nextPage;
         // 如果返回结果少于每页数量，说明没有更多了
@@ -215,7 +218,10 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       _authorHasMore = false;
     } else {
       setState(() {
-        _authorVideos.addAll(newVideos);
+        // 去重：过滤掉已存在的视频
+        final existingIds = _authorVideos.map((v) => v.id).toSet();
+        final uniqueNewVideos = newVideos.where((v) => !existingIds.contains(v.id)).toList();
+        _authorVideos.addAll(uniqueNewVideos);
         // 如果返回结果少于每页数量，说明没有更多了
         if (newVideos.length < 20) {
           _authorHasMore = false;

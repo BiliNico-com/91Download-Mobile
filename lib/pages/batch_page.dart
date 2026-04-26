@@ -115,7 +115,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       });
     } else {
       setState(() {
-        _videos.addAll(newVideos);
+        // 去重：过滤掉已存在的视频
+        final existingIds = _videos.map((v) => v.id).toSet();
+        final uniqueNewVideos = newVideos.where((v) => !existingIds.contains(v.id)).toList();
+        _videos.addAll(uniqueNewVideos);
         _totalVideos = _videos.length;
         _loadedPage = nextPage;
         _hasMore = newVideos.length >= 24;
@@ -206,7 +209,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       });
     } else {
       setState(() {
-        _authorVideos.addAll(newVideos);
+        // 去重：过滤掉已存在的视频
+        final existingIds = _authorVideos.map((v) => v.id).toSet();
+        final uniqueNewVideos = newVideos.where((v) => !existingIds.contains(v.id)).toList();
+        _authorVideos.addAll(uniqueNewVideos);
         _isLoading = false;
         if (newVideos.length < 20) _authorHasMore = false;
       });
