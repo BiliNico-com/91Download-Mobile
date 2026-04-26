@@ -249,27 +249,37 @@ class DownloadManager extends ChangeNotifier {
           existing.status == DownloadStatus.paused) {
         return 'duplicate';
       }
-      // 如果是已完成的任务且用户确认覆盖
-      if (existing.status == DownloadStatus.completed && forceRestart) {
-        // 删除旧的下载文件
+      // 如果是已完成的任务
+      if (existing.status == DownloadStatus.completed) {
+        // 检查文件是否存在
+        bool fileExists = false;
         if (existing.filePath != null && existing.filePath!.isNotEmpty) {
           try {
-            final oldFile = File(existing.filePath!);
-            if (await oldFile.exists()) {
-              await oldFile.delete();
-              await logger.log('Download', '已删除旧文件: ${existing.filePath}');
-            }
+            fileExists = await File(existing.filePath!).exists();
+          } catch (_) {}
+        }
+        
+        if (!fileExists) {
+          // 文件不存在，允许重新下载，清理旧记录
+          _tasks.remove(existing);
+          _taskMap.remove(id);
+          _deleteTaskFromDb(id);
+        } else if (forceRestart) {
+          // 文件存在且用户确认覆盖
+          try {
+            await File(existing.filePath!).delete();
+            await logger.log('Download', '已删除旧文件: ${existing.filePath}');
           } catch (e) {
             await logger.log('Download', '删除旧文件失败: $e');
           }
+          _waitingQueue.remove(existing);
+          _tasks.remove(existing);
+          _taskMap.remove(id);
+          _deleteTaskFromDb(id);
+        } else {
+          // 文件存在且未确认覆盖
+          return 'duplicate';
         }
-        // 从列表和映射中移除旧任务
-        _waitingQueue.remove(existing);
-        _tasks.remove(existing);
-        _taskMap.remove(id);
-        _deleteTaskFromDb(id);
-      } else if (existing.status == DownloadStatus.completed) {
-        return 'duplicate';
       }
       // 失败的任务，允许重新下载
       if (existing.status == DownloadStatus.failed) {
