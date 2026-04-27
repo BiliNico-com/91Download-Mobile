@@ -1,7 +1,6 @@
 package com.bilinico.download_91
 
 import android.content.Intent
-import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -18,18 +17,6 @@ class MainActivity : FlutterActivity() {
         
         // 注册 PiP 插件
         PipPlugin.registerWith(flutterEngine.dartExecutor.binaryMessenger, this)
-        
-        // 注册媒体扫描通道
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.bilinico.download_91/media_scanner").setMethodCallHandler { call, result ->
-            when (call.method) {
-                "scanDirectory" -> {
-                    val dirPath = call.argument<String>("path") ?: ""
-                    scanMediaDirectory(dirPath)
-                    result.success(true)
-                }
-                else -> result.notImplemented()
-            }
-        }
         
         // 注册悬浮窗通信通道
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FLOATING_CHANNEL).setMethodCallHandler { call, result ->
@@ -88,32 +75,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /**
-     * 扫描目录下的媒体文件，触发系统重新索引（配合 .nomedia 清除相册条目）
-     */
-    private fun scanMediaDirectory(dirPath: String) {
-        val dir = java.io.File(dirPath)
-        if (!dir.exists() || !dir.isDirectory) return
-        
-        val files = dir.listFiles { file -> 
-            file.isFile && !file.name.startsWith(".") 
-        } ?: return
-        
-        val paths = files.map { it.absolutePath }.toTypedArray()
-        val mimeTypes = files.map { 
-            when (it.extension.lowercase()) {
-                "mp4" -> "video/mp4"
-                "mkv" -> "video/x-matroska"
-                "avi" -> "video/x-msvideo"
-                "mov" -> "video/quicktime"
-                "ts" -> "video/mp2t"
-                else -> "*/*"
-            }
-        }.toTypedArray()
-        
-        MediaScannerConnection.scanFile(this, paths, mimeTypes, null)
-    }
-    
     /**
      * 启动原生悬浮窗服务
      */

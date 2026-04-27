@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:device_info_plus/device_info_plus.dart';
@@ -467,8 +466,6 @@ class AppState extends ChangeNotifier {
           if (!await nomediaFile.exists()) {
             await nomediaFile.create();
           }
-          // 触发媒体重扫，让系统重新评估目录（发现 .nomedia 后移除已索引条目）
-          _scanMediaDirectory(downloadDir);
         } else {
           if (await nomediaFile.exists()) {
             await nomediaFile.delete();
@@ -478,14 +475,6 @@ class AppState extends ChangeNotifier {
     }
     await _saveSettings();
     notifyListeners();
-  }
-  
-  // 调用原生媒体扫描
-  void _scanMediaDirectory(String path) {
-    try {
-      const channel = MethodChannel('com.bilinico.download_91/media_scanner');
-      channel.invokeMethod('scanDirectory', {'path': path});
-    } catch (_) {}
   }
   
   // 设置已认证状态
