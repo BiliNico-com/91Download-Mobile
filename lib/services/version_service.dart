@@ -97,7 +97,7 @@ class VersionService {
   }
 
   /// 检查更新 - 只走 GitHub Release API
-  /// 返回 null 表示无更新或检查失败
+  /// 返回 null 表示检查失败；返回 VersionInfo 但不一定是新版本，需用 hasNewVersion 判断
   static Future<VersionInfo?> checkUpdate() async {
     if (isCheckingUpdate) return null;
     isCheckingUpdate = true;
@@ -105,21 +105,18 @@ class VersionService {
     try {
       Logger().logSync('Version', '正在检查更新...');
       
-      // 方案1：GitHub Release API（唯一真实来源）
       final release = await _fetchLatestRelease();
       if (release != null) {
         remoteVersion = release;
         
-        // 比较 build number
         final storedBuild = await getStoredBuildNumber();
         if (release.buildNumber > storedBuild || 
             (release.buildNumber == 0 && release.version != localVersion.version)) {
           Logger().logSync('Version', '发现新版本: ${release} > v${localVersion.version}.$storedBuild');
-          return release;
+        } else {
+          Logger().logSync('Version', '当前已是最新版本');
         }
-        
-        Logger().logSync('Version', '当前已是最新版本');
-        return null;
+        return release;
       }
       
       Logger().logSync('Version', '未获取到远程版本信息');
