@@ -1403,8 +1403,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     // 队列中已存在的视频，直接跳过并提示
     if (inQueue.isNotEmpty) {
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${inQueue.length} 个视频已在下载队列中，已跳过')),
+          SnackBar(
+            content: Text('${inQueue.length} 个视频已在下载队列中，已跳过'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     }
@@ -1472,6 +1477,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       if (mounted) {
         final msg = '已添加 ${result['new']} 个视频到下载队列'
             '${result['duplicate']! > 0 ? '，${result['duplicate']} 个已跳过' : ''}';
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(msg),
