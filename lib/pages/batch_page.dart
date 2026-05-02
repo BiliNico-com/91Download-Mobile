@@ -1255,11 +1255,55 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
                   ),
                 ),
               
-              // ── 第三行：下拉选择器（展开时显示，非作者模式下显示）──
-              if (collapseRatio < 0.5 && !isAuthorPageMode)
+              // ── 第三行：下拉选择器/批量操作按钮（展开时显示）──
+              if (collapseRatio < 0.5)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                  child: _buildTypeChip(ctx, isDark),
+                  child: isAuthorPageMode
+                      ? Row(
+                          children: [
+                            // 已选数量悬浮胶囊（作者模式）
+                            if (selectedCount > 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.withOpacity(0.9),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Text(
+                                  '已选 $selectedCount 个',
+                                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                            // 全选按钮（作者模式）
+                            if (selectedCount > 0) ...[
+                              const SizedBox(width: 8),
+                              GestureDetector(
+                                onTap: onSelectAll,
+                                child: Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: selectedCount == totalCount
+                                        ? Colors.blue
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: selectedCount == totalCount
+                                        ? null
+                                        : Border.all(color: Colors.blue, width: 2),
+                                  ),
+                                  child: Icon(
+                                    Icons.check,
+                                    color: selectedCount == totalCount
+                                        ? Colors.white
+                                        : Colors.blue,
+                                    size: 18,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        )
+                      : _buildTypeChip(ctx, isDark),
                 ),
             ],
           ),
