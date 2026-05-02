@@ -86,20 +86,35 @@ class VersionService {
         final publishedAt = data['published_at'] as String? ?? '';
 
         // 从 tag_name 解析版本号和 build number
-        // CI 生成的格式: v1.0.{run_number} （如 v1.0.340）
+        // CI 生成的格式: v1.0.{run_number} （如 v1.0.340）或 v1.0.5.{run_number}（如 v1.0.5.440）
         String remoteVersion = '';
         int buildNumber = 0;
 
         if (tagName.startsWith('v')) {
-          final verStr = tagName.substring(1); // 去掉 'v' 前缀，如 "1.0.340"
+          final verStr = tagName.substring(1); // 去掉 'v' 前缀，如 "1.0.340" 或 "1.0.5.440"
           final parts = verStr.split('.');
           if (parts.length >= 3) {
             // 最后一段是 build number，前面的是语义化版本
             buildNumber = int.tryParse(parts.last) ?? 0;
-            // 版本号取前 N-1 段拼接（如 parts=["1","0","340"] → version="1.0"）
-            // 但如果格式是 "1.0.5.340" 则取前3段
-            final versionParts = parts.length > 3 ? parts.sublist(0, 3) : parts.sublist(0, parts.length - 1);
-            remoteVersion = versionParts.join('.');
+            // 版本号取前 N-1 段拼接
+            // 注意：需要判断最后一段是否明显是 build number（较大数字如 300+）
+            // 如果 parts.length == 3 且最后一段 > 100，视为 build number
+            // 否则视为普通版本号的一部分
+            if (parts.length == 3) {
+              final lastPart = int.tryParse(parts.last) ?? 0;
+              if (lastPart > 100) {
+                // 明显是 build number，取前 N-1 段作为版本号
+                remoteVersion = parts.sublist(0, parts.length - 1).join('.');
+              } else {
+                // 可能是普通版本号（如 1.0.5），全部保留
+                remoteVersion = verStr;
+              }
+            } else if (parts.length > 3) {
+              // 多段时取前 3 段作为版本号
+              remoteVersion = parts.sublist(0, 3).join('.');
+            } else {
+              remoteVersion = parts.join('.');
+            }
           }
         } else if (tagName.startsWith('build')) {
           buildNumber = int.tryParse(tagName.substring(5)) ?? 0;
@@ -159,9 +174,12 @@ class VersionService {
     final localParts = _currentVersion.split('.');
     final remoteParts = remote.version.split('.');
 
-    for (int i = 0; i < 3; i++) {
-      final local = localParts.length > i ? int.tryParse(localParts[i]) ?? 0 : 0;
-      final remoteVal = remoteParts.length > i ? int.tryParse(remoteParts[i]) ?? 0 : 0;
+    // 获取最大长度，确保两个版本号都被正确补0后再比较
+    final maxLen = localParts.length > remoteParts.length ? localParts.length : remoteParts.length;
+
+    for (int i = 0; i < maxLen; i++) {
+      final local = i < localParts.length ? int.tryParse(localParts[i]) ?? 0 : 0;
+      final remoteVal = i < remoteParts.length ? int.tryParse(remoteParts[i]) ?? 0 : 0;
 
       if (remoteVal > local) return true;
       if (remoteVal < local) return false;
