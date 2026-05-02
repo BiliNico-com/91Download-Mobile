@@ -300,28 +300,14 @@ class CrawlerCore {
     
     Logger().logSync('Parse', '解析 porn91 HTML, 长度: ${html.length}');
     
-    // 策略1：只匹配 col-lg-3 容器内的视频卡片（过滤 col-lg-8 广告）
-    // 找到所有容器位置
-    final containerMatches = CrawlerConfig.containerPattern.allMatches(html).toList();
-    Logger().logSync('Parse', '找到 ${containerMatches.length} 个容器匹配');
+    // 使用平衡 div 计数法提取完整的 col-lg-3 well well-sm 容器
+    // 这确保日期等所有内容都在解析范围内
+    final containers = _extractBalancedDivContents(html, 'col-lg-3');
+    Logger().logSync('Parse', '找到 ${containers.length} 个 col-lg-3 容器');
     
-    for (var i = 0; i < containerMatches.length; i++) {
-      final match = containerMatches[i];
-      final start = match.start;
-      
-      // 确定容器结束位置：找到下一个 <div class="col-xs-12 开始
-      // 这样可以避开中间的广告位
-      final nextDivPattern = RegExp(r'<div[^>]*class="[^"]*col-xs-12[^"]*"', caseSensitive: false);
-      int? end;
-      for (final m in nextDivPattern.allMatches(html)) {
-        if (m.start > start) {
-          end = m.start;
-          break;
-        }
-      }
-      
-      final containerEnd = end ?? html.length;
-      final wellContent = html.substring(start, containerEnd);
+    for (final wellContent in containers) {
+      // 跳过不是视频卡片的容器（如广告容器）
+      if (!wellContent.contains('well-sm')) continue;
       
       // 提取 viewkey
       final viewkeyMatch = CrawlerConfig.viewkeyPattern.firstMatch(wellContent);
@@ -413,7 +399,7 @@ class CrawlerCore {
           uploadDate = dateMatch.group(1)!.trim();
         }
       }
-      // 格式3: 2024-01-15 格式的日期
+      // 格式3: 2024-01-15 格式的日期（宽松匹配，匹配第一个）
       if (uploadDate == null) {
         dateMatch = RegExp(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})').firstMatch(wellContent);
         if (dateMatch != null) {
@@ -436,7 +422,7 @@ class CrawlerCore {
       seenIds.add(viewkey);
       
       // 详细日志
-      Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$viewkey, 封面ID=$coverId, 作者=$author, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
+      Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$viewkey, 封面ID=$coverId, 作者=$author, 时长=$duration, 上传日期=$uploadDate, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
       
       videos.add(VideoInfo(
         id: viewkey,

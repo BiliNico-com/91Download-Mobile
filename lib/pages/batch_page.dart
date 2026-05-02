@@ -439,10 +439,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   List<Widget> _buildOverlays(AppState appState) {
     final isDark = appState.isDarkMode;
     return [
-      // 作者模式悬浮胶囊：已选数量 + 全选按钮（滚动时始终显示）
+      // 作者模式悬浮胶囊：已选数量 + 全选按钮（固定在底部，紧贴下载按钮上方）
       if (_isAuthorPageMode && _selectedIds.isNotEmpty)
         Positioned(
-          top: MediaQuery.of(context).padding.top + 56,  // 紧贴 Header 底部
+          bottom: 150,  // 紧贴下载按钮上方（下载按钮 bottom=80 + FAB高度约56 + 间距14）
           left: 16,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
