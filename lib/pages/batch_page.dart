@@ -443,7 +443,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       if (_isAuthorPageMode && _selectedIds.isNotEmpty)
         Positioned(
           bottom: 150,  // 紧贴下载按钮上方（下载按钮 bottom=80 + FAB高度约56 + 间距14）
-          left: 16,
+          right: 16,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
