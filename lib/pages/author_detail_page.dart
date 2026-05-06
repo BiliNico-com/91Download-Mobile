@@ -1,7 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/author_info.dart';
 import '../models/video_info.dart';
 import '../services/app_state.dart';
 import '../components/empty_state.dart';
@@ -124,9 +123,9 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
               return TextButton.icon(
                 onPressed: () async {
                   if (isFollowed) {
-                    await appState.followedAuthorsService.removeFollowedAuthor(widget.author.id);
+                    await appState.followedAuthorsService.unfollow(widget.author.id);
                   } else {
-                    await appState.followedAuthorsService.addFollowedAuthor(widget.author);
+                    await appState.followedAuthorsService.follow(widget.author.id, widget.author.name, avatarUrl: widget.author.avatar);
                   }
                   appState.notifyListeners();
                   if (mounted) setState(() {});

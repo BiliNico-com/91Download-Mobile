@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../models/author_info.dart';
+import '../models/video_info.dart';
 import '../pages/main_page.dart';
 import '../pages/search_page.dart';
 import '../pages/batch_page.dart';

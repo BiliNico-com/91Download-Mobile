@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
@@ -1391,7 +1392,7 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
           ),
           onPressed: onPrivacyToggle,
           tooltip: privacyMode ? '取消模糊' : '模糊预览图',
-          padding: const EdgeInsets.zero,
+          padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
         ),
       ],

@@ -824,7 +824,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             ),
           );
         },
-        onDismissed: (_) => _deleteCompletedVideo(task, appState),
+        onDismissed: (_) => _deleteTaskWithConfirm(task, appState),
         child: GestureDetector(
           onLongPress: () {
             setState(() {
@@ -1028,7 +1028,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('确认删除'),
-            content: Text('确定要删除下载任务"${task.title}"吗？'),
+            content: Text('确定要删除下载任务"${task.video.title}"吗？'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
@@ -1042,7 +1042,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           ),
         );
       },
-      onDismissed: (_) => _cancelDownloadTask(task),
+      onDismissed: (_) => appState.downloadManager.cancelTask(task.id),
       child: _buildDownloadTaskItem(task, selected, appState),
     );
   }
