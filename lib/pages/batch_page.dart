@@ -860,66 +860,95 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       right: 0,
       child: Center(
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: isDark ? Colors.grey[850] : Colors.white.withOpacity(0.95),
             borderRadius: BorderRadius.circular(24),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 8, offset: Offset(0, 2))],
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 8,
+                offset: Offset(0, 2),
+              ),
+            ],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                '第$_loadedPage页',
-                style: TextStyle(fontSize: 12, color: isDark ? Colors.white70 : Colors.grey[800], fontWeight: FontWeight.w500),
-              ),
-              SizedBox(width: 12),
+              // 上一页按钮
               GestureDetector(
                 onTap: (_isLoading || _isLoadingMore || _loadedPage <= 1) ? null : () => _goToPageDirect(_loadedPage - 1),
                 child: Container(
-                  padding: const EdgeInsets.all(4),
+                  padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: (_loadedPage <= 1) ? (isDark ? Colors.grey[700] : Colors.grey[300]) : (isDark ? Colors.blue[900] : Colors.blue[100]),
-                    borderRadius: BorderRadius.circular(12),
+                    color: (_loadedPage <= 1)
+                      ? (isDark ? Colors.grey[700] : Colors.grey[300])
+                      : (isDark ? Colors.blue[900] : Colors.blue[100]),
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(Icons.arrow_left, size: 18, color: (_loadedPage <= 1) ? Colors.grey[500] : (isDark ? Colors.blue[300] : Colors.blue[700])),
+                  child: Icon(
+                    Icons.arrow_left,
+                    size: 18,
+                    color: (_loadedPage <= 1)
+                      ? (isDark ? Colors.grey[500] : Colors.grey[500])
+                      : (isDark ? Colors.blue[300] : Colors.blue[700]),
+                  ),
                 ),
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 10),
+              // 当前页码输入框
               Container(
-                width: 60,
-                height: 28,
+                width: 64,
+                height: 32,
                 decoration: BoxDecoration(
-                  color: isDark ? Colors.grey[800] : Colors.grey[100],
-                  border: Border.all(color: isDark ? Colors.grey[700]! : Colors.grey[400]!),
-                  borderRadius: BorderRadius.circular(6),
+                  color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: isDark
+                          ? Colors.black.withOpacity(0.3)
+                          : Colors.grey.shade300.withOpacity(0.5),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-                child: TextField(
-                  controller: _pageController,
-                  keyboardType: TextInputType.number,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: isDark ? Colors.white70 : Colors.black87),
-                  decoration: InputDecoration(
-                    hintText: '回车',
-                    hintStyle: TextStyle(fontSize: 10, color: isDark ? Colors.grey[500] : Colors.grey[600]),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                    border: InputBorder.none,
-                    isDense: true,
+                child: Center(
+                  child: TextField(
+                    controller: _pageController,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.white : Colors.black87,
+                    ),
+                    decoration: const InputDecoration(
+                      hintText: '',
+                      contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                      border: InputBorder.none,
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _goToPage(),
+                    textInputAction: TextInputAction.go,
                   ),
-                  onSubmitted: (_) => _goToPage(),
-                  textInputAction: TextInputAction.go,
                 ),
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 10),
+              // 下一页按钮
               GestureDetector(
                 onTap: (_isLoading || _isLoadingMore) ? null : () => _goToPageDirect(_loadedPage + 1),
                 child: Container(
-                  padding: const EdgeInsets.all(4),
+                  padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
                     color: isDark ? Colors.blue[900] : Colors.blue[100],
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(Icons.arrow_right, size: 18, color: isDark ? Colors.blue[300] : Colors.blue[700]),
+                  child: Icon(
+                    Icons.arrow_right,
+                    size: 18,
+                    color: isDark ? Colors.blue[300] : Colors.blue[700],
+                  ),
                 ),
               ),
             ],

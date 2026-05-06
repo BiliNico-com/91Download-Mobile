@@ -201,6 +201,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         _results.addAll(uniqueNewResults);
         _loadedPage = nextPage;
         _currentPage = nextPage;
+        _pageController.text = '$nextPage'; // 同步页码输入框
         // 如果返回结果少于每页数量，说明没有更多了
         if (newResults.length < 20) {
           _hasMore = false;
@@ -930,6 +931,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       _hasMore = results.isNotEmpty;
       _isLoading = false;
     });
+
+    // 同步页码输入框显示
+    _pageController.text = '$page';
     
     // 滚动到顶部
     _scrollController.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);

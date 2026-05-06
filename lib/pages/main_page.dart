@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'batch_page.dart';
 import 'search_page.dart';
@@ -102,8 +103,7 @@ class _MainPageState extends State<MainPage> {
       }
       
       // 第二次点击，退出程序
-      // 在Android上会调用SystemNavigator.pop()或exit(0)
-      // 在iOS上会调用exit(0)
+      SystemNavigator.pop();
     }
   }
 

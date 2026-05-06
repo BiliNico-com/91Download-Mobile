@@ -32,6 +32,7 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
   int _authorCurrentPage = 0;
   String? _errorMessage;
   bool _isProcessingFollow = false;
+  bool _isFollowed = false;
 
   @override
   void initState() {
@@ -39,7 +40,11 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
     _scrollController.addListener(_onScroll);
     // 延迟到第一帧渲染完成后加载，避免 initState 中调用 setState
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _loadMoreAuthorVideos();
+      if (mounted) {
+        final appState = Provider.of<AppState>(context, listen: false);
+        setState(() => _isFollowed = appState.followedAuthorsService.isFollowedSync(widget.author.id));
+        _loadMoreAuthorVideos();
+      }
     });
   }
 
@@ -121,93 +126,101 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
         centerTitle: true,
         elevation: 0,
         actions: [
-          Builder(
-            builder: (context) {
-              final isFollowed = appState.followedAuthorsService.isFollowedSync(widget.author.id);
-              return GestureDetector(
-                onTap: _isProcessingFollow
-                    ? null
-                    : () async {
-                        setState(() => _isProcessingFollow = true);
-                        try {
-                          bool success;
-                          if (isFollowed) {
-                            success = await appState.followedAuthorsService.unfollow(widget.author.id);
-                          } else {
-                            success = await appState.followedAuthorsService.follow(
-                              widget.author.id,
-                              widget.author.name,
-                              avatarUrl: widget.author.avatar,
-                            );
-                          }
-                          if (success) {
-                            appState.notifyListeners();
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(isFollowed ? '已取消关注' : '关注成功'),
-                                  duration: const Duration(seconds: 1),
-                                ),
-                              );
-                            }
-                          } else if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('操作失败，请重试')),
-                            );
-                          }
-                        } catch (e) {
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('操作失败: $e')),
-                            );
-                          }
-                        } finally {
-                          if (mounted) setState(() => _isProcessingFollow = false);
+          // 使用 Material + InkWell 替代 GestureDetector，解决真机触摸无响应问题
+          // 通过 _isFollowed 本地状态缓存避免频繁重建
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _isProcessingFollow
+                  ? null
+                  : () async {
+                      setState(() => _isProcessingFollow = true);
+                      try {
+                        bool success;
+                        if (_isFollowed) {
+                          success = await appState.followedAuthorsService.unfollow(widget.author.id);
+                        } else {
+                          success = await appState.followedAuthorsService.follow(
+                            widget.author.id,
+                            widget.author.name,
+                            avatarUrl: widget.author.avatar,
+                          );
                         }
-                      },
-                behavior: HitTestBehavior.opaque,
-                child: Container(
-                  margin: const EdgeInsets.only(right: 12),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isFollowed
-                        ? (isDark ? Colors.grey[700] : Colors.grey[200])
-                        : AppTheme.primaryColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_isProcessingFollow)
-                        const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      else
-                        Icon(
-                          isFollowed ? Icons.favorite : Icons.favorite_border,
-                          size: 18,
-                          color: isFollowed
-                              ? AppTheme.errorColor
-                              : AppTheme.primaryColor,
-                        ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _isProcessingFollow ? '处理中...' : (isFollowed ? '已关注' : '关注'),
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: isFollowed
-                              ? (isDark ? Colors.grey[400] : Colors.grey[600])
-                              : AppTheme.primaryColor,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
+                        if (success) {
+                          appState.notifyListeners();
+                          // 同步更新本地状态
+                          if (mounted) {
+                            setState(() => _isFollowed = !_isFollowed);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(_isFollowed ? '已取消关注' : '关注成功'),
+                                duration: const Duration(seconds: 1),
+                              ),
+                            );
+                          }
+                        } else if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('操作失败，请重试')),
+                          );
+                        }
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('操作失败: $e')),
+                          );
+                        }
+                      } finally {
+                        if (mounted) setState(() => _isProcessingFollow = false);
+                      }
+                    },
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                margin: const EdgeInsets.only(right: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(
+                  color: _isFollowed
+                      ? (isDark ? Colors.grey[700]!.withOpacity(0.8) : Colors.grey[200]!)
+                      : AppTheme.primaryColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: _isFollowed
+                        ? (isDark ? Colors.grey[600]!.withOpacity(0.3) : Colors.grey[300]!)
+                        : AppTheme.primaryColor.withOpacity(0.25),
+                    width: 1,
                   ),
                 ),
-              );
-            },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_isProcessingFollow)
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor),
+                      )
+                    else
+                      Icon(
+                        _isFollowed ? Icons.favorite : Icons.favorite_border,
+                        size: 17,
+                        color: _isFollowed
+                            ? (isDark ? Colors.pink[300] : Colors.red[400])
+                            : AppTheme.primaryColor,
+                      ),
+                    const SizedBox(width: 5),
+                    Text(
+                      _isProcessingFollow ? '处理中...' : (_isFollowed ? '已关注' : '关注'),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: _isFollowed
+                            ? (isDark ? Colors.grey[300] : Colors.grey[600])
+                            : AppTheme.primaryColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ],
       ),

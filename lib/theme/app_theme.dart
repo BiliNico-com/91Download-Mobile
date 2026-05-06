@@ -110,8 +110,9 @@ class AppTheme {
     appBarTheme: const AppBarTheme(
       elevation: 0,
       centerTitle: true,
-      backgroundColor: primaryColor,
-      foregroundColor: Colors.white,
+      backgroundColor: cardBackground,
+      foregroundColor: textPrimary,
+      surfaceTintColor: Colors.transparent,
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
