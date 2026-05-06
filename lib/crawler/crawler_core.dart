@@ -416,7 +416,7 @@ class CrawlerCore {
       // 格式3: 相对时间（X天前 / X小时前 / X分钟前 / 刚刚）
       // 支持 "43 分钟 前"（带空格）和 "33分钟前"（无空格）两种格式
       if (uploadDate == null || uploadDate!.isEmpty) {
-        dateMatch = RegExp(r'(\d+\s*[天时分秒钟小时]+\s*前|刚刚|刚才)', caseSensitive: false).firstMatch(wellContent);
+        dateMatch = RegExp(r'(\d+\s*[天时分秒钟小时月周]+\s*前|刚刚|刚才)', caseSensitive: false).firstMatch(wellContent);
         if (dateMatch != null) {
           uploadDate = dateMatch.group(1)!.trim();
         }
@@ -617,7 +617,7 @@ class CrawlerCore {
       // 格式3: 相对时间（X天前 / X小时前 / X分钟前 / 刚刚）
       // 支持 "43 分钟 前"（带空格）和 "33分钟前"（无空格）两种格式
       if (uploadDate == null || uploadDate!.isEmpty) {
-        dateMatch = RegExp(r'(\d+\s*[天时分秒钟小时]+\s*前|刚刚|刚才)', caseSensitive: false).firstMatch(container);
+        dateMatch = RegExp(r'(\d+\s*[天时分秒钟小时月周]+\s*前|刚刚|刚才)', caseSensitive: false).firstMatch(container);
         if (dateMatch != null) {
           uploadDate = dateMatch.group(1)!.trim();
         }
