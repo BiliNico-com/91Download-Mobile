@@ -129,26 +129,25 @@ class AppState extends ChangeNotifier {
 
   CrawlerCore? get crawler {
     if (currentSite == null) return null;
-    
-    // 只在需要时创建 CrawlerCore，避免重复 setup
+
     if (_crawler == null) {
       _crawler = CrawlerCore(
         baseUrl: currentSite!,
         externalDbPath: downloadDir.isNotEmpty ? downloadDir : null,
       );
-      // 初始设置下载管理器和外部数据库路径（只需执行一次）
-      if (downloadDir.isNotEmpty) {
-        _downloadManager.setup(_crawler!, downloadDir);
-      }
       _downloadManager.externalDbPath = downloadDir.isNotEmpty ? downloadDir : null;
     }
-    
-    // 同步可能动态变化的设置
+
+    // 只要 downloadDir 可用就确保 setup 被调用（修复 downloadDir 延迟就绪导致 setup 漏调）
+    if (_crawler != null && downloadDir.isNotEmpty) {
+      _downloadManager.setup(_crawler!, downloadDir);
+    }
+
     _crawler!.saveDebugHtml = saveDebugHtml;
     _crawler!.maxConcurrentDownloads = maxConcurrentSegments;
     _downloadManager.maxConcurrentTasks = maxConcurrentTasks;
     _downloadManager.maxConcurrentSegments = maxConcurrentSegments;
-    
+
     return _crawler;
   }
 

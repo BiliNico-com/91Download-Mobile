@@ -356,7 +356,10 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   Widget _buildCompletedTab() {
     return Consumer<AppState>(
       builder: (context, appState, _) {
-        final tasks = appState.downloadManager.completedTasks;
+        final tasks = [
+          ...appState.downloadManager.completedTasks,
+          ...appState.downloadManager.failedTasks,
+        ];
         
         if (tasks.isEmpty) {
           return EmptyState(
@@ -579,6 +582,20 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     }
   }
   
+  void _retryDownload(DownloadTask task, AppState appState) async {
+    try {
+      // 重置任务状态为 pending 并重新添加到队列
+      await appState.downloadManager.retryTask(task.id);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已开始重试下载')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('重试失败: $e')),
+      );
+    }
+  }
+
   Widget _buildDownloadTaskItem(DownloadTask task, bool selected, AppState appState) {
     return GestureDetector(
       onTap: () {
@@ -816,7 +833,9 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             context: context,
             builder: (context) => AlertDialog(
               title: const Text('确认删除'),
-              content: Text('确定要删除已下载的视频吗？'),
+              content: Text(task.status == DownloadStatus.failed
+                  ? '确定要删除这个失败的下载任务吗？'
+                  : '确定要删除已下载的视频吗？'),
               actions: [
                 TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
                 TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('删除', style: TextStyle(color: Colors.red))),
@@ -832,7 +851,20 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
               _selectedIds.add(task.id);
             });
           },
-          onTap: () => _playVideo(task, appState),
+          onTap: task.status == DownloadStatus.failed
+            ? () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('下载失败：${task.error ?? '未知错误'}'),
+                    duration: const Duration(seconds: 3),
+                    action: SnackBarAction(
+                      label: '重试',
+                      onPressed: () => _retryDownload(task, appState),
+                    ),
+                  ),
+                );
+              }
+            : () => _playVideo(task, appState),
           child: Card(
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         color: selected ? Colors.blue.withOpacity(0.1) : null,

@@ -143,8 +143,8 @@ class DownloadManager extends ChangeNotifier {
   /// 初始化数据库
   Future<void> _initDb() async {
     if (_dbInitialized) return;
+    String? dbPath;
     try {
-      String dbPath;
       if (externalDbPath != null && externalDbPath!.isNotEmpty) {
         // 使用外部存储路径（卸载后保留）
         final dbDir = Directory('$externalDbPath/.db');
@@ -152,10 +152,14 @@ class DownloadManager extends ChangeNotifier {
           await dbDir.create(recursive: true);
         }
         dbPath = '${dbDir.path}/download_tasks.db';
-      } else {
-        // 使用应用私有路径（默认行为）
-        dbPath = '${await getDatabasesPath()}/download_tasks.db';
       }
+    } catch (e) {
+      Logger().log('Download', '外部存储数据库路径创建失败，将回退到内部存储: $e');
+      dbPath = null;
+    }
+
+    try {
+      dbPath ??= '${await getDatabasesPath()}/download_tasks.db';
       _db = await openDatabase(
         dbPath,
         onCreate: (db, version) {
