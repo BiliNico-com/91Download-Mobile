@@ -121,63 +121,90 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
         centerTitle: true,
         elevation: 0,
         actions: [
-          Consumer<AppState>(
-            builder: (context, appState, _) {
+          Builder(
+            builder: (context) {
               final isFollowed = appState.followedAuthorsService.isFollowedSync(widget.author.id);
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: TextButton.icon(
-                  onPressed: _isProcessingFollow
-                      ? null
-                      : () async {
-                          setState(() => _isProcessingFollow = true);
-                          try {
-                            bool success;
-                            if (isFollowed) {
-                              success = await appState.followedAuthorsService.unfollow(widget.author.id);
-                            } else {
-                              success = await appState.followedAuthorsService.follow(
-                                widget.author.id,
-                                widget.author.name,
-                                avatarUrl: widget.author.avatar,
-                              );
-                            }
-                            if (success) {
-                              appState.notifyListeners();
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(isFollowed ? '已取消关注' : '关注成功'),
-                                    duration: const Duration(seconds: 1),
-                                  ),
-                                );
-                              }
-                            } else if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('操作失败，请重试')),
-                              );
-                            }
-                          } catch (e) {
+              return GestureDetector(
+                onTap: _isProcessingFollow
+                    ? null
+                    : () async {
+                        setState(() => _isProcessingFollow = true);
+                        try {
+                          bool success;
+                          if (isFollowed) {
+                            success = await appState.followedAuthorsService.unfollow(widget.author.id);
+                          } else {
+                            success = await appState.followedAuthorsService.follow(
+                              widget.author.id,
+                              widget.author.name,
+                              avatarUrl: widget.author.avatar,
+                            );
+                          }
+                          if (success) {
+                            appState.notifyListeners();
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('操作失败: $e')),
+                                SnackBar(
+                                  content: Text(isFollowed ? '已取消关注' : '关注成功'),
+                                  duration: const Duration(seconds: 1),
+                                ),
                               );
                             }
-                          } finally {
-                            if (mounted) setState(() => _isProcessingFollow = false);
+                          } else if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('操作失败，请重试')),
+                            );
                           }
-                        },
-                  icon: _isProcessingFollow
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('操作失败: $e')),
+                            );
+                          }
+                        } finally {
+                          if (mounted) setState(() => _isProcessingFollow = false);
+                        }
+                      },
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  margin: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isFollowed
+                        ? (isDark ? Colors.grey[700] : Colors.grey[200])
+                        : AppTheme.primaryColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_isProcessingFollow)
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : Icon(
+                      else
+                        Icon(
                           isFollowed ? Icons.favorite : Icons.favorite_border,
-                          color: isFollowed ? AppTheme.errorColor : null,
+                          size: 18,
+                          color: isFollowed
+                              ? AppTheme.errorColor
+                              : AppTheme.primaryColor,
                         ),
-                  label: Text(_isProcessingFollow ? '处理中...' : (isFollowed ? '已关注' : '关注')),
+                      const SizedBox(width: 4),
+                      Text(
+                        _isProcessingFollow ? '处理中...' : (isFollowed ? '已关注' : '关注'),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: isFollowed
+                              ? (isDark ? Colors.grey[400] : Colors.grey[600])
+                              : AppTheme.primaryColor,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               );
             },
