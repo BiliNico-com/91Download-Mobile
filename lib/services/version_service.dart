@@ -130,11 +130,26 @@ class VersionService {
     }
   }
   
+  /// 语义化版本号比较（1.0.6 > 1.0.5，1.1.0 > 1.0.10）
+  static int _compareVersion(String v1, String v2) {
+    final parts1 = v1.split('.').map((p) => int.tryParse(p) ?? 0).toList();
+    final parts2 = v2.split('.').map((p) => int.tryParse(p) ?? 0).toList();
+    final maxLen = parts1.length > parts2.length ? parts1.length : parts2.length;
+    for (int i = 0; i < maxLen; i++) {
+      final a = i < parts1.length ? parts1[i] : 0;
+      final b = i < parts2.length ? parts2[i] : 0;
+      if (a != b) return a.compareTo(b);
+    }
+    return 0;
+  }
+
   /// 是否有新版本可用
   static bool hasNewVersion(VersionInfo? remote) {
     if (remote == null) return false;
-    return remote.buildNumber > localVersion.buildNumber ||
-           remote.version != localVersion.version;
+    final versionCompare = _compareVersion(remote.version, localVersion.version);
+    if (versionCompare > 0) return true;
+    if (versionCompare < 0) return false;
+    return remote.buildNumber > localVersion.buildNumber;
   }
 
   /// 从 GitHub Release 页面获取最新版本（爬取页面，不受 API 限制）
@@ -185,14 +200,15 @@ class VersionService {
   /// 解析 GitHub Release 页面 HTML
   static VersionInfo? _parseReleasePage(String html) {
     try {
-      // 从标题或标签解析版本号，格式：v1.0.5.389
-      final tagMatch = RegExp(r'v1\.0\.5\.(\d+)').firstMatch(html);
+      // 从标题或标签解析版本号，格式：v1.0.6.6（通用正则，支持任意版本号）
+      final tagMatch = RegExp(r'v(\d+\.\d+\.\d+)\.(\d+)').firstMatch(html);
       if (tagMatch == null) {
         Logger().logSync('Version', '未找到版本号');
         return null;
       }
 
-      final buildNumber = int.tryParse(tagMatch.group(1)!) ?? 0;
+      final version = tagMatch.group(1)!;
+      final buildNumber = int.tryParse(tagMatch.group(2)!) ?? 0;
       
       // 解析更新日志：从 markdown-body 区域提取文本
       final releaseNotes = <String>[];
@@ -215,7 +231,7 @@ class VersionService {
       }
       
       return VersionInfo(
-        version: '1.0.5',
+        version: version,
         buildNumber: buildNumber,
         downloadUrl: 'https://github.com/$_owner/$_repo/releases/latest/download/app-release.apk',
         releaseDate: '',
