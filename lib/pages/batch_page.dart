@@ -7,6 +7,7 @@ import '../services/app_state.dart';
 import '../services/followed_authors_service.dart';
 import '../services/floating_video_service.dart';
 import '../utils/logger.dart';
+import '../components/empty_state.dart';
 
 class BatchPage extends StatefulWidget {
   const BatchPage({super.key});
@@ -501,15 +502,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     }
     if (videos.isEmpty) {
       return SliverToBoxAdapter(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.video_library_outlined, size: 64, color: Colors.grey),
-              SizedBox(height: 16),
-              Text(_isAuthorPageMode ? '该作者暂无视频' : '输入页码并点击跳转', style: TextStyle(color: Colors.grey)),
-            ],
-          ),
+        child: EmptyState(
+          icon: Icons.video_library_outlined,
+          title: _isAuthorPageMode ? '该作者暂无视频' : '暂无视频',
+          subtitle: _isAuthorPageMode ? null : '输入页码并点击跳转按钮开始浏览',
         ),
       );
     }

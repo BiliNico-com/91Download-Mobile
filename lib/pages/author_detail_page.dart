@@ -1,0 +1,262 @@
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../models/author_info.dart';
+import '../models/video_info.dart';
+import '../services/app_state.dart';
+import '../components/empty_state.dart';
+import '../components/skeleton_card.dart';
+import '../components/video_card.dart';
+import '../theme/app_theme.dart';
+
+/// 作者详情页
+/// 
+/// 从 SearchPage 中拆分出的独立页面，负责展示作者信息和视频列表
+class AuthorDetailPage extends StatefulWidget {
+  final AuthorInfo author;
+
+  const AuthorDetailPage({
+    super.key,
+    required this.author,
+  });
+
+  @override
+  State<AuthorDetailPage> createState() => _AuthorDetailPageState();
+}
+
+class _AuthorDetailPageState extends State<AuthorDetailPage> {
+  final List<VideoInfo> _authorVideos = [];
+  final ScrollController _scrollController = ScrollController();
+  bool _isLoading = false;
+  bool _isLoadingMore = false;
+  bool _authorHasMore = true;
+  int _authorCurrentPage = 0;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+    _loadMoreAuthorVideos();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadMoreAuthorVideos();
+    }
+  }
+
+  Future<void> _loadMoreAuthorVideos() async {
+    if (!_authorHasMore || _isLoading || _isLoadingMore) return;
+
+    final appState = context.read<AppState>();
+    final crawler = appState.crawler;
+    if (crawler == null) return;
+
+    setState(() {
+      _isLoadingMore = true;
+      _errorMessage = null;
+    });
+
+    try {
+      _authorCurrentPage++;
+      final newVideos = await crawler.getAuthorVideos(
+        widget.author.id,
+        page: _authorCurrentPage,
+      );
+
+      if (mounted) {
+        if (newVideos.isEmpty) {
+          setState(() => _authorHasMore = false);
+        } else {
+          setState(() {
+            final existingIds = _authorVideos.map((v) => v.id).toSet();
+            final unique = newVideos.where((v) => !existingIds.contains(v.id)).toList();
+            _authorVideos.addAll(unique);
+            if (newVideos.length < 20) {
+              _authorHasMore = false;
+            }
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _errorMessage = '加载失败: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingMore = false);
+      }
+    }
+  }
+
+  Future<void> _onRefresh() async {
+    setState(() {
+      _authorVideos.clear();
+      _authorCurrentPage = 0;
+      _authorHasMore = true;
+      _errorMessage = null;
+    });
+    await _loadMoreAuthorVideos();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final appState = context.watch<AppState>();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.author.name),
+        centerTitle: true,
+        elevation: 0,
+        actions: [
+          Consumer<AppState>(
+            builder: (context, appState, _) {
+              final isFollowed = appState.followedAuthorsService.isFollowedSync(widget.author.id);
+              return TextButton.icon(
+                onPressed: () async {
+                  if (isFollowed) {
+                    await appState.followedAuthorsService.removeFollowedAuthor(widget.author.id);
+                  } else {
+                    await appState.followedAuthorsService.addFollowedAuthor(widget.author);
+                  }
+                  appState.notifyListeners();
+                  if (mounted) setState(() {});
+                },
+                icon: Icon(
+                  isFollowed ? Icons.favorite : Icons.favorite_border,
+                  color: isFollowed ? AppTheme.errorColor : null,
+                ),
+                label: Text(isFollowed ? '已关注' : '关注'),
+              );
+            },
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _onRefresh,
+        color: AppTheme.primaryColor,
+        backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
+        displacement: 40,
+        child: CustomScrollView(
+          controller: _scrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            // 作者信息头部
+            SliverToBoxAdapter(
+              child: _buildAuthorHeader(isDark),
+            ),
+            // 视频列表
+            _buildVideoList(appState, isDark),
+            // 底部加载指示器
+            _buildBottomLoader(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAuthorHeader(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(AppTheme.spacingLg),
+      margin: const EdgeInsets.all(AppTheme.spacingMd),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.darkSurface : AppTheme.cardBackground,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        boxShadow: AppTheme.cardShadow,
+      ),
+      child: Column(
+        children: [
+          CircleAvatar(
+            radius: 40,
+            backgroundColor: AppTheme.primaryColor.withOpacity(0.1),
+            child: const Icon(Icons.person, size: 40, color: AppTheme.primaryColor),
+          ),
+          const SizedBox(height: AppTheme.spacingMd),
+          Text(
+            widget.author.name,
+            style: AppTheme.titleLarge.copyWith(
+              color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
+            ),
+          ),
+          if (widget.author.profileUrl?.isNotEmpty == true) ...[
+            const SizedBox(height: AppTheme.spacingSm),
+            Text(
+              widget.author.profileUrl!,
+              style: AppTheme.bodySmall.copyWith(
+                color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          const SizedBox(height: AppTheme.spacingSm),
+          Text(
+            '${_authorVideos.length} 个视频',
+            style: AppTheme.caption,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoList(AppState appState, bool isDark) {
+    if (_isLoading && _authorVideos.isEmpty) {
+      return const SliverFillRemaining(
+        child: ShimmerVideoList(isListMode: true, count: 6),
+      );
+    }
+
+    if (_errorMessage != null && _authorVideos.isEmpty) {
+      return SliverFillRemaining(
+        child: EmptyState.networkError(onRetry: _onRefresh),
+      );
+    }
+
+    if (_authorVideos.isEmpty && !_isLoadingMore) {
+      return const SliverFillRemaining(
+        child: EmptyState(
+          icon: Icons.videocam_off,
+          title: '该作者暂无视频',
+          subtitle: '作者可能还没有上传任何内容',
+        ),
+      );
+    }
+
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          final video = _authorVideos[index];
+          return VideoCard(
+            video: video,
+            appState: appState,
+            isListMode: true,
+            showAuthor: false, // 作者页不需要显示作者
+            showUploadDate: true,
+            onTap: () {},
+          );
+        },
+        childCount: _authorVideos.length,
+      ),
+    );
+  }
+
+  Widget _buildBottomLoader() {
+    if (!_isLoadingMore) return const SliverToBoxAdapter(child: SizedBox.shrink());
+
+    return const SliverToBoxAdapter(
+      child: Padding(
+        padding: EdgeInsets.all(AppTheme.spacingLg),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      ),
+    );
+  }
+}

@@ -10,10 +10,12 @@ import 'dart:io';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
 import '../services/brightness_service.dart';
+import '../components/empty_state.dart';
 import '../services/pip_service.dart';
 import '../services/floating_video_service.dart';
 import '../models/video_info.dart' show VideoInfo;
 import '../utils/logger.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 
 class DownloadPage extends StatefulWidget {
   const DownloadPage({super.key});
@@ -97,17 +99,10 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
         final tasks = appState.downloadManager.downloadingTasks;
         
         if (tasks.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.download_outlined, size: 64, color: Colors.grey),
-                SizedBox(height: 16),
-                Text('暂无下载任务', style: TextStyle(color: Colors.grey)),
-                SizedBox(height: 8),
-                Text('在搜索页面选择视频后点击下载', style: TextStyle(fontSize: 12, color: Colors.grey)),
-              ],
-            ),
+          return EmptyState(
+            icon: Icons.download_outlined,
+            title: '暂无下载任务',
+            subtitle: '在搜索页面选择视频后点击下载',
           );
         }
         
@@ -168,7 +163,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                   itemBuilder: (context, index) {
                     final task = tasks[index];
                     final selected = _selectedIds.contains(task.id);
-                    return _buildDownloadTaskItem(task, selected, appState);
+                    return _buildSlidableDownloadItem(task, selected, appState);
                   },
                 ),
               ),
@@ -364,15 +359,10 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
         final tasks = appState.downloadManager.completedTasks;
         
         if (tasks.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.folder_outlined, size: 64, color: Colors.grey),
-                SizedBox(height: 16),
-                Text('暂无下载记录', style: TextStyle(color: Colors.grey)),
-              ],
-            ),
+          return EmptyState(
+            icon: Icons.folder_outlined,
+            title: '暂无下载记录',
+            subtitle: '已完成的下载会显示在这里',
           );
         }
         
@@ -811,33 +801,39 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
   
   Widget _buildCompletedTaskItem(DownloadTask task, bool selected, AppState appState) {
-    return GestureDetector(
-      onLongPress: () {
-        // 长按进入选择模式
-        setState(() {
-          _isCompletedSelectMode = true;
-          _selectedIds.add(task.id);
-        });
-      },
-      onTap: () {
-        if (_isCompletedSelectMode) {
-          // 选择模式：切换选中
-          setState(() {
-            if (selected) {
-              _selectedIds.remove(task.id);
-              if (_selectedIds.isEmpty) {
-                _isCompletedSelectMode = false;
-              }
-            } else {
+    if (!_isCompletedSelectMode) {
+      return Dismissible(
+        key: ValueKey('completed_${task.id}'),
+        direction: DismissDirection.endToStart,
+        background: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 20),
+          color: Colors.red,
+          child: const Icon(Icons.delete, color: Colors.white),
+        ),
+        confirmDismiss: (_) async {
+          return await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('确认删除'),
+              content: Text('确定要删除已下载的视频吗？'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+                TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('删除', style: TextStyle(color: Colors.red))),
+              ],
+            ),
+          );
+        },
+        onDismissed: (_) => _deleteCompletedVideo(task, appState),
+        child: GestureDetector(
+          onLongPress: () {
+            setState(() {
+              _isCompletedSelectMode = true;
               _selectedIds.add(task.id);
-            }
-          });
-        } else {
-          // 非选择模式：播放视频
-          _playVideo(task, appState);
-        }
-      },
-      child: Card(
+            });
+          },
+          onTap: () => _playVideo(task, appState),
+          child: Card(
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         color: selected ? Colors.blue.withOpacity(0.1) : null,
         child: Padding(
@@ -920,6 +916,134 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           ),
         ),
       ),
+    ),
+  );
+    }
+    // 选择模式：返回普通卡片（不允许滑动删除）
+    return GestureDetector(
+      onLongPress: () {
+        setState(() {
+          _isCompletedSelectMode = true;
+          _selectedIds.add(task.id);
+        });
+      },
+      onTap: () {
+        setState(() {
+          if (selected) {
+            _selectedIds.remove(task.id);
+            if (_selectedIds.isEmpty) {
+              _isCompletedSelectMode = false;
+            }
+          } else {
+            _selectedIds.add(task.id);
+          }
+        });
+      },
+      child: Card(
+        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        color: selected ? Colors.blue.withOpacity(0.1) : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: task.video.cover != null
+                      ? Image.network(task.video.cover!, width: 96, height: 64, fit: BoxFit.cover)
+                      : Container(width: 96, height: 64, color: Colors.grey[300], child: Icon(Icons.video_file, size: 24)),
+                  ),
+                  if (task.video.duration != null && task.video.duration!.isNotEmpty)
+                    Positioned(
+                      right: 4,
+                      bottom: 4,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: Colors.black87,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          task.video.duration!,
+                          style: TextStyle(color: Colors.white, fontSize: 10),
+                        ),
+                      ),
+                    ),
+                  if (_isCompletedSelectMode)
+                    Positioned(
+                      top: 2,
+                      left: 2,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: selected ? Colors.blue : Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: selected ? Colors.blue : Colors.grey, width: 2),
+                        ),
+                        child: Icon(selected ? Icons.check : null, size: 12, color: Colors.white),
+                      ),
+                    ),
+                ],
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _formatTitle(task.video),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      '下载于 ${_formatTime(task.endTime ?? task.startTime)}',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  /// 构建下载中列表项（使用 Dismissible 滑动删除）
+  Widget _buildSlidableDownloadItem(DownloadTask task, bool selected, AppState appState) {
+    return Dismissible(
+      key: Key('download_${task.id}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        color: Colors.red,
+        child: const Icon(Icons.delete, color: Colors.white),
+      ),
+      confirmDismiss: (direction) async {
+        return await showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('确认删除'),
+            content: Text('确定要删除下载任务"${task.title}"吗？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('删除', style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        );
+      },
+      onDismissed: (_) => _cancelDownloadTask(task),
+      child: _buildDownloadTaskItem(task, selected, appState),
     );
   }
   

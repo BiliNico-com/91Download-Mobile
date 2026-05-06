@@ -5,6 +5,7 @@ import '../services/app_state.dart';
 import '../services/followed_authors_service.dart';
 import '../services/floating_video_service.dart';
 import '../utils/logger.dart';
+import '../components/empty_state.dart';
 
 /// 已关注作者页面
 class FollowedPage extends StatefulWidget {
@@ -243,15 +244,9 @@ class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClie
     }
 
     if (_authorVideos.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.video_library_outlined, size: 64, color: Colors.grey),
-            SizedBox(height: 16),
-            Text('该作者暂无视频', style: TextStyle(fontSize: 16, color: Colors.grey)),
-          ],
-        ),
+      return const EmptyState(
+        icon: Icons.video_library_outlined,
+        title: '该作者暂无视频',
       );
     }
 

@@ -5,6 +5,10 @@ import '../services/app_state.dart';
 import '../services/followed_authors_service.dart';
 import '../models/video_info.dart';
 import '../utils/logger.dart';
+import '../components/video_card.dart';
+import '../components/empty_state.dart';
+import '../components/skeleton_card.dart';
+import '../utils/debouncer.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({super.key});
@@ -46,6 +50,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   // 进入作者主页前的滚动位置（返回时恢复）
   double _savedScrollOffset = 0;
   
+  // 搜索防抖器
+  late final Debouncer _searchDebouncer;
+  
   @override
   bool get wantKeepAlive => true;  // 保持页面状态
   
@@ -79,10 +86,12 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     super.initState();
     _scrollController.addListener(_onScroll);
     _pageController.text = '1';
+    _searchDebouncer = Debouncer(milliseconds: 500);
   }
   
   @override
   void dispose() {
+    _searchDebouncer.dispose();
     // 清除返回键回调
     try {
       context.read<AppState>().onWillPopCallback = null;
@@ -662,6 +671,11 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     isDense: true,
                     contentPadding: EdgeInsets.zero,
                   ),
+                  onChanged: (value) {
+                    if (value.trim().isNotEmpty) {
+                      _searchDebouncer.run(() => _search());
+                    }
+                  },
                   onSubmitted: (_) => _search(),
                   textInputAction: TextInputAction.search,
                 ),

@@ -4,6 +4,8 @@ import 'pages/main_page.dart';
 import 'pages/pin_input_dialog.dart';
 import 'services/app_state.dart';
 import 'services/pin_service.dart';
+import 'routes/app_routes.dart';
+import 'theme/app_theme.dart';
 
 /// 悬浮窗入口点 - 保留但不再使用（已切换到原生方案）
 // @pragma("vm:entry-point")
@@ -146,26 +148,16 @@ class MyApp extends StatelessWidget {
           return MaterialApp(
             debugShowCheckedModeBanner: false,
             title: '91Download 移动端',
-            theme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.blue,
-                brightness: Brightness.light,
-              ),
-              useMaterial3: true,
-            ),
-            darkTheme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.blue,
-                brightness: Brightness.dark,
-              ),
-              useMaterial3: true,
-            ),
+            theme: AppTheme.lightTheme,
+            darkTheme: AppTheme.darkTheme,
             themeMode: appState.themeMode == 0 
                 ? ThemeMode.light 
                 : (appState.themeMode == 1 ? ThemeMode.dark : ThemeMode.system),
-            home: AuthWrapper(
+            onGenerateRoute: AppRoutes.onGenerateRoute,
+            initialRoute: '/',
+            builder: (context, child) => AuthWrapper(
               child: ThemeWrapper(
-                child: MainPage(),
+                child: child ?? MainPage(),
               ),
             ),
           );
