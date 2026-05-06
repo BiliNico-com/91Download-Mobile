@@ -66,11 +66,16 @@ class FollowedAuthorsService extends ChangeNotifier {
       String dbPath;
       if (_externalDbPath != null && _externalDbPath!.isNotEmpty) {
         // 使用外部存储路径（卸载后保留）
-        final dbDir = Directory('$_externalDbPath/.db');
-        if (!await dbDir.exists()) {
-          await dbDir.create(recursive: true);
+        try {
+          final dbDir = Directory('$_externalDbPath/.db');
+          if (!await dbDir.exists()) {
+            await dbDir.create(recursive: true);
+          }
+          dbPath = '${dbDir.path}/followed_authors.db';
+        } catch (e) {
+          debugPrint('[FollowedAuthors] 外部存储不可用，回退到内部存储: $e');
+          dbPath = '${await getDatabasesPath()}/followed_authors.db';
         }
-        dbPath = '${dbDir.path}/followed_authors.db';
       } else {
         // 使用应用私有路径
         dbPath = '${await getDatabasesPath()}/followed_authors.db';

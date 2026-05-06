@@ -31,12 +31,16 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
   bool _authorHasMore = true;
   int _authorCurrentPage = 0;
   String? _errorMessage;
+  bool _isProcessingFollow = false;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    _loadMoreAuthorVideos();
+    // 延迟到第一帧渲染完成后加载，避免 initState 中调用 setState
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadMoreAuthorVideos();
+    });
   }
 
   @override
@@ -120,21 +124,61 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
           Consumer<AppState>(
             builder: (context, appState, _) {
               final isFollowed = appState.followedAuthorsService.isFollowedSync(widget.author.id);
-              return TextButton.icon(
-                onPressed: () async {
-                  if (isFollowed) {
-                    await appState.followedAuthorsService.unfollow(widget.author.id);
-                  } else {
-                    await appState.followedAuthorsService.follow(widget.author.id, widget.author.name, avatarUrl: widget.author.avatar);
-                  }
-                  appState.notifyListeners();
-                  if (mounted) setState(() {});
-                },
-                icon: Icon(
-                  isFollowed ? Icons.favorite : Icons.favorite_border,
-                  color: isFollowed ? AppTheme.errorColor : null,
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: TextButton.icon(
+                  onPressed: _isProcessingFollow
+                      ? null
+                      : () async {
+                          setState(() => _isProcessingFollow = true);
+                          try {
+                            bool success;
+                            if (isFollowed) {
+                              success = await appState.followedAuthorsService.unfollow(widget.author.id);
+                            } else {
+                              success = await appState.followedAuthorsService.follow(
+                                widget.author.id,
+                                widget.author.name,
+                                avatarUrl: widget.author.avatar,
+                              );
+                            }
+                            if (success) {
+                              appState.notifyListeners();
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(isFollowed ? '已取消关注' : '关注成功'),
+                                    duration: const Duration(seconds: 1),
+                                  ),
+                                );
+                              }
+                            } else if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('操作失败，请重试')),
+                              );
+                            }
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('操作失败: $e')),
+                              );
+                            }
+                          } finally {
+                            if (mounted) setState(() => _isProcessingFollow = false);
+                          }
+                        },
+                  icon: _isProcessingFollow
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          isFollowed ? Icons.favorite : Icons.favorite_border,
+                          color: isFollowed ? AppTheme.errorColor : null,
+                        ),
+                  label: Text(_isProcessingFollow ? '处理中...' : (isFollowed ? '已关注' : '关注')),
                 ),
-                label: Text(isFollowed ? '已关注' : '关注'),
               );
             },
           ),
