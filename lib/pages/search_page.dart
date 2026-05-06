@@ -625,28 +625,23 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       child: Container(
         height: 44,
         decoration: BoxDecoration(
-          // 深色模式用更暗的背景，几乎和页面融为一体
-          color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+          // 去线化：与胶囊翻页器风格统一，取消外边框
+          color: isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade50,
           borderRadius: BorderRadius.circular(22),
-          // 弱化边框，深色模式下几乎不可见
-          border: Border.all(
-            color: isDark ? Colors.white.withOpacity(0.08) : Colors.grey.shade300,
-            width: 0.5,
-          ),
-          // 深色模式去掉阴影，或只用极淡的内发光
+          // 使用弥散阴影建立悬浮感，替代边框
           boxShadow: isDark
               ? [
                   BoxShadow(
-                    color: Colors.white.withOpacity(0.03),
-                    blurRadius: 1,
-                    spreadRadius: 0.5,
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
                   ),
                 ]
               : [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.08),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
+                    color: Colors.grey.shade400.withOpacity(0.2),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
                   ),
                 ],
         ),
@@ -808,76 +803,83 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 当前页显示
-              Text(
-                '第$_currentPage页',
-                style: TextStyle(fontSize: 12, color: isDark ? Colors.white70 : Colors.grey[800], fontWeight: FontWeight.w500),
-              ),
-              SizedBox(width: 12),
               // 上一页按钮
               GestureDetector(
-                onTap: (_isLoading || _isLoadingMore || _currentPage <= 1) 
-                  ? null 
+                onTap: (_isLoading || _isLoadingMore || _currentPage <= 1)
+                  ? null
                   : () => _goToPage(_currentPage - 1),
                 child: Container(
-                  padding: EdgeInsets.all(4),
+                  padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: (_currentPage <= 1) 
+                    color: (_currentPage <= 1)
                       ? (isDark ? Colors.grey[700] : Colors.grey[300])
                       : (isDark ? Colors.blue[900] : Colors.blue[100]),
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(14),
                   ),
                   child: Icon(
                     Icons.arrow_left,
                     size: 18,
-                    color: (_currentPage <= 1) 
+                    color: (_currentPage <= 1)
                       ? (isDark ? Colors.grey[500] : Colors.grey[500])
                       : (isDark ? Colors.blue[300] : Colors.blue[700]),
                   ),
                 ),
               ),
-              SizedBox(width: 8),
-              // 跳转页输入框
+              const SizedBox(width: 10),
+              // 当前页码输入框 — 既是页码显示器也是跳转输入器
               Container(
-                width: 60,
-                height: 28,
+                width: 64,
+                height: 32,
                 decoration: BoxDecoration(
-                  color: isDark ? Colors.grey[800] : Colors.grey[100],
-                  border: Border.all(color: isDark ? Colors.grey[700]! : Colors.grey[400]!),
-                  borderRadius: BorderRadius.circular(6),
+                  color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: isDark
+                          ? Colors.black.withOpacity(0.3)
+                          : Colors.grey.shade300.withOpacity(0.5),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-                child: TextField(
-                  controller: _pageController,
-                  keyboardType: TextInputType.number,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: isDark ? Colors.white70 : Colors.black87),
-                  decoration: InputDecoration(
-                    hintText: '回车',
-                    hintStyle: TextStyle(fontSize: 10, color: isDark ? Colors.grey[500] : Colors.grey[600]),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                    border: InputBorder.none,
-                    isDense: true,
+                child: Center(
+                  child: TextField(
+                    controller: _pageController,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.white : Colors.black87,
+                    ),
+                    decoration: const InputDecoration(
+                      hintText: '',
+                      contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                      border: InputBorder.none,
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) {
+                      final page = int.tryParse(_pageController.text);
+                      if (page != null && page > 0) {
+                        _goToPage(page);
+                      }
+                    },
+                    textInputAction: TextInputAction.go,
                   ),
-                  onSubmitted: (_) {
-                    final page = int.tryParse(_pageController.text);
-                    if (page != null && page > 0) {
-                      _goToPage(page);
-                    }
-                  },
-                  textInputAction: TextInputAction.go,
                 ),
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 10),
               // 下一页按钮
               GestureDetector(
-                onTap: (_isLoading || _isLoadingMore) 
-                  ? null 
+                onTap: (_isLoading || _isLoadingMore)
+                  ? null
                   : () => _goToPage(_currentPage + 1),
                 child: Container(
-                  padding: EdgeInsets.all(4),
+                  padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
                     color: isDark ? Colors.blue[900] : Colors.blue[100],
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(14),
                   ),
                   child: Icon(
                     Icons.arrow_right,
