@@ -1,0 +1,531 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.16.0'
+        channel: 'stable'
+    
+    - name: Generate platform files
+      run: flutter create . --platforms android --project-name download_91 --org com.bilinico
+    
+    - name: Fix Android build config
+      run: |
+        # 修复 app/build.gradle
+        cat > android/app/build.gradle << 'EOF'
+        plugins {
+            id "com.android.application"
+            id "kotlin-android"
+            id "dev.flutter.flutter-gradle-plugin"
+        }
+
+        def localProperties = new Properties()
+        def localPropertiesFile = rootProject.file('local.properties')
+        if (localPropertiesFile.exists()) {
+            localPropertiesFile.withReader('UTF-8') { reader ->
+                localProperties.load(reader)
+            }
+        }
+
+        def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+        if (flutterVersionCode == null) {
+            flutterVersionCode = '1'
+        }
+
+        def flutterVersionName = localProperties.getProperty('flutter.versionName')
+        if (flutterVersionName == null) {
+            flutterVersionName = '1.0'
+        }
+
+        android {
+            namespace "com.bilinico.download_91"
+            compileSdk 34
+            ndkVersion flutter.ndkVersion
+
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_1_8
+                targetCompatibility JavaVersion.VERSION_1_8
+            }
+
+            kotlinOptions {
+                jvmTarget = '1.8'
+            }
+
+            sourceSets {
+                main.java.srcDirs += 'src/main/kotlin'
+            }
+
+            // 固定签名配置，确保每次编译使用相同签名
+            signingConfigs {
+                release {
+                    keyAlias 'release'
+                    keyPassword '123456'
+                    storeFile file('release.keystore')
+                    storePassword '123456'
+                }
+            }
+
+            defaultConfig {
+                applicationId "com.bilinico.download_91"
+                minSdk 21
+                targetSdk 34
+                versionCode flutterVersionCode.toInteger()
+                versionName flutterVersionName
+            }
+
+            buildTypes {
+                release {
+                    signingConfig signingConfigs.release
+                }
+                debug {
+                    signingConfig signingConfigs.release
+                }
+            }
+        }
+
+        flutter {
+            source '../..'
+        }
+
+        dependencies {
+        }
+        EOF
+
+        # 创建固定签名文件
+        echo "创建签名文件..."
+        cd android/app
+        echo -e "123456\n123456\nrelease\n\n\n\n\n\n\ny" | keytool -genkeypair -v -keystore release.keystore -alias release -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 2>/dev/null || true
+        cd ../..
+
+        # 删除旧的 Kotlin 源码目录，创建新的
+        rm -rf android/app/src/main/kotlin/com/example
+        mkdir -p android/app/src/main/kotlin/com/bilinico/download_91
+        
+        cat > android/app/src/main/kotlin/com/bilinico/download_91/BrightnessPlugin.kt << 'KOTLINEOF'
+        package com.bilinico.download_91
+
+        import android.app.Activity
+        import android.view.WindowManager
+        import io.flutter.plugin.common.MethodCall
+        import io.flutter.plugin.common.MethodChannel
+
+        class BrightnessPlugin(private val activity: Activity) {
+            companion object {
+                const val CHANNEL_NAME = "com.example.download_91/brightness"
+            }
+
+            private var savedBrightness: Float? = null
+
+            fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
+                when (call.method) {
+                    "getBrightness" -> {
+                        try {
+                            val window = activity.window
+                            val brightness = window.attributes.screenBrightness
+                            result.success(brightness)
+                        } catch (e: Exception) {
+                            result.error("ERROR", e.message, null)
+                        }
+                    }
+                    "setBrightness" -> {
+                        try {
+                            val brightness = call.argument<Double>("brightness")?.toFloat() ?: 0.5f
+                            val window = activity.window
+                            val params = window.attributes
+                            params.screenBrightness = brightness.coerceIn(0f, 1f)
+                            window.attributes = params
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("ERROR", e.message, null)
+                        }
+                    }
+                    "resetBrightness" -> {
+                        try {
+                            val window = activity.window
+                            val params = window.attributes
+                            params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                            window.attributes = params
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("ERROR", e.message, null)
+                        }
+                    }
+                    "saveBrightness" -> {
+                        try {
+                            val window = activity.window
+                            savedBrightness = window.attributes.screenBrightness
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("ERROR", e.message, null)
+                        }
+                    }
+                    "restoreBrightness" -> {
+                        try {
+                            val brightness = savedBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                            val window = activity.window
+                            val params = window.attributes
+                            params.screenBrightness = brightness
+                            window.attributes = params
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("ERROR", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        KOTLINEOF
+
+        # 创建 PipPlugin.kt（包含 updatePipParams 修复：使用 *100 转换避免 toInt 截断）
+        cat > android/app/src/main/kotlin/com/bilinico/download_91/PipPlugin.kt << 'KOTLINEOF'
+        package com.bilinico.download_91
+
+        import android.app.Activity
+        import android.app.PictureInPictureParams
+        import android.content.res.Configuration
+        import android.os.Build
+        import android.util.Rational
+        import io.flutter.plugin.common.MethodCall
+        import io.flutter.plugin.common.MethodChannel
+
+        class PipPlugin(private val activity: Activity) {
+            companion object {
+                const val CHANNEL = "com.bilinico/download_91/pip"
+
+                fun registerWith(messenger: io.flutter.plugin.common.BinaryMessenger, activity: Activity) {
+                    val plugin = PipPlugin(activity)
+                    MethodChannel(messenger, CHANNEL).setMethodCallHandler { call, result ->
+                        plugin.handleMethodCall(call, result)
+                    }
+                }
+            }
+
+            fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
+                when (call.method) {
+                    "enterPip" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            val aspectRatio = call.argument<Double>("aspectRatio") ?: (16.0 / 9.0)
+                            try {
+                                val width = (aspectRatio * 100).toInt()
+                                val height = 100
+                                val params = PictureInPictureParams.Builder()
+                                    .setAspectRatio(Rational(width, height))
+                                    .build()
+                                val success = activity.enterPictureInPictureMode(params)
+                                result.success(success)
+                            } catch (e: Exception) {
+                                result.error("PIP_ERROR", e.message, null)
+                            }
+                        } else {
+                            result.success(false)
+                        }
+                    }
+                    "isPipAvailable" -> {
+                        result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    }
+                    "isInPipMode" -> {
+                        result.success(activity.isInPictureInPictureMode)
+                    }
+                    "updatePipParams" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity.isInPictureInPictureMode) {
+                            val aspectRatio = call.argument<Double>("aspectRatio") ?: 16.0 / 9.0
+                            try {
+                                // 修复：使用与 enterPip 相同的宽高比转换方式，避免 toInt 截断丢失精度
+                                val width = (aspectRatio * 100).toInt()
+                                val height = 100
+                                val params = PictureInPictureParams.Builder()
+                                    .setAspectRatio(Rational(width, height))
+                                    .build()
+                                activity.setPictureInPictureParams(params)
+                                result.success(true)
+                            } catch (e: Exception) {
+                                result.error("PIP_ERROR", e.message, null)
+                            }
+                        } else {
+                            result.success(false)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        KOTLINEOF
+
+        cat > android/app/src/main/kotlin/com/bilinico/download_91/MainActivity.kt << 'KOTLINEOF'
+        package com.bilinico.download_91
+
+        import android.content.Intent
+        import android.net.Uri
+        import android.os.Build
+        import android.os.Bundle
+        import android.provider.Settings
+        import io.flutter.embedding.android.FlutterActivity
+        import io.flutter.embedding.engine.FlutterEngine
+        import io.flutter.plugin.common.MethodChannel
+
+        class MainActivity : FlutterActivity() {
+            private val FLOATING_CHANNEL = "com.bilinico.download_91/floating_video"
+
+            override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                super.configureFlutterEngine(flutterEngine)
+
+                // 注册 PiP 插件
+                PipPlugin.registerWith(flutterEngine.dartExecutor.binaryMessenger, this)
+
+                // 注册悬浮窗通信通道（完整版：包含所有控制方法）
+                MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FLOATING_CHANNEL).setMethodCallHandler { call, result ->
+                    when (call.method) {
+                        "openSettings" -> {
+                            openOverlaySettings()
+                            result.success(true)
+                        }
+                        "getOverlayPermission" -> {
+                            result.success(canDrawOverlays())
+                        }
+                        "requestOverlayPermission" -> {
+                            requestOverlayPermission()
+                            result.success(true)
+                        }
+                        "startFloating" -> {
+                            val path = call.argument<String>("path") ?: ""
+                            val title = call.argument<String>("title") ?: ""
+                            val width = call.argument<Int>("width") ?: 400
+                            val height = call.argument<Int>("height") ?: 250
+                            startNativeFloating(path, title, width, height)
+                            result.success(true)
+                        }
+                        "stopFloating" -> {
+                            stopNativeFloating()
+                            result.success(true)
+                        }
+                        "pauseVideo" -> {
+                            sendCommandToService(FloatingWindowService.ACTION_PAUSE)
+                            result.success(true)
+                        }
+                        "playVideo" -> {
+                            sendCommandToService(FloatingWindowService.ACTION_PLAY)
+                            result.success(true)
+                        }
+                        "seekTo" -> {
+                            val pos = call.argument<Int>("position") ?: 0
+                            val intent = Intent(this, FloatingWindowService::class.java).apply {
+                                action = FloatingWindowService.ACTION_SEEK
+                                putExtra(FloatingWindowService.EXTRA_SEEK_POS, pos)
+                            }
+                            startService(intent)
+                            result.success(true)
+                        }
+                        "isFloatingRunning" -> {
+                            result.success(FloatingWindowService.isRunning())
+                        }
+                        else -> result.notImplemented()
+                    }
+                }
+            }
+
+            private fun startNativeFloating(path: String, title: String, width: Int, height: Int) {
+                val intent = Intent(this, FloatingWindowService::class.java).apply {
+                    action = FloatingWindowService.ACTION_START
+                    putExtra(FloatingWindowService.EXTRA_VIDEO_PATH, path)
+                    putExtra(FloatingWindowService.EXTRA_TITLE, title)
+                    putExtra(FloatingWindowService.EXTRA_WIDTH, width)
+                    putExtra(FloatingWindowService.EXTRA_HEIGHT, height)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    @Suppress("DEPRECATION")
+                    startService(intent)
+                }
+            }
+
+            private fun stopNativeFloating() {
+                val intent = Intent(this, FloatingWindowService::class.java).apply {
+                    action = FloatingWindowService.ACTION_STOP
+                }
+                startService(intent)
+            }
+
+            private fun sendCommandToService(action: String) {
+                val intent = Intent(this, FloatingWindowService::class.java).apply {
+                    this.action = action
+                }
+                startService(intent)
+            }
+
+            private fun canDrawOverlays(): Boolean {
+                return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    Settings.canDrawOverlays(this)
+                } else {
+                    true
+                }
+            }
+
+            private fun requestOverlayPermission() {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    startActivity(intent)
+                }
+            }
+
+            private fun openOverlaySettings() {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    startActivity(intent)
+                }
+            }
+
+            override fun onUserLeaveHint() {
+                super.onUserLeaveHint()
+            }
+        }
+        KOTLINEOF
+
+        # 修复 settings.gradle
+        cat > android/settings.gradle << 'EOF'
+        pluginManagement {
+            def flutterSdkPath = {
+                def properties = new Properties()
+                file("local.properties").withInputStream { properties.load(it) }
+                def flutterSdkPath = properties.getProperty("flutter.sdk")
+                assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
+                return flutterSdkPath
+            }()
+
+            includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
+        }
+
+        plugins {
+            id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+            id "com.android.application" version "7.4.2" apply false
+            id "org.jetbrains.kotlin.android" version "1.9.22" apply false
+        }
+
+        include ":app"
+        EOF
+
+        # 修复 build.gradle (根目录)
+        cat > android/build.gradle << 'EOF'
+        allprojects {
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+
+        rootProject.buildDir = '../build'
+
+        subprojects {
+            project.buildDir = "${rootProject.buildDir}/${project.name}"
+        }
+
+        subprojects {
+            project.evaluationDependsOn(':app')
+        }
+
+        tasks.register("clean", Delete) {
+            delete rootProject.buildDir
+        }
+        EOF
+
+        # 确保 gradle.properties 有正确的配置
+        echo "android.useAndroidX=true" >> android/gradle.properties
+        echo "android.enableJetifier=true" >> android/gradle.properties
+        
+        echo "Build config fixed"
+    
+    - name: Sync version with CI run_number
+      run: |
+        # 将 pubspec.yaml 的 build number 同步为 github.run_number
+        # 这样构建出的 APK 内嵌版本号与 Release tag 完全一致
+        RUN_NUM="${{ github.run_number }}"
+        sed -i "s/^version: \(.*\)+[0-9]*/version: \1+${RUN_NUM}/" pubspec.yaml
+        
+        # 同步 version.json（备用方案也保持一致）
+        if [ -f version.json ]; then
+          sed -i "s/\"build_number\": [0-9]*/\"build_number\": ${RUN_NUM}/" version.json
+        fi
+        
+        echo "Version synced to: $(grep '^version:' pubspec.yaml)"
+        cat pubspec.yaml | head -6
+
+    - name: Install dependencies
+      run: flutter pub get
+    
+    - name: Build APK
+      run: flutter build apk --release
+    
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-release
+        path: build/app/outputs/flutter-apk/app-release.apk
+    
+    - name: Extract release notes
+      id: release_notes
+      run: |
+        # 从 version.json 提取 release_notes
+        if [ -f version.json ]; then
+          # 使用 jq 或 grep 提取 release_notes
+          NOTES=$(grep -o '"release_notes": *"[^"]*"' version.json | sed 's/"release_notes": *"\([^"]*\)"/\1/' | sed 's/\\n/\n/g')
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        else
+          echo "notes=无更新说明" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v1.0.5.${{ github.run_number }}
+        name: Build ${{ github.run_number }}
+        body: |
+          ## 更新内容
+          
+          ${{ steps.release_notes.outputs.notes }}
+          
+          ---
+          
+          **构建信息**
+          - Commit: ${{ github.sha }}
+          - 时间: ${{ github.event.head_commit.timestamp }}
+          - 提交信息: ${{ github.event.head_commit.message }}
+        files: build/app/outputs/flutter-apk/app-release.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
