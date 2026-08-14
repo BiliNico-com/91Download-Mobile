@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
+import '../crawler/config.dart';
 import '../crawler/crawler_core.dart';
 import '../models/video_info.dart';
 import '../utils/logger.dart';
@@ -47,6 +48,9 @@ class AppState extends ChangeNotifier {
   
   // 站点配置 - 默认为空，用户必须选择
   String? currentSite;
+
+  // 用户手动添加的自定义站点
+  List<String> customSites = [];
   
   // 返回键处理回调（由子页面设置，用于作者模式等特殊状态）
   bool Function()? onWillPopCallback;
@@ -174,6 +178,10 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     
     currentSite = prefs.getString('currentSite');
+    if (currentSite != null && currentSite!.isEmpty) {
+      currentSite = null;  // 空串兜底为未选择，避免下拉框断言崩溃
+    }
+    customSites = prefs.getStringList('customSites') ?? [];
     themeMode = prefs.getInt('themeMode') ?? ThemeModeType.dark.value;
     _isDarkMode = prefs.getBool('isDarkMode') ?? true;
     videoDisplayMode = prefs.getString('videoDisplayMode') ?? 'grid';
@@ -207,6 +215,7 @@ class AppState extends ChangeNotifier {
       prefs.setBool('appLockEnabled', appLockEnabled),
       prefs.setBool('privacyMode', privacyMode),
       prefs.setBool('nomediaEnabled', nomediaEnabled),
+      prefs.setStringList('customSites', customSites),
     ]);
   }
 
@@ -319,6 +328,30 @@ class AppState extends ChangeNotifier {
 
   // 检查站点是否已选择
   bool get isSiteSelected => currentSite != null && currentSite!.isNotEmpty;
+
+  // 所有可选站点（预设 + 自定义）
+  List<String> get allSites => [...CrawlerConfig.availableSites, ...customSites];
+
+  // 手动添加自定义站点（URL 规范化、去重、持久化并切换到该站点）
+  // 返回规范化后的 URL；失败返回 null
+  Future<String?> addCustomSite(String url) async {
+    var u = url.trim();
+    if (u.isEmpty) return null;
+    // 大小写不敏感判断协议前缀
+    final lower = u.toLowerCase();
+    if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+      u = 'https://$u';
+    }
+    // 去掉所有结尾斜杠
+    final normalized = u.replaceFirst(RegExp(r'/+$'), '');
+    final alreadyPreset = CrawlerConfig.availableSites.contains(normalized);
+    if (!alreadyPreset && !customSites.contains(normalized)) {
+      customSites.add(normalized);
+    }
+    await _saveSettings();
+    changeSite(normalized);
+    return normalized;
+  }
 
   // 切换站点
   void changeSite(String site) {

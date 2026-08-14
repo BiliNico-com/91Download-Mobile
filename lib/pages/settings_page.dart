@@ -7,7 +7,6 @@ import '../services/app_state.dart';
 import '../services/version_service.dart';
 
 import '../services/pin_service.dart';
-import '../crawler/config.dart';
 import '../utils/logger.dart';
 import 'pin_input_dialog.dart';
 
@@ -119,35 +118,104 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
           children: [
             Padding(
               padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: DropdownButtonFormField<String>(
-                value: appState.currentSite,
-                hint: Text('请选择站点', style: TextStyle(color: Colors.grey)),
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                ),
-                items: CrawlerConfig.availableSites.map((site) {
-                  return DropdownMenuItem(
-                    value: site,
-                    child: Text(site),
-                  );
-                }).toList(),
-                onChanged: (site) async {
-                  if (site != null) {
-                    print('[Settings] 选择站点: $site');
-                    appState.changeSite(site);
-                    print('[Settings] 站点已切换, currentSite=${appState.currentSite}');
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('已切换到 $site')),
-                    );
-                  }
-                },
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: appState.currentSite,
+                    hint: Text('请选择站点', style: TextStyle(color: Colors.grey)),
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    items: appState.allSites.map((site) {
+                      return DropdownMenuItem(
+                        value: site,
+                        child: Text(site),
+                      );
+                    }).toList(),
+                    onChanged: (site) async {
+                      if (site != null) {
+                        print('[Settings] 选择站点: $site');
+                        appState.changeSite(site);
+                        print('[Settings] 站点已切换, currentSite=${appState.currentSite}');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('已切换到 $site')),
+                        );
+                      }
+                    },
+                  ),
+                  SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => _showAddCustomSiteDialog(appState),
+                    icon: Icon(Icons.add_link, size: 18),
+                    label: Text('手动输入网址'),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// 手动输入自定义站点网址
+  Future<void> _showAddCustomSiteDialog(AppState appState) async {
+    final controller = TextEditingController();
+    String? input;
+    try {
+      input = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('手动输入网址'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('请输入站点网址:', style: TextStyle(fontSize: 12)),
+              SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: TextInputType.url,
+                decoration: InputDecoration(
+                  hintText: 'https://example.com',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              SizedBox(height: 8),
+              Text(
+                '支持 http/https，可省略协议前缀',
+                style: TextStyle(fontSize: 10, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              child: Text('确定'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+
+    if (input == null || input.trim().isEmpty || !mounted) return;
+
+    final normalized = await appState.addCustomSite(input);
+    if (normalized != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已切换到 $normalized')),
+      );
+    }
   }
 
   /// 2. 下载目录设置区域
