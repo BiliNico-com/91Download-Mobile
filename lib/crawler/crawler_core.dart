@@ -1619,9 +1619,11 @@ class CrawlerCore {
   /// 更换站点
   void changeSite(String newBaseUrl) {
     baseUrl = newBaseUrl;
+    // 先检测新站点类型（_initDio 内部依赖 _siteType 选择请求头）
+    _detectSiteType();
     // 清除旧站点的 Cookie，避免跨站点干扰（特别是从 original 切到 porn91 时）
     _dio.options.headers.remove('Cookie');
+    // 再用新站点类型初始化请求头
     _initDio();
-    _detectSiteType();
   }
 }
