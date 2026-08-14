@@ -67,7 +67,9 @@ class FollowedAuthorsService extends ChangeNotifier {
       if (_externalDbPath != null && _externalDbPath!.isNotEmpty) {
         // 使用外部存储路径（卸载后保留）
         try {
-          final dbDir = Directory('$_externalDbPath/.db');
+          // 兼容迁移旧数据（旧版在 followed_db 目录，某次重构曾短暂改用 .db 目录）
+          await _migrateLegacyDbIfNeeded(_externalDbPath!);
+          final dbDir = Directory('$_externalDbPath/followed_db');
           if (!await dbDir.exists()) {
             await dbDir.create(recursive: true);
           }
@@ -83,17 +85,28 @@ class FollowedAuthorsService extends ChangeNotifier {
       
       _db = await openDatabase(
         dbPath,
-        onCreate: (db, version) {
-          return db.execute('''
+        onCreate: (db, version) async {
+          await db.execute('''
             CREATE TABLE IF NOT EXISTS followed_authors (
               author_id TEXT PRIMARY KEY,
               author_name TEXT NOT NULL,
               avatar_url TEXT,
-              followed_at TEXT NOT NULL
+              followed_at TEXT NOT NULL,
+              last_video_id TEXT,
+              last_checked_at TEXT,
+              new_video_count INTEGER DEFAULT 0
             )
           ''');
         },
-        version: 1,
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 3) {
+            try { await db.execute('ALTER TABLE followed_authors ADD COLUMN last_video_id TEXT'); } catch (_) {}
+            try { await db.execute('ALTER TABLE followed_authors ADD COLUMN last_checked_at TEXT'); } catch (_) {}
+            try { await db.execute('ALTER TABLE followed_authors ADD COLUMN new_video_count INTEGER DEFAULT 0'); } catch (_) {}
+          }
+        },
+        onDowngrade: (db, oldVersion, newVersion) async {},
+        version: 3,
       );
       _dbInitialized = true;
       
@@ -101,6 +114,22 @@ class FollowedAuthorsService extends ChangeNotifier {
       await _loadFollowedList();
     } catch (e) {
       debugPrint('[FollowedAuthors] 数据库初始化失败: $e');
+    }
+  }
+
+  /// 兼容迁移：旧版数据在 followed_db 目录，某次重构曾短暂改用 .db 目录。
+  /// 若 followed_db 下没有库、但 .db 下有，则把 .db 的数据复制过来，避免丢失。
+  Future<void> _migrateLegacyDbIfNeeded(String externalPath) async {
+    final legacyDb = File('$externalPath/followed_db/followed_authors.db');
+    final newDb = File('$externalPath/.db/followed_authors.db');
+    try {
+      if (!await legacyDb.exists() && await newDb.exists()) {
+        await Directory('$externalPath/followed_db').create(recursive: true);
+        await newDb.copy(legacyDb.path);
+        debugPrint('[FollowedAuthors] 已将 .db 目录下的关注数据迁移到 followed_db');
+      }
+    } catch (e) {
+      debugPrint('[FollowedAuthors] 迁移旧数据失败: $e');
     }
   }
 
