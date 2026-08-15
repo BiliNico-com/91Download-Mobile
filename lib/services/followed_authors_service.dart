@@ -9,13 +9,22 @@ class FollowedAuthor {
   final String authorName;
   final String? avatarUrl;
   final DateTime followedAt;
+  final String? lastVideoId;     // 最近一次检查到的视频ID
+  final DateTime? lastCheckedAt; // 最近一次检查时间
+  final int? newVideoCount;      // 新增视频数（本次检查发现）
 
   FollowedAuthor({
     required this.authorId,
     required this.authorName,
     this.avatarUrl,
     required this.followedAt,
+    this.lastVideoId,
+    this.lastCheckedAt,
+    this.newVideoCount,
   });
+
+  /// 是否有新内容（未检查过的不算）
+  bool get hasNewContent => newVideoCount != null && newVideoCount! > 0;
 
   factory FollowedAuthor.fromMap(Map<String, dynamic> map) {
     return FollowedAuthor(
@@ -23,6 +32,11 @@ class FollowedAuthor {
       authorName: map['author_name'] ?? '',
       avatarUrl: map['avatar_url'],
       followedAt: DateTime.tryParse(map['followed_at'] ?? '') ?? DateTime.now(),
+      lastVideoId: map['last_video_id'],
+      lastCheckedAt: map['last_checked_at'] != null
+          ? DateTime.tryParse(map['last_checked_at'])
+          : null,
+      newVideoCount: map['new_video_count'],
     );
   }
 
@@ -32,6 +46,9 @@ class FollowedAuthor {
       'author_name': authorName,
       'avatar_url': avatarUrl,
       'followed_at': followedAt.toIso8601String(),
+      'last_video_id': lastVideoId,
+      'last_checked_at': lastCheckedAt?.toIso8601String(),
+      'new_video_count': newVideoCount,
     };
   }
 }
@@ -201,15 +218,22 @@ class FollowedAuthorsService extends ChangeNotifier {
     }
   }
 
-  /// 关注作者
-  Future<bool> follow(String authorId, String authorName, {String? avatarUrl}) async {
+  /// 关注作者，返回错误信息（null 表示成功）
+  Future<String?> follow(String authorId, String authorName, {String? avatarUrl}) async {
+    if (authorId.isEmpty) {
+      return '作者ID为空';
+    }
+
     final db = await _getDb();
-    if (db == null) return false;
+    if (db == null) {
+      return '数据存储初始化失败，请重启应用后重试';
+    }
     
     try {
+      final name = authorName.isNotEmpty ? authorName : authorId;
       final author = FollowedAuthor(
         authorId: authorId,
-        authorName: authorName,
+        authorName: name,
         avatarUrl: avatarUrl,
         followedAt: DateTime.now(),
       );
@@ -224,17 +248,19 @@ class FollowedAuthorsService extends ChangeNotifier {
       _followedList.insert(0, author);
       notifyListeners();
       
-      return true;
+      return null;  // null = 成功
     } catch (e) {
       debugPrint('[FollowedAuthors] 关注作者失败: $e');
-      return false;
+      return '关注失败: $e';
     }
   }
 
-  /// 取消关注作者
-  Future<bool> unfollow(String authorId) async {
+  /// 取消关注作者，返回错误信息（null 表示成功）
+  Future<String?> unfollow(String authorId) async {
     final db = await _getDb();
-    if (db == null) return false;
+    if (db == null) {
+      return '数据存储初始化失败，请重启应用后重试';
+    }
     
     try {
       await db.delete(
@@ -249,15 +275,15 @@ class FollowedAuthorsService extends ChangeNotifier {
       debugPrint('[FollowedAuthors] 已取消关注: $authorId, 剩余 ${_followedList.length} 个关注');
       notifyListeners();
       
-      return true;
+      return null;  // null = 成功
     } catch (e) {
       debugPrint('[FollowedAuthors] 取消关注失败: $e');
-      return false;
+      return '取消关注失败: $e';
     }
   }
 
-  /// 切换关注状态
-  Future<bool> toggleFollow(String authorId, String authorName, {String? avatarUrl}) async {
+  /// 切换关注状态，返回错误信息（null 表示成功）
+  Future<String?> toggleFollow(String authorId, String authorName, {String? avatarUrl}) async {
     final isFollowedNow = await isFollowed(authorId);
     if (isFollowedNow) {
       return await unfollow(authorId);
@@ -268,6 +294,154 @@ class FollowedAuthorsService extends ChangeNotifier {
 
   /// 获取已关注作者数量
   int get followedCount => _followedList.length;
+
+  /// 有新内容的作者数量
+  int get newContentCount => _followedList.where((a) => a.hasNewContent).length;
+
+  /// 是否有作者未检查过（从未检查过的也算"可能更新"）
+  bool get hasUncheckedAuthors => _followedList.any((a) => a.lastCheckedAt == null);
+
+  /// 检查所有关注作者的更新情况
+  /// [crawler] 用于爬取作者主页第一页
+  /// [onProgress] 回调: (当前/总数, 作者名)
+  /// 返回: 有更新的作者列表
+  Future<List<FollowedAuthor>> checkForUpdates(
+    dynamic crawler, {
+    void Function(int current, int total, String authorName)? onProgress,
+  }) async {
+    final now = DateTime.now();
+    final updatedAuthors = <FollowedAuthor>[];
+    final total = _followedList.length;
+
+    for (int i = 0; i < _followedList.length; i++) {
+      final author = _followedList[i];
+      onProgress?.call(i + 1, total, author.authorName);
+
+      try {
+        // 只爬取第一页，获取最新视频
+        final videos = await crawler.getAuthorVideos(author.authorId, page: 1);
+        
+        if (videos.isNotEmpty) {
+          final latestVideoId = videos.first.id;
+          
+          // 首次检查：记录最新视频ID，不算新内容
+          if (author.lastVideoId == null) {
+            await _saveCheckResult(author.authorId, latestVideoId, now, 0);
+            _updateAuthorInList(author.authorId, (a) => FollowedAuthor(
+              authorId: a.authorId,
+              authorName: a.authorName,
+              avatarUrl: a.avatarUrl,
+              followedAt: a.followedAt,
+              lastVideoId: latestVideoId,
+              lastCheckedAt: now,
+              newVideoCount: 0,
+            ));
+          } else if (latestVideoId != author.lastVideoId) {
+            // 有新视频：计算新增数量
+            int newCount = 0;
+            for (final v in videos) {
+              if (v.id == author.lastVideoId) break;
+              newCount++;
+            }
+            if (newCount == 0) newCount = 1; // 至少1个新的
+            
+            await _saveCheckResult(author.authorId, latestVideoId, now, newCount);
+            _updateAuthorInList(author.authorId, (a) {
+              final updated = FollowedAuthor(
+                authorId: a.authorId,
+                authorName: a.authorName,
+                avatarUrl: a.avatarUrl,
+                followedAt: a.followedAt,
+                lastVideoId: latestVideoId,
+                lastCheckedAt: now,
+                newVideoCount: newCount,
+              );
+              updatedAuthors.add(updated);
+              return updated;
+            });
+          } else {
+            // 无更新（此时 lastVideoId 一定非 null，因为 null 分支已处理）
+            await _saveCheckResult(author.authorId, author.lastVideoId!, now, 0);
+            _updateAuthorInList(author.authorId, (a) => FollowedAuthor(
+              authorId: a.authorId,
+              authorName: a.authorName,
+              avatarUrl: a.avatarUrl,
+              followedAt: a.followedAt,
+              lastVideoId: a.lastVideoId,
+              lastCheckedAt: now,
+              newVideoCount: 0,
+            ));
+          }
+        }
+      } catch (e) {
+        debugPrint('[FollowedAuthors] 检查 ${author.authorName} 更新失败: $e');
+      }
+    }
+
+    notifyListeners();
+    return updatedAuthors;
+  }
+
+  /// 保存检查结果到数据库
+  Future<void> _saveCheckResult(
+    String authorId,
+    String lastVideoId,
+    DateTime checkedAt,
+    int newCount,
+  ) async {
+    final db = await _getDb();
+    if (db == null) return;
+    try {
+      await db.update(
+        'followed_authors',
+        {
+          'last_video_id': lastVideoId,
+          'last_checked_at': checkedAt.toIso8601String(),
+          'new_video_count': newCount,
+        },
+        where: 'author_id = ?',
+        whereArgs: [authorId],
+      );
+    } catch (e) {
+      debugPrint('[FollowedAuthors] 保存检查结果失败: $e');
+    }
+  }
+
+  /// 更新内存中的作者信息
+  void _updateAuthorInList(
+    String authorId,
+    FollowedAuthor Function(FollowedAuthor) updateFn,
+  ) {
+    final index = _followedList.indexWhere((a) => a.authorId == authorId);
+    if (index >= 0) {
+      _followedList[index] = updateFn(_followedList[index]);
+    }
+  }
+
+  /// 清除某个作者的新内容标记（进入作者页后调用）
+  Future<void> clearNewFlag(String authorId) async {
+    final db = await _getDb();
+    if (db != null) {
+      try {
+        await db.update(
+          'followed_authors',
+          {'new_video_count': 0},
+          where: 'author_id = ?',
+          whereArgs: [authorId],
+        );
+      } catch (_) {}
+    }
+    _updateAuthorInList(authorId, (a) => FollowedAuthor(
+      authorId: a.authorId,
+      authorName: a.authorName,
+      avatarUrl: a.avatarUrl,
+      followedAt: a.followedAt,
+      lastVideoId: a.lastVideoId,
+      lastCheckedAt: a.lastCheckedAt,
+      newVideoCount: 0,
+    ));
+    notifyListeners();
+  }
 
   /// 刷新列表
   Future<void> refresh() async {

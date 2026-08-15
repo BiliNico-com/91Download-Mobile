@@ -31,18 +31,21 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
   bool _authorHasMore = true;
   int _authorCurrentPage = 0;
   String? _errorMessage;
-  bool _isProcessingFollow = false;
+  
+  // 关注状态（本地缓存，避免频繁重建）
   bool _isFollowed = false;
+  bool _isProcessingFollow = false;
+
+  // 视频选择与批量下载
+  Set<String> _selectedIds = {};
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    // 延迟到第一帧渲染完成后加载，避免 initState 中调用 setState
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        final appState = Provider.of<AppState>(context, listen: false);
-        setState(() => _isFollowed = appState.followedAuthorsService.isFollowedSync(widget.author.id));
+        _refreshFollowStatus();
         _loadMoreAuthorVideos();
       }
     });
@@ -52,6 +55,14 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
   void dispose() {
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// 刷新关注状态（从服务端同步）
+  void _refreshFollowStatus() {
+    final appState = Provider.of<AppState>(context, listen: false);
+    setState(() {
+      _isFollowed = appState.followedAuthorsService.isFollowedSync(widget.author.id);
+    });
   }
 
   void _onScroll() {
@@ -111,8 +122,115 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
       _authorCurrentPage = 0;
       _authorHasMore = true;
       _errorMessage = null;
+      _selectedIds.clear();
     });
     await _loadMoreAuthorVideos();
+  }
+
+  /// 下载选中的视频
+  Future<void> _downloadSelected() async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final videos = _authorVideos.where((v) => _selectedIds.contains(v.id)).toList();
+    if (videos.isEmpty) return;
+
+    final result = await appState.downloadManager.addTasks(videos);
+    final newCount = result['new'] ?? 0;
+    final dupCount = result['duplicate'] ?? 0;
+
+    if (mounted) {
+      String msg = '已添加 $newCount 个任务到下载队列';
+      if (dupCount > 0) msg += '，$dupCount 个已存在';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
+        ),
+      );
+      setState(() => _selectedIds.clear());
+    }
+  }
+
+  /// 全选/取消全选
+  void _toggleSelectAll() {
+    setState(() {
+      if (_selectedIds.length == _authorVideos.length) {
+        _selectedIds.clear();
+      } else {
+        _selectedIds = _authorVideos.map((v) => v.id).toSet();
+      }
+    });
+  }
+
+  /// 执行关注/取消关注操作
+  Future<void> _toggleFollow() async {
+    // 防重复点击
+    if (_isProcessingFollow) return;
+
+    // 参数校验
+    if (widget.author.id.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('作者ID为空，无法关注'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+    
+    setState(() => _isProcessingFollow = true);
+
+    try {
+      final appState = Provider.of<AppState>(context, listen: false);
+      String? error;
+
+      if (_isFollowed) {
+        error = await appState.followedAuthorsService.unfollow(widget.author.id);
+      } else {
+        error = await appState.followedAuthorsService.follow(
+          widget.author.id,
+          widget.author.name.isNotEmpty ? widget.author.name : widget.author.id,
+          avatarUrl: widget.author.avatar,
+        );
+      }
+
+      if (mounted) {
+        if (error == null) {
+          setState(() => _isFollowed = !_isFollowed);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_isFollowed ? '已关注' : '已取消关注'),
+              duration: const Duration(seconds: 1),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(error),
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('操作失败: $e'),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessingFollow = false);
+    }
   }
 
   @override
@@ -125,104 +243,18 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
         title: Text(widget.author.name),
         centerTitle: true,
         elevation: 0,
-        actions: [
-          // 使用 Material + InkWell 替代 GestureDetector，解决真机触摸无响应问题
-          // 通过 _isFollowed 本地状态缓存避免频繁重建
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: _isProcessingFollow
-                  ? null
-                  : () async {
-                      setState(() => _isProcessingFollow = true);
-                      try {
-                        bool success;
-                        if (_isFollowed) {
-                          success = await appState.followedAuthorsService.unfollow(widget.author.id);
-                        } else {
-                          success = await appState.followedAuthorsService.follow(
-                            widget.author.id,
-                            widget.author.name,
-                            avatarUrl: widget.author.avatar,
-                          );
-                        }
-                        if (success) {
-                          appState.notifyListeners();
-                          // 同步更新本地状态
-                          if (mounted) {
-                            setState(() => _isFollowed = !_isFollowed);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(_isFollowed ? '已取消关注' : '关注成功'),
-                                duration: const Duration(seconds: 1),
-                              ),
-                            );
-                          }
-                        } else if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('操作失败，请重试')),
-                          );
-                        }
-                      } catch (e) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('操作失败: $e')),
-                          );
-                        }
-                      } finally {
-                        if (mounted) setState(() => _isProcessingFollow = false);
-                      }
-                    },
-              borderRadius: BorderRadius.circular(20),
-              child: Container(
-                margin: const EdgeInsets.only(right: 12),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                decoration: BoxDecoration(
-                  color: _isFollowed
-                      ? (isDark ? Colors.grey[700]!.withOpacity(0.8) : Colors.grey[200]!)
-                      : AppTheme.primaryColor.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: _isFollowed
-                        ? (isDark ? Colors.grey[600]!.withOpacity(0.3) : Colors.grey[300]!)
-                        : AppTheme.primaryColor.withOpacity(0.25),
-                    width: 1,
-                  ),
+        actions: _authorVideos.isNotEmpty
+            ? [
+                // 全选/取消全选
+                IconButton(
+                  icon: Icon(_selectedIds.length == _authorVideos.length
+                      ? Icons.deselect
+                      : Icons.select_all),
+                  onPressed: _toggleSelectAll,
+                  tooltip: _selectedIds.length == _authorVideos.length ? '取消全选' : '全选',
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_isProcessingFollow)
-                      SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor),
-                      )
-                    else
-                      Icon(
-                        _isFollowed ? Icons.favorite : Icons.favorite_border,
-                        size: 17,
-                        color: _isFollowed
-                            ? (isDark ? Colors.pink[300] : Colors.red[400])
-                            : AppTheme.primaryColor,
-                      ),
-                    const SizedBox(width: 5),
-                    Text(
-                      _isProcessingFollow ? '处理中...' : (_isFollowed ? '已关注' : '关注'),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: _isFollowed
-                            ? (isDark ? Colors.grey[300] : Colors.grey[600])
-                            : AppTheme.primaryColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
+              ]
+            : null,
       ),
       body: RefreshIndicator(
         onRefresh: _onRefresh,
@@ -233,7 +265,7 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
           controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            // 作者信息头部
+            // 作者信息头部（含关注按钮）
             SliverToBoxAdapter(
               child: _buildAuthorHeader(isDark),
             ),
@@ -244,49 +276,144 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
           ],
         ),
       ),
+      floatingActionButton: _selectedIds.isNotEmpty
+          ? FloatingActionButton.extended(
+              onPressed: _downloadSelected,
+              icon: const Icon(Icons.download),
+              label: Text('下载 (${_selectedIds.length})'),
+              backgroundColor: AppTheme.primaryColor,
+            )
+          : null,
     );
   }
 
   Widget _buildAuthorHeader(bool isDark) {
+    final bgColor = isDark ? AppTheme.darkSurface : AppTheme.cardBackground;
+    final textColor = isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary;
+    final subTextColor = isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary;
+
     return Container(
-      padding: const EdgeInsets.all(AppTheme.spacingLg),
       margin: const EdgeInsets.all(AppTheme.spacingMd),
+      padding: const EdgeInsets.all(AppTheme.spacingLg),
       decoration: BoxDecoration(
-        color: isDark ? AppTheme.darkSurface : AppTheme.cardBackground,
+        color: bgColor,
         borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         boxShadow: AppTheme.cardShadow,
       ),
       child: Column(
         children: [
+          // 头像
           CircleAvatar(
             radius: 40,
             backgroundColor: AppTheme.primaryColor.withOpacity(0.1),
-            child: const Icon(Icons.person, size: 40, color: AppTheme.primaryColor),
+            child: Icon(Icons.person, size: 40, color: AppTheme.primaryColor),
           ),
           const SizedBox(height: AppTheme.spacingMd),
+          // 作者名
           Text(
             widget.author.name,
-            style: AppTheme.titleLarge.copyWith(
-              color: isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary,
-            ),
+            style: AppTheme.titleLarge.copyWith(color: textColor),
           ),
+          // 个人主页链接
           if (widget.author.profileUrl?.isNotEmpty == true) ...[
             const SizedBox(height: AppTheme.spacingSm),
             Text(
               widget.author.profileUrl!,
-              style: AppTheme.bodySmall.copyWith(
-                color: isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary,
-              ),
+              style: AppTheme.bodySmall.copyWith(color: subTextColor),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
           ],
           const SizedBox(height: AppTheme.spacingSm),
+          // 视频数量
           Text(
             '${_authorVideos.length} 个视频',
             style: AppTheme.caption,
           ),
+
+          const SizedBox(height: AppTheme.spacingLg),
+
+          // ─── 关注/取消关注按钮（从AppBar移到body区域，彻底解决触摸问题） ───
+          _buildFollowButton(isDark),
+
+          const SizedBox(height: AppTheme.spacingMd),
         ],
+      ),
+    );
+  }
+
+  /// 构建关注按钮（独立方法，使用 GestureDetector + Container 确保真机可点击）
+  Widget _buildFollowButton(bool isDark) {
+    final isFollowing = _isFollowed;
+    final isDisabled = _isProcessingFollow;
+
+    // 按钮颜色配置
+    Color bgColor;
+    Color borderColor;
+    Color iconColor;
+    Color textColor;
+    String label;
+    Widget? trailing;
+
+    if (isFollowing) {
+      bgColor = isDark ? Colors.grey[700]!.withOpacity(0.8) : Colors.grey[200]!;
+      borderColor = isDark ? Colors.grey[600]!.withOpacity(0.3) : Colors.grey[300]!;
+      iconColor = isDark ? Colors.pink[300]! : Colors.red[400]!;
+      textColor = isDark ? Colors.grey[300]! : Colors.grey[600]!;
+      label = '已关注';
+    } else {
+      bgColor = AppTheme.primaryColor.withOpacity(0.12);
+      borderColor = AppTheme.primaryColor.withOpacity(0.25);
+      iconColor = AppTheme.primaryColor;
+      textColor = AppTheme.primaryColor;
+      label = '关注作者';
+    }
+
+    if (isDisabled) {
+      trailing = SizedBox(
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 2, color: iconColor),
+      );
+      label = '处理中...';
+    }
+
+    // 使用 GestureDetector + Container，确保触摸区域足够大且不被拦截
+    return GestureDetector(
+      onTap: isDisabled ? null : _toggleFollow,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        width: double.infinity,
+        height: 48,
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: borderColor, width: 1),
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isFollowing ? Icons.favorite : Icons.favorite_border,
+              size: 20,
+              color: iconColor,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: textColor,
+              ),
+            ),
+            if (trailing != null) ...[
+              const SizedBox(width: 8),
+              trailing!,
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -318,13 +445,23 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
       delegate: SliverChildBuilderDelegate(
         (context, index) {
           final video = _authorVideos[index];
+          final isSelected = _selectedIds.contains(video.id);
           return VideoCard(
             video: video,
             appState: appState,
             isListMode: true,
-            showAuthor: false, // 作者页不需要显示作者
+            isSelected: isSelected,
+            showAuthor: false,
             showUploadDate: true,
-            onTap: () {},
+            onTap: () {
+              setState(() {
+                if (isSelected) {
+                  _selectedIds.remove(video.id);
+                } else {
+                  _selectedIds.add(video.id);
+                }
+              });
+            },
           );
         },
         childCount: _authorVideos.length,
