@@ -751,9 +751,11 @@ class CrawlerCore {
     // 根据站点类型构建搜索URL
     final url = CrawlerConfig.buildSearchUrl(baseUrl, _siteType, keyword, page: page, sort: sort);
     
-    // ✅ 修复：使用更轻量的参数格式
-    final ts = DateTime.now().millisecondsSinceEpoch;
-    final urlWithCache = url.contains('?') ? '$url&_t=$ts' : '$url?_t=$ts';
+    // ✅ 修复：搜索URL不再追加 _t 时间戳参数
+    // 实测发现：部分站点（如 91lol.im / 好色Tv）中，`&_t=` 与 `&sort=` 同时出现时返回 404，
+    // 单独带任何一个都正常。防缓存已有 _noCacheOptions（Cache-Control 头 + Dio extra cache:false）兜底，
+    // 因此搜索请求直接使用 buildSearchUrl 生成的 URL，不再拼接 _t（防止后人改回去）。
+    final urlWithCache = url;
     
     // ✅ 修复：日志记录实际请求的 URL
     await logger.log('Crawler', '网络请求: 搜索视频 $urlWithCache (siteType=$_siteType)');
@@ -794,9 +796,10 @@ class CrawlerCore {
       url = '$baseUrl/search.htm?search=${Uri.encodeComponent(keyword)}';
     }
     
-    // ✅ 修复：使用更轻量的参数格式
-    final ts = DateTime.now().millisecondsSinceEpoch;
-    final urlWithCache = url.contains('?') ? '$url&_t=$ts' : '$url?_t=$ts';
+    // ✅ 修复：搜索URL不再追加 _t 时间戳参数（与 searchVideos 保持一致）
+    // 作者搜索 URL 同样是 search.htm，`&_t=` 与 `&sort=` 组合可能触发站点 404，
+    // 防缓存已有 _noCacheOptions 兜底，因此不拼接 _t。
+    final urlWithCache = url;
     
     // ✅ 修复：日志记录实际请求的 URL
     await logger.log('Crawler', '网络请求: 搜索作者 $urlWithCache');
