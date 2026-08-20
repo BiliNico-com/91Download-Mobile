@@ -195,7 +195,10 @@ class CrawlerCore {
     final url = '$baseUrl/${urlPattern.replaceAll('{page}', page.toString())}';
     // ✅ 修复4：使用更轻量的参数格式，避免触发反爬
     final ts = DateTime.now().millisecondsSinceEpoch;
-    final urlWithCache = url.contains('?') ? '$url&_t=$ts' : '$url?_t=$ts';
+    // original 站点对 _t 参数敏感（首页/搜索带 _t 会 404），仅 porn91 保留 _t 防缓存
+    final urlWithCache = _siteType == "porn91"
+        ? (url.contains('?') ? '$url&_t=$ts' : '$url?_t=$ts')
+        : url;
     
     // ✅ 修复：日志记录实际请求的 URL
     await logger.log('Crawler', '网络请求: GET $urlWithCache (siteType=$_siteType)');
@@ -856,7 +859,10 @@ class CrawlerCore {
     
     // ✅ 修复：使用更轻量的参数格式
     final ts = DateTime.now().millisecondsSinceEpoch;
-    final urlWithCache = url.contains('?') ? '$url&_t=$ts' : '$url?_t=$ts';
+    // original 站点对 _t 参数敏感（首页/搜索带 _t 会 404），仅 porn91 保留 _t 防缓存
+    final urlWithCache = _siteType == "porn91"
+        ? (url.contains('?') ? '$url&_t=$ts' : '$url?_t=$ts')
+        : url;
     
     // ✅ 修复：日志记录实际请求的 URL
     await logger.log('Crawler', '网络请求: 获取作者视频 $urlWithCache (siteType=$_siteType)');
@@ -886,9 +892,10 @@ class CrawlerCore {
     try {
       // ✅ 修复：使用更轻量的参数格式
       final ts = DateTime.now().millisecondsSinceEpoch;
-      final urlWithCache = video.url.contains('?') 
-          ? '${video.url}&_t=$ts' 
-          : '${video.url}?_t=$ts';
+      // original 站点对 _t 参数敏感（首页/搜索带 _t 会 404），仅 porn91 保留 _t 防缓存
+      final urlWithCache = _siteType == "porn91"
+          ? (video.url.contains('?') ? '${video.url}&_t=$ts' : '${video.url}?_t=$ts')
+          : video.url;
       
       await logger.log('Crawler', '网络请求: 获取视频详情 $urlWithCache');
       
