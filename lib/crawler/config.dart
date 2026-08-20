@@ -91,9 +91,12 @@ class CrawlerConfig {
       // URL格式: search_result.php?search_id=xxx&search_type=search_videos&min_duration=&page=N
       return "$baseUrl/search_result.php?search_id=${Uri.encodeComponent(keyword)}&search_type=search_videos&min_duration=&page=$page";
     } else {
-      // original 风格搜索 URL（支持分页和排序）
-      // URL格式: search-{page}.htm?search=xxx[&sort=new/hot]
-      String url = "$baseUrl/search-$page.htm?search=${Uri.encodeComponent(keyword)}";
+      // original 风格搜索 URL：第 1 页 search.htm（不带页码），第 2 页起 search-{page}.htm
+      // 真实格式（用户实测）：
+      //   第1页: search.htm?search=xxx[&sort=new/hot]
+      //   第2页: search-2.htm?search=xxx[&sort=new/hot]
+      final pagePath = page <= 1 ? "search.htm" : "search-$page.htm";
+      String url = "$baseUrl/$pagePath?search=${Uri.encodeComponent(keyword)}";
       // 添加排序参数（default 时不添加）
       if (sort != "default") {
         url += "&sort=$sort";
