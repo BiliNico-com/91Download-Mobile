@@ -9,6 +9,7 @@ import '../services/version_service.dart';
 import '../services/pin_service.dart';
 import '../utils/logger.dart';
 import 'pin_input_dialog.dart';
+import 'cache_manager_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -282,11 +283,34 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     value: appState.nomediaEnabled,
                     onChanged: (v) => appState.toggleNomedia(v),
                   ),
+                  Divider(height: 24),
+                  // 缓存管理：清理临时残留与失效记录
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.cleaning_services_outlined),
+                    title: Text('缓存管理', style: TextStyle(fontSize: 14)),
+                    subtitle: Text(
+                      '清理未合并的临时文件、以及文件已删除却残留的记录',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    trailing: Icon(Icons.chevron_right),
+                    onTap: () => _openCacheManager(appState),
+                  ),
                 ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+  
+  /// 打开缓存管理页面
+  Future<void> _openCacheManager(AppState appState) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CacheManagerPage(appState: appState),
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 import 'dart:io';
 import '../crawler/config.dart';
 import '../crawler/crawler_core.dart';
@@ -164,6 +165,8 @@ class AppState extends ChangeNotifier {
     await requestPermissions();
     overlayPermissionGranted = await NativeFloatingService.isPermissionGranted();
     await initDownloadDir();
+    // 下载目录确定后，尝试从外部备份恢复设置（覆盖卸载重装导致的丢失）
+    await _restoreSettingsFromExternal();
     // 设置外部数据库路径
     _downloadManager.externalDbPath = downloadDir.isNotEmpty ? downloadDir : null;
     // 设置关注作者服务的外部数据库路径
@@ -174,6 +177,117 @@ class AppState extends ChangeNotifier {
     await VersionService.init();
     // 恢复未完成的下载任务
     await _downloadManager.restorePendingTasks();
+  }
+
+  /// 设置备份文件的路径
+  ///
+  /// 与数据库同样放在下载目录的 .db 子目录下，卸载重装后依然存在。
+  String get _externalSettingsPath =>
+      downloadDir.isEmpty ? '' : '$downloadDir/.db/settings_backup.json';
+
+  /// 从外部备份恢复设置
+  ///
+  /// 仅在 SharedPreferences 尚无有效配置时使用（典型场景：卸载重装后
+  /// SharedPreferences 被清空，但下载目录里的备份仍在）。
+  /// 已配置过的用户不会被备份文件覆盖，避免出现"改了设置又变回去"。
+  Future<void> _restoreSettingsFromExternal() async {
+    if (downloadDir.isEmpty) return;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      // 已有站点配置说明是正常升级，不需要恢复
+      final existingSite = prefs.getString('currentSite');
+      if (existingSite != null && existingSite.isNotEmpty) return;
+
+      final file = File(_externalSettingsPath);
+      if (!await file.exists()) return;
+
+      final raw = await file.readAsString();
+      if (raw.trim().isEmpty) return;
+
+      final data = jsonDecode(raw);
+      if (data is! Map) return;
+
+      await _applySettingsMap(Map<String, dynamic>.from(data), prefs);
+      Logger().logSync('AppState', '已从外部备份恢复设置');
+      notifyListeners();
+    } catch (e) {
+      Logger().logSync('AppState', '从外部备份恢复设置失败: $e');
+    }
+  }
+
+  /// 把设置字典写回内存与 SharedPreferences
+  Future<void> _applySettingsMap(
+      Map<String, dynamic> data, SharedPreferences prefs) async {
+    if (data['currentSite'] is String) {
+      final site = data['currentSite'] as String;
+      currentSite = site.isEmpty ? null : site;
+    }
+    if (data['customSites'] is List) {
+      customSites = (data['customSites'] as List).map((e) => e.toString()).toList();
+    }
+    if (data['themeMode'] is int) themeMode = data['themeMode'] as int;
+    if (data['isDarkMode'] is bool) _isDarkMode = data['isDarkMode'] as bool;
+    if (data['videoDisplayMode'] is String) {
+      videoDisplayMode = data['videoDisplayMode'] as String;
+    }
+    if (data['streamingMode'] is bool) streamingMode = data['streamingMode'] as bool;
+    if (data['showBackToTop'] is bool) showBackToTop = data['showBackToTop'] as bool;
+    if (data['backToTopPosition'] is String) {
+      backToTopPosition = data['backToTopPosition'] as String;
+    }
+    if (data['useExternalPlayer'] is bool) {
+      useExternalPlayer = data['useExternalPlayer'] as bool;
+    }
+    if (data['maxConcurrentTasks'] is int) {
+      maxConcurrentTasks = data['maxConcurrentTasks'] as int;
+    }
+    if (data['maxConcurrentSegments'] is int) {
+      maxConcurrentSegments = data['maxConcurrentSegments'] as int;
+    }
+    if (data['appLockEnabled'] is bool) {
+      appLockEnabled = data['appLockEnabled'] as bool;
+    }
+    if (data['privacyMode'] is bool) privacyMode = data['privacyMode'] as bool;
+    if (data['nomediaEnabled'] is bool) nomediaEnabled = data['nomediaEnabled'] as bool;
+
+    // 一并写回本地，后续启动走正常路径
+    await _saveSettings();
+  }
+
+  /// 把当前设置导出到外部备份文件
+  Future<void> _backupSettingsToExternal() async {
+    if (downloadDir.isEmpty) return;
+    try {
+      final file = File(_externalSettingsPath);
+      final dir = file.parent;
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+
+      final data = <String, dynamic>{
+        'currentSite': currentSite ?? '',
+        'customSites': customSites,
+        'themeMode': themeMode,
+        'isDarkMode': _isDarkMode,
+        'videoDisplayMode': videoDisplayMode,
+        'streamingMode': streamingMode,
+        'showBackToTop': showBackToTop,
+        'backToTopPosition': backToTopPosition,
+        'useExternalPlayer': useExternalPlayer,
+        'maxConcurrentTasks': maxConcurrentTasks,
+        'maxConcurrentSegments': maxConcurrentSegments,
+        'appLockEnabled': appLockEnabled,
+        'privacyMode': privacyMode,
+        'nomediaEnabled': nomediaEnabled,
+        'backup_time': DateTime.now().toIso8601String(),
+      };
+
+      await file.writeAsString(jsonEncode(data));
+    } catch (e) {
+      Logger().logSync('AppState', '备份设置失败: $e');
+    }
   }
 
   // 从持久化存储加载设置
@@ -222,6 +336,9 @@ class AppState extends ChangeNotifier {
       prefs.setBool('nomediaEnabled', nomediaEnabled),
       prefs.setStringList('customSites', customSites),
     ]);
+
+    // 同步一份到下载目录，卸载重装后可恢复（SharedPreferences 会随卸载清空）
+    await _backupSettingsToExternal();
   }
 
   // 请求存储权限 - 适配 Android 13+ 的细粒度媒体权限

@@ -282,7 +282,7 @@ class DownloadManager extends ChangeNotifier {
           // 文件不存在，允许重新下载，清理旧记录
           _tasks.remove(existing);
           _taskMap.remove(id);
-          _deleteTaskFromDb(id);
+          await _deleteTaskFromDb(id);
         } else if (forceRestart) {
           // 文件存在且用户确认覆盖
           try {
@@ -294,7 +294,7 @@ class DownloadManager extends ChangeNotifier {
           _waitingQueue.remove(existing);
           _tasks.remove(existing);
           _taskMap.remove(id);
-          _deleteTaskFromDb(id);
+          await _deleteTaskFromDb(id);
         } else {
           // 文件存在且未确认覆盖
           return 'duplicate';
@@ -305,14 +305,14 @@ class DownloadManager extends ChangeNotifier {
         _waitingQueue.remove(existing);
         _tasks.remove(existing);
         _taskMap.remove(id);
-        _deleteTaskFromDb(id);
+        await _deleteTaskFromDb(id);
       }
     }
     
     final task = DownloadTask(id: id, video: video);
     _tasks.insert(0, task);
     _taskMap[id] = task;
-    _saveTaskToDb(task);  // 保存到数据库
+    await _saveTaskToDb(task);  // 保存到数据库
     notifyListeners();
     
     // 按并发限制决定立即下载还是加入队列
@@ -580,7 +580,10 @@ class DownloadManager extends ChangeNotifier {
   }
   
   /// 取消下载（删除任务）
-  void cancelTask(String taskId) {
+  ///
+  /// [deleteFile] 为 true 时一并删除磁盘文件，避免只删记录导致
+  /// 文件残留在下载目录（下次扫描或恢复时又被发现）。
+  Future<void> cancelTask(String taskId, {bool deleteFile = false}) async {
     Logger().logSync('Download', 'cancelTask 被调用, taskId: $taskId');
     Logger().logSync('Download', '_taskMap.keys: ${_taskMap.keys.toList()}');
     Logger().logSync('Download', '_tasks ids: ${_tasks.map((t) => t.id).toList()}');
@@ -600,8 +603,14 @@ class DownloadManager extends ChangeNotifier {
       final removed = _tasks.remove(task);
       _taskMap.remove(taskId);
       Logger().logSync('Download', '从 _tasks 移除: $removed, 剩余任务数: ${_tasks.length}');
-      // 异步删除数据库记录
-      _deleteTaskFromDb(taskId);
+      // 删除数据库记录（必须 await，否则可能未完成就退出，记录残留导致"复活"）
+      await _deleteTaskFromDb(taskId);
+      
+      // 删除磁盘文件与临时目录
+      if (deleteFile) {
+        await deleteFilesForTask(task);
+      }
+      
       // 通知 UI 更新
       notifyListeners();
       Logger().logSync('Download', '已调用 notifyListeners()');
@@ -613,21 +622,79 @@ class DownloadManager extends ChangeNotifier {
         Logger().logSync('Download', '在 _tasks 中找到任务，尝试直接删除');
         _tasks.remove(taskInList);
         _taskMap.remove(taskId);
-        _deleteTaskFromDb(taskId);
+        await _deleteTaskFromDb(taskId);
+        if (deleteFile) {
+          await deleteFilesForTask(taskInList);
+        }
         notifyListeners();
         Logger().logSync('Download', '直接删除成功，剩余任务数: ${_tasks.length}');
       }
     }
   }
   
+  /// 只移除任务记录（不触碰磁盘文件）
+  ///
+  /// 供缓存清理使用：孤立记录对应的文件早已不存在，
+  /// 此时只需把残留的数据库记录和内存条目清掉。
+  Future<void> removeTaskRecord(String taskId) async {
+    final task = _taskMap[taskId];
+    if (task != null) {
+      _waitingQueue.remove(task);
+      _tasks.remove(task);
+      _taskMap.remove(taskId);
+    } else {
+      final taskInList = _tasks.where((t) => t.id == taskId).firstOrNull;
+      if (taskInList != null) {
+        _tasks.remove(taskInList);
+        _taskMap.remove(taskId);
+      }
+    }
+    await _deleteTaskFromDb(taskId);
+    notifyListeners();
+  }
+
+  /// 删除某个任务对应的视频文件与临时目录
+  Future<void> deleteFilesForTask(DownloadTask task) async {
+    final path = task.filePath;
+    if (path == null || path.isEmpty) return;
+    
+    // 删除已合并的视频文件
+    try {
+      final f = File(path);
+      if (await f.exists()) {
+        await f.delete();
+        await logger.log('Download', '已删除文件: $path');
+      }
+    } catch (e) {
+      await logger.log('Download', '删除文件失败 ($path): $e');
+    }
+    
+    // 删除可能残留的临时切片目录
+    await deleteTempDirFor(path);
+  }
+  
+  /// 删除某个视频路径对应的 *_temp 临时目录
+  Future<void> deleteTempDirFor(String filePath) async {
+    if (filePath.isEmpty) return;
+    try {
+      final tempDir = Directory('${filePath}_temp');
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+        await logger.log('Download', '已删除临时目录: ${tempDir.path}');
+      }
+    } catch (e) {
+      await logger.log('Download', '删除临时目录失败: $e');
+    }
+  }
+  
   /// 清除已完成的任务
-  void clearCompleted() {
+  Future<void> clearCompleted() async {
     final completedIds = _tasks.where((t) => t.status == DownloadStatus.completed).map((t) => t.video.id).toList();
     _tasks.removeWhere((t) => t.status == DownloadStatus.completed);
     _taskMap.removeWhere((_, t) => t.status == DownloadStatus.completed);
-    // 从数据库删除已完成的任务
+    // 从数据库删除已完成的任务（await 确保真正落库）
     for (final id in completedIds) {
-      _deleteTaskFromDb(id);
+      await _deleteTaskFromDb(id);
     }
     notifyListeners();
   }
@@ -736,16 +803,40 @@ class DownloadManager extends ChangeNotifier {
   }
   
   /// 从 download_history.db 恢复已完成的任务
+  ///
+  /// 重要：必须校验文件是否真实存在。
+  /// 历史记录与任务表是两套独立的表，删除时若只清掉其中一处，
+  /// 残留记录会在下次启动时被无条件当成「已完成」重新显示，
+  /// 表现为「已删除的下载又冒出来了」。
+  /// 这里对文件已丢失的记录直接跳过，并顺手清理其残留历史记录。
   Future<void> _restoreCompletedFromHistory() async {
     if (_crawler == null) return;
     
     try {
       final history = await _crawler!.getDownloadHistory(limit: 1000);
       int restoredCount = 0;
+      final staleIds = <String>[];
       
       for (final record in history) {
         final videoId = record['video_id'] as String?;
         if (videoId == null || _taskMap.containsKey(videoId)) continue;
+        
+        final filePath = record['file_path'] as String?;
+        
+        // 校验文件真实存在，不存在则视为失效记录，不再恢复
+        bool fileExists = false;
+        if (filePath != null && filePath.isNotEmpty) {
+          try {
+            fileExists = await File(filePath).exists();
+          } catch (_) {
+            fileExists = false;
+          }
+        }
+        
+        if (!fileExists) {
+          staleIds.add(videoId);
+          continue;
+        }
         
         final video = VideoInfo(
           id: videoId,
@@ -755,7 +846,7 @@ class DownloadManager extends ChangeNotifier {
         
         final task = DownloadTask(id: video.id, video: video);
         task.status = DownloadStatus.completed;
-        task.filePath = record['file_path'];
+        task.filePath = filePath;
         if (record['download_time'] != null) {
           task.startTime = DateTime.parse(record['download_time']);
           task.endTime = task.startTime;  // 同时设置结束时间
@@ -764,6 +855,18 @@ class DownloadManager extends ChangeNotifier {
         _tasks.add(task);
         _taskMap[video.id] = task;
         restoredCount++;
+      }
+      
+      // 清理失效的历史记录，避免每次启动都重复扫描
+      if (staleIds.isNotEmpty) {
+        await logger.log('Download', '发现 ${staleIds.length} 条文件已丢失的历史记录，正在清理');
+        for (final id in staleIds) {
+          try {
+            await _crawler!.deleteDownloadHistory(id);
+          } catch (e) {
+            Logger().log('Download', '清理失效历史记录失败 ($id): $e');
+          }
+        }
       }
       
       if (restoredCount > 0) {

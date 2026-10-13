@@ -561,9 +561,10 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           }
         }
         
-        // 从 download_tasks.db 删除任务
-        appState.downloadManager.cancelTask(id);
-        print('cancelTask 已调用');
+        // 从 download_tasks.db 删除任务，并一并清理临时目录
+        // 注意：文件已在上面按需删除，这里补删可能残留的 *_temp 目录
+        await appState.downloadManager.cancelTask(id);
+        print('cancelTask 已完成');
         deletedCount++;
       }
       
