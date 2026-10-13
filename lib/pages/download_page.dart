@@ -676,14 +676,14 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // 显示已下载/总大小
+                  // 仅显示切片进度（如「下载中 13/120」）
                   Text(
-                    task.progressText.isNotEmpty 
-                        ? task.progressText 
-                        : '${(task.progress * 100).toStringAsFixed(1)}%',
+                    task.progressText.isNotEmpty
+                        ? task.progressText
+                        : '${(task.progress * 100).toStringAsFixed(0)}%',
                     style: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
-                  // 显示下载速度
+                  // 速度只在此处展示一次，避免与上方文本重复
                   if (task.speedText.isNotEmpty)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
