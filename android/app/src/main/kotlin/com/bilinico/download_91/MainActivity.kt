@@ -11,12 +11,24 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val FLOATING_CHANNEL = "com.bilinico.download_91/floating_video"
+    private val OPEN_DIR_CHANNEL = "com.bilinico.download_91/open_directory"
     
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         
         // 注册 PiP 插件
         PipPlugin.registerWith(flutterEngine.dartExecutor.binaryMessenger, this)
+        
+        // 注册"打开下载目录"通道
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OPEN_DIR_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "openDirectory" -> {
+                    val path = call.argument<String>("path") ?: ""
+                    result.success(openDirectory(path))
+                }
+                else -> result.notImplemented()
+            }
+        }
         
         // 注册悬浮窗通信通道
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FLOATING_CHANNEL).setMethodCallHandler { call, result ->
@@ -162,6 +174,83 @@ class MainActivity : FlutterActivity() {
             )
             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
             startActivity(intent)
+        }
+    }
+    
+    /**
+     * 在系统文件管理器中打开指定目录
+     *
+     * 要点：
+     * - Android 7.0+ 用 file:// 会抛 FileUriExposedException，不能直传路径。
+     * - 想让文件管理器**定位到具体目录**，需要用 DocumentsContract 构造
+     *   externalstorage 的 document URI：documentId 形如
+     *   "primary:Download/91Download"。
+     *
+     * 按优先级尝试，返回 true 表示成功调起了界面。
+     */
+    private fun openDirectory(path: String): Boolean {
+        if (path.isEmpty()) return false
+
+        val dir = java.io.File(path)
+        if (!dir.exists()) {
+            dir.mkdirs()
+        }
+
+        // 绝对路径 -> DocumentsUI 的 documentId
+        //   /storage/emulated/0/Download/91Download -> "primary:Download/91Download"
+        val documentId = try {
+            val rel = path
+                .removePrefix("/storage/emulated/0/")
+                .removePrefix("/sdcard/")
+                .trim('/')
+            if (rel.isEmpty()) "primary:" else "primary:$rel"
+        } catch (_: Exception) {
+            "primary:"
+        }
+
+        // 方式 1：DocumentsUI 精确定位到该目录
+        try {
+            val uri = android.provider.DocumentsContract.buildDocumentUri(
+                "com.android.externalstorage.documents",
+                documentId
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "vnd.android.document/directory")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            return true
+        } catch (_: Exception) {
+            // 继续尝试下一种方式
+        }
+
+        // 方式 2：打开主存储根目录，让用户自行导航
+        try {
+            val uri = android.provider.DocumentsContract.buildRootUri(
+                "com.android.externalstorage.documents",
+                "primary"
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "vnd.android.document/root")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            return true
+        } catch (_: Exception) {
+            // 继续尝试下一种方式
+        }
+
+        // 方式 3：无 DocumentsUI 的设备，交给系统选择器兜底
+        try {
+            val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                setType("*/*")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            return true
+        } catch (_: Exception) {
+            return false
         }
     }
     

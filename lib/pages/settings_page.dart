@@ -8,6 +8,7 @@ import '../services/version_service.dart';
 
 import '../services/pin_service.dart';
 import '../utils/logger.dart';
+import '../utils/open_directory.dart';
 import 'pin_input_dialog.dart';
 import 'cache_manager_page.dart';
 
@@ -394,17 +395,44 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     }
   }
   
-  void _openDownloadDirectory(String path) async {
+  /// 打开下载目录（用系统文件管理器跳转到该目录）
+  ///
+  /// 原实现只是弹了个 SnackBar 显示路径，并没有真正打开目录，
+  /// 这里改为通过 platform channel 调起系统文件管理器。
+  /// 若设备没有可用的文件管理器，则退化为复制路径提示。
+  Future<void> _openDownloadDirectory(String path) async {
     if (path.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('下载目录未设置')),
+        const SnackBar(content: Text('下载目录未设置')),
       );
       return;
     }
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('目录路径: $path')),
-    );
+
+    try {
+      // 确保目录存在，否则文件管理器可能拒绝跳转
+      final dir = Directory(path);
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+
+      final opened = await OpenDirectoryPlugin.openDirectory(path);
+
+      if (!opened && mounted) {
+        // 没有可用的文件管理器时，给出可操作的兜底提示
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('无法打开文件管理器\n路径: $path'),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('打开目录失败: $e')),
+        );
+      }
+    }
   }
 
   /// 2.5 下载并发设置区域

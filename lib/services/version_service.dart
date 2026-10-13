@@ -335,10 +335,16 @@ class VersionService {
   }
 
   /// 把 Release 正文（markdown）按行拆成更新条目
+  ///
+  /// 做了长度与条数限制：更新日志面向用户，正文若混入开发者细节会很长，
+  /// 这里截断到最多 [maxNotes] 条、每条 [maxLen] 字，避免对话框被撑爆。
   static List<String> _parseReleaseNotes(String body) {
     if (body.trim().isEmpty) return [];
 
-    return body
+    const maxNotes = 8;
+    const maxLen = 100;
+
+    final lines = body
         .split('\n')
         .map((line) => line.trim())
         // 去掉 markdown 列表符号与标题符号
@@ -348,6 +354,16 @@ class VersionService {
         // 过滤掉分隔线和空行
         .where((line) => line.isNotEmpty && !RegExp(r'^-{3,}$').hasMatch(line))
         .toList();
+
+    final result = <String>[];
+    for (var line in lines) {
+      if (result.length >= maxNotes) break;
+      if (line.length > maxLen) {
+        line = '${line.substring(0, maxLen)}…';
+      }
+      result.add(line);
+    }
+    return result;
   }
 
   /// 下载并安装更新

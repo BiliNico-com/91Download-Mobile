@@ -502,13 +502,19 @@ jobs:
     - name: Extract release notes
       id: release_notes
       run: |
-        # version.json 已废弃，直接使用本次提交的说明作为 release notes
-        NOTES=$(git log -1 --pretty=format:'%s%n%n%b')
-        if [ -z "$NOTES" ]; then
-          NOTES="无更新说明"
+        # Release 说明只取本次提交的**首行**（提交标题），保持简短。
+        # 提交正文往往是给开发者看的实现细节，不适合直接放进更新日志。
+        # 如需更详细的说明，可在提交标题里写清楚（一行以内）。
+        SUBJECT=$(git log -1 --pretty=format:'%s' | tr -d '\r')
+        if [ -z "$SUBJECT" ]; then
+          SUBJECT="日常更新"
         fi
+
+        # 去掉 conventional commit 前缀（fix: / feat: / chore: 等）
+        SUBJECT=$(echo "$SUBJECT" | sed -E 's/^(fix|feat|chore|docs|style|refactor|perf|test|build|ci|revert)(\([^)]*\))?!?:[[:space:]]*//I')
+
         echo "notes<<EOF" >> $GITHUB_OUTPUT
-        echo "$NOTES" >> $GITHUB_OUTPUT
+        echo "- ${SUBJECT}" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
     
     - name: Create Release
@@ -517,18 +523,9 @@ jobs:
       with:
         tag_name: v${{ steps.version.outputs.base_version }}.${{ steps.version.outputs.build_number }}
         name: Build ${{ steps.version.outputs.build_number }}
+        # 保持简短：只列本次更新内容，不堆砌构建元信息
         body: |
-          ## 更新内容
-          
           ${{ steps.release_notes.outputs.notes }}
-          
-          ---
-          
-          **构建信息**
-          - 版本: v${{ steps.version.outputs.base_version }}.${{ steps.version.outputs.build_number }}
-          - Commit: ${{ github.sha }}
-          - 时间: ${{ github.event.head_commit.timestamp }}
-          - 提交信息: ${{ github.event.head_commit.message }}
         files: build/app/outputs/flutter-apk/app-release.apk
         draft: false
         prerelease: false
