@@ -1077,8 +1077,10 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     final remoteVersion = await VersionService.checkUpdate();
     
     if (remoteVersion == null) {
+      // 展示具体失败原因（超时/限流/未发布等），便于用户判断
+      final reason = VersionService.lastError ?? '请检查网络连接';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('检查更新失败，请检查网络连接')),
+        SnackBar(content: Text('检查更新失败：$reason')),
       );
       return;
     }
@@ -1114,9 +1116,10 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
             Text('最新版本: ${version.fullVersion}'),
             SizedBox(height: 4),
             Text('当前版本: ${VersionService.fullVersion}'),
-            if (version.releaseDate.isNotEmpty) ...[
+            if (version.publishedAt.isNotEmpty) ...[
               SizedBox(height: 4),
-              Text('发布日期: ${version.releaseDate}', style: TextStyle(color: Colors.grey)),
+              Text('发布日期: ${version.publishedAt.split('T').first}',
+                  style: TextStyle(color: Colors.grey)),
             ],
             if (version.releaseNotes.isNotEmpty) ...[
               SizedBox(height: 12),

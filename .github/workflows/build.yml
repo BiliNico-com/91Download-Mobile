@@ -467,19 +467,25 @@ jobs:
         echo "Build config fixed"
     
     - name: Sync version with CI run_number
+      id: version
       run: |
-        # 将 pubspec.yaml 的 build number 同步为 github.run_number
-        # 这样构建出的 APK 内嵌版本号与 Release tag 完全一致
+        # pubspec.yaml 是版本号的唯一真实来源。
+        # CI 只覆写 build number（+N），MAJOR.MINOR.PATCH 由开发者手动维护，
+        # 这样 tag、APK 内嵌版本、检查更新的比较基准三者才能保持一致。
         RUN_NUM="${{ github.run_number }}"
+
+        # 读取 pubspec 里开发者维护的版本号（形如 1.0.6+6 或 1.0.6）
+        RAW_VERSION=$(grep '^version:' pubspec.yaml | head -1 | sed 's/^version: *//' | tr -d '\r')
+        BASE_VERSION=$(echo "$RAW_VERSION" | cut -d'+' -f1)
+        echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
+        echo "build_number=$RUN_NUM" >> $GITHUB_OUTPUT
+
+        # 同步 build number 到 pubspec，使 APK 内嵌版本与 tag 完全一致
         sed -i "s/^version: \(.*\)+[0-9]*/version: \1+${RUN_NUM}/" pubspec.yaml
-        
-        # 同步 version.json（备用方案也保持一致）
-        if [ -f version.json ]; then
-          sed -i "s/\"build_number\": [0-9]*/\"build_number\": ${RUN_NUM}/" version.json
-        fi
-        
         echo "Version synced to: $(grep '^version:' pubspec.yaml)"
-        cat pubspec.yaml | head -6
+
+        # version.json 已废弃（检查更新改用 Release API），不再写入。
+        echo "Release tag will be: v${BASE_VERSION}.${RUN_NUM}"
 
     - name: Install dependencies
       run: flutter pub get
@@ -496,23 +502,21 @@ jobs:
     - name: Extract release notes
       id: release_notes
       run: |
-        # 从 version.json 提取 release_notes
-        if [ -f version.json ]; then
-          # 使用 jq 或 grep 提取 release_notes
-          NOTES=$(grep -o '"release_notes": *"[^"]*"' version.json | sed 's/"release_notes": *"\([^"]*\)"/\1/' | sed 's/\\n/\n/g')
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          echo "$NOTES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-        else
-          echo "notes=无更新说明" >> $GITHUB_OUTPUT
+        # version.json 已废弃，直接使用本次提交的说明作为 release notes
+        NOTES=$(git log -1 --pretty=format:'%s%n%n%b')
+        if [ -z "$NOTES" ]; then
+          NOTES="无更新说明"
         fi
+        echo "notes<<EOF" >> $GITHUB_OUTPUT
+        echo "$NOTES" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
     
     - name: Create Release
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: v1.0.5.${{ github.run_number }}
-        name: Build ${{ github.run_number }}
+        tag_name: v${{ steps.version.outputs.base_version }}.${{ steps.version.outputs.build_number }}
+        name: Build ${{ steps.version.outputs.build_number }}
         body: |
           ## 更新内容
           
@@ -521,6 +525,7 @@ jobs:
           ---
           
           **构建信息**
+          - 版本: v${{ steps.version.outputs.base_version }}.${{ steps.version.outputs.build_number }}
           - Commit: ${{ github.sha }}
           - 时间: ${{ github.event.head_commit.timestamp }}
           - 提交信息: ${{ github.event.head_commit.message }}
