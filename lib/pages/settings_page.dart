@@ -847,12 +847,31 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       if (pin == null || !mounted) return;
       
       final success = await _pinService.setPin(pin);
-      if (success && mounted) {
-        await appState.toggleAppLock(true);
+      if (!mounted) return;
+
+      if (!success) {
+        // 存不进去就不能开启，否则会出现「开了锁但没有PIN可解」的死局
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已启用应用锁')),
+          SnackBar(content: Text('PIN码保存失败，应用锁未启用')),
         );
+        return;
       }
+
+      // 再校验一次确实写进去了，双保险
+      final stored = await _pinService.hasPin();
+      if (!mounted) return;
+      if (!stored) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('PIN码写入校验失败，应用锁未启用')),
+        );
+        return;
+      }
+
+      await appState.toggleAppLock(true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已启用应用锁')),
+      );
     } else {
       // 关闭应用锁 - 先验证PIN码
       final pin = await PinInputDialog.showVerifyPin(context);
