@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/video_info.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
+import 'cover_image.dart';
 
 /// 统一视频卡片组件
 /// 
@@ -121,29 +122,14 @@ class VideoCard extends StatelessWidget {
         child: Stack(
           fit: fit,
           children: [
-            // 背景色 / 封面图
-            Container(
-              color: isDark ? const Color(0xFF2C2C2C) : Colors.grey[800],
-              child: video.cover != null
-                  ? Image.network(
-                      video.cover!,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
-                      errorBuilder: (_, __, ___) => Center(
-                        child: Icon(Icons.video_library, color: Colors.grey, size: iconSize),
-                      ),
-                    )
-                  : Center(
-                      child: Icon(Icons.video_library, color: Colors.grey, size: iconSize),
-                    ),
+            // 背景色 / 封面图（磁盘缓存 + 隐私模糊）
+            CoverImage(
+              url: video.cover,
+              borderRadius: BorderRadius.zero,
+              fit: BoxFit.cover,
+              fallbackIconSize: iconSize,
+              blur: appState.privacyMode,
             ),
-            // 隐私模式模糊
-            if (appState.privacyMode)
-              BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                child: Container(color: Colors.transparent),
-              ),
             // 选中标记
             if (isSelected)
               Positioned(

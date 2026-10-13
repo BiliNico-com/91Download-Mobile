@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/video_info.dart';
 import '../services/app_state.dart';
 import '../services/followed_authors_service.dart';
+import '../components/cover_image.dart';
 import 'author_detail_page.dart';
 
 /// 已关注作者页面
@@ -143,17 +144,13 @@ class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClie
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // 头像
+                // 头像（磁盘缓存，作者头像变化不频繁）
                 Expanded(
-                  child: Container(
-                    color: Colors.grey[800],
-                    child: author.avatarUrl != null && author.avatarUrl!.isNotEmpty
-                        ? Image.network(
-                            author.avatarUrl!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 48, color: Colors.grey),
-                          )
-                        : const Icon(Icons.person, size: 48, color: Colors.grey),
+                  child: CoverImage(
+                    url: author.avatarUrl,
+                    borderRadius: BorderRadius.zero,
+                    fallbackIcon: Icons.person,
+                    fallbackIconSize: 48,
                   ),
                 ),
                 // 作者名和取消关注

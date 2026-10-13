@@ -27,6 +27,29 @@ class _CacheManagerPageState extends State<CacheManagerPage> {
   bool _cleanOrphanHistory = true;
   bool _cleanOrphanTasks = true;
 
+  /// 清空封面缓存（独立按钮，立即执行）
+  bool _clearingCoverCache = false;
+
+  Future<void> _clearCoverCache() async {
+    if (_clearingCoverCache) return;
+    setState(() => _clearingCoverCache = true);
+
+    final before = _result?.coverCacheBytes ?? 0;
+    final ok = await CacheService.clearCoverCache();
+
+    if (!mounted) return;
+    setState(() => _clearingCoverCache = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? '已清空封面缓存，释放 ${formatBytes(before)}'
+            : '清空封面缓存失败'),
+      ),
+    );
+    await _scan();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -52,7 +75,7 @@ class _CacheManagerPageState extends State<CacheManagerPage> {
 
   Future<void> _clean() async {
     final res = _result;
-    if (res == null || res.isEmpty || _cleaning) return;
+    if (res == null || res.totalCount == 0 || _cleaning) return;
 
     setState(() => _cleaning = true);
 
@@ -107,7 +130,10 @@ class _CacheManagerPageState extends State<CacheManagerPage> {
               children: [
                 _buildSummary(res),
                 const SizedBox(height: 12),
-                if (res == null || res.isEmpty)
+                _buildCoverCacheSection(res),
+                // 临时文件与失效记录的多选清理区；封面缓存有独立按钮，
+                // 因此这里只看 totalCount（不含封面占用）
+                if (res == null || res.totalCount == 0)
                   _buildEmptyState()
                 else ...[
                   _buildTempSection(res),
@@ -176,6 +202,36 @@ class _CacheManagerPageState extends State<CacheManagerPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 封面图缓存占用与清理入口
+  ///
+  /// 封面走磁盘缓存（cached_network_image），浏览过的图片会留在本地，
+  /// 二次打开无需重新下载；这里只做占用展示与手动清空。
+  Widget _buildCoverCacheSection(CacheScanResult? res) {
+    final bytes = res?.coverCacheBytes ?? 0;
+    final theme = Theme.of(context);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: Icon(Icons.image_outlined, color: theme.colorScheme.primary),
+        title: const Text('封面图缓存', style: TextStyle(fontSize: 14)),
+        subtitle: Text(
+          bytes > 0
+              ? '已缓存缩略图，占用 ${formatBytes(bytes)}；清空后浏览时需重新下载'
+              : '暂无封面缓存',
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+        trailing: _clearingCoverCache
+            ? const SizedBox(
+                width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+            : TextButton(
+                onPressed: bytes > 0 ? _clearCoverCache : null,
+                child: const Text('清空'),
+              ),
       ),
     );
   }

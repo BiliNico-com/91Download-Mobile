@@ -8,6 +8,7 @@ import '../models/video_info.dart';
 import '../utils/logger.dart';
 import '../components/video_card.dart';
 import '../components/empty_state.dart';
+import '../components/cover_image.dart';
 import '../components/skeleton_card.dart';
 import '../utils/debouncer.dart';
 import 'streaming_page.dart';
@@ -1165,17 +1166,14 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        if (video.cover != null)
-                          Image.network(
-                            video.cover!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Icon(Icons.video_library, color: Colors.grey),
-                          ),
-                        if (appState.privacyMode)
-                          BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                            child: Container(color: Colors.transparent),
-                          ),
+                        // 封面：走磁盘缓存，避免每次进入页面重新下载
+                        CoverImage(
+                          url: video.cover,
+                          width: 120,
+                          height: 68,
+                          borderRadius: BorderRadius.zero,
+                          blur: appState.privacyMode,
+                        ),
                         // 选中标记（与批量页一致）
                         if (isSelected)
                           Positioned(top: 4, left: 4, child: Icon(Icons.check_circle, color: Colors.blue, size: 20)),
@@ -1298,30 +1296,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Container(color: Colors.grey[800]),
-                    if (video.cover != null)
-                      ClipRRect(
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Image.network(
-                              video.cover!,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Center(
-                                child: Icon(Icons.video_library, color: Colors.grey),
-                              ),
-                            ),
-                            // 隐私模式模糊
-                            if (appState.privacyMode)
-                              Positioned.fill(
-                                child: BackdropFilter(
-                                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                                  child: Container(color: Colors.transparent),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
+                    // 封面：磁盘缓存 + 隐私模糊由组件统一处理
+                    CoverImage(
+                      url: video.cover,
+                      borderRadius: BorderRadius.zero,
+                      fit: BoxFit.cover,
+                      blur: appState.privacyMode,
+                    ),
                     // 时长
                     if (video.duration != null)
                       Positioned(

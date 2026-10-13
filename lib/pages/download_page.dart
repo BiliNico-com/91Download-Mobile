@@ -10,6 +10,7 @@ import '../services/app_state.dart';
 import '../services/download_manager.dart';
 import '../services/brightness_service.dart';
 import '../components/empty_state.dart';
+import '../components/cover_image.dart';
 import '../components/player_glass.dart';
 import '../services/pip_service.dart';
 import '../services/floating_video_service.dart';
@@ -621,11 +622,13 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                   // 封面 + 选中标记
                   Stack(
                     children: [
-                      ClipRRect(
+                      // 封面走磁盘缓存，避免每次进入下载页重新下载
+                      CoverImage(
+                        url: task.video.cover,
+                        width: 80,
+                        height: 60,
                         borderRadius: BorderRadius.circular(4),
-                        child: task.video.cover != null
-                          ? Image.network(task.video.cover!, width: 80, height: 60, fit: BoxFit.cover)
-                          : Container(width: 80, height: 60, color: Colors.grey[300], child: Icon(Icons.video_file)),
+                        fallbackIconSize: 20,
                       ),
                       // 选中标记（左上角）
                       if (selected)
@@ -873,15 +876,16 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           child: Row(
             children: [
-              // 预览图（放大 + 右下角时长 + 选中标记）
-              Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: task.video.cover != null
-                      ? Image.network(task.video.cover!, width: 96, height: 64, fit: BoxFit.cover)
-                      : Container(width: 96, height: 64, color: Colors.grey[300], child: Icon(Icons.video_file, size: 24)),
-                  ),
+                  // 预览图（磁盘缓存 + 右下角时长 + 选中标记）
+                  Stack(
+                    children: [
+                      CoverImage(
+                        url: task.video.cover,
+                        width: 96,
+                        height: 64,
+                        borderRadius: BorderRadius.circular(6),
+                        fallbackIconSize: 24,
+                      ),
                   // 时长标签（右下角）
                   if (task.video.duration != null && task.video.duration!.isNotEmpty)
                     Positioned(
@@ -981,11 +985,12 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             children: [
               Stack(
                 children: [
-                  ClipRRect(
+                  CoverImage(
+                    url: task.video.cover,
+                    width: 96,
+                    height: 64,
                     borderRadius: BorderRadius.circular(6),
-                    child: task.video.cover != null
-                      ? Image.network(task.video.cover!, width: 96, height: 64, fit: BoxFit.cover)
-                      : Container(width: 96, height: 64, color: Colors.grey[300], child: Icon(Icons.video_file, size: 24)),
+                    fallbackIconSize: 24,
                   ),
                   if (task.video.duration != null && task.video.duration!.isNotEmpty)
                     Positioned(
@@ -1372,26 +1377,36 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   
   /// 启动悬浮窗状态检查定时器
   ///
-  /// 原生侧关闭悬浮窗后会停止服务，`FloatingVideoService.isFloating`
-  /// 这里靠轮询感知。周期取 250ms：比原来的 500ms 更快摘掉遮罩，
-  /// 缓解"双击返回后上面还盖着一层黑幕"的割裂感（纯原生广播桥接成本更高，
-  /// 轮询在本场景足够且更可靠）。
+  /// 必须查询**原生真实状态**（isActuallyRunning）。
+  /// 早先这里判断的是 FloatingVideoService.isFloating —— 那是 Dart 本地标记，
+  /// 只有 Dart 主动调用 stopFloating() 才会变 false；
+  /// 用户在悬浮窗上双击/点 × 关闭时原生自行停止，本地标记永远是 true，
+  /// 导致遮罩永不消失、进度也永远恢复不回来（这正是此前的故障原因）。
   void _startFloatingCheckTimer() {
     _floatingCheckTimer?.cancel();
-    _floatingCheckTimer = Timer.periodic(const Duration(milliseconds: 250), (timer) {
-      // 检查原生悬浮窗是否还在运行
-      if (!FloatingVideoService.isFloating) {
-        // 悬浮窗已关闭（用户点击了x或双击返回）
-        timer.cancel();
-        if (mounted && _isInFloatingMode) {
-          // 立即摘掉遮罩，再恢复进度/播放状态
-          setState(() => _isInFloatingMode = false);
-          debugPrint('[FloatingMode] 检测到悬浮窗已关闭，退出悬浮模式');
-          _resumeFromFloating();
+    _floatingCheckTimer = Timer.periodic(const Duration(milliseconds: 250), (timer) async {
+      // 防重入：上一次探测还没返回就跳过本次
+      if (_checkingFloatingState) return;
+      _checkingFloatingState = true;
+      try {
+        final running = await FloatingVideoService.isActuallyRunning();
+        if (!running) {
+          timer.cancel();
+          if (mounted && _isInFloatingMode) {
+            // 立即摘掉遮罩，再恢复进度/播放状态
+            setState(() => _isInFloatingMode = false);
+            debugPrint('[FloatingMode] 检测到原生悬浮窗已关闭，退出悬浮模式');
+            await _resumeFromFloating();
+          }
         }
+      } finally {
+        _checkingFloatingState = false;
       }
     });
   }
+
+  /// 悬浮窗状态探测是否进行中（避免异步探测重叠）
+  bool _checkingFloatingState = false;
   
   Future<void> _exitFloatingMode() async {
     _floatingCheckTimer?.cancel();
@@ -1496,9 +1511,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     
     // 从悬浮窗模式恢复（优先处理悬浮窗，因为悬浮窗和 PiP 可能冲突）
     if (state == AppLifecycleState.resumed && _isInFloatingMode) {
-      // 检查悬浮窗是否已关闭
+      // 检查悬浮窗是否已关闭（必须问原生，本地标记不可靠）
       Future.delayed(const Duration(milliseconds: 200), () async {
-        if (!FloatingVideoService.isFloating && mounted && _isInFloatingMode) {
+        final running = await FloatingVideoService.isActuallyRunning();
+        if (!running && mounted && _isInFloatingMode) {
           // 悬浮窗已关闭，恢复播放（含进度）
           setState(() {
             _isInFloatingMode = false;

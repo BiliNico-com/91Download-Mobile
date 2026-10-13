@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import '../components/cover_image.dart';
 import '../crawler/crawler_core.dart';
 import '../services/download_manager.dart';
 import '../utils/logger.dart';
@@ -14,19 +16,25 @@ class CacheScanResult {
   /// 文件已丢失、但任务表仍有记录的任务条目
   final List<CacheEntry> orphanTasks;
 
+  /// 封面图磁盘缓存占用（由 cached_network_image 管理）
+  final int coverCacheBytes;
+
   const CacheScanResult({
     this.tempDirs = const [],
     this.orphanHistory = const [],
     this.orphanTasks = const [],
+    this.coverCacheBytes = 0,
   });
 
   int get totalCount =>
       tempDirs.length + orphanHistory.length + orphanTasks.length;
 
+  /// 可清理的磁盘占用：临时目录 + 封面缓存
   int get totalBytes =>
-      tempDirs.fold<int>(0, (sum, e) => sum + e.sizeBytes);
+      tempDirs.fold<int>(0, (sum, e) => sum + e.sizeBytes) + coverCacheBytes;
 
-  bool get isEmpty => totalCount == 0;
+  /// 是否没有任何可清理内容
+  bool get isEmpty => totalCount == 0 && coverCacheBytes == 0;
 
   static const empty = CacheScanResult();
 }
@@ -87,6 +95,14 @@ class CacheService {
     if (downloadDir.isEmpty) return CacheScanResult.empty;
 
     final tempDirs = <CacheEntry>[];
+
+    // ─── 0. 统计封面图磁盘缓存占用 ───
+    int coverCacheBytes = 0;
+    try {
+      coverCacheBytes = await getCoverCacheSize();
+    } catch (e) {
+      await logger.log('Cache', '统计封面缓存失败: $e');
+    }
 
     // ─── 1. 扫描 *_temp 残留目录 ───
     try {
@@ -153,7 +169,37 @@ class CacheService {
       tempDirs: tempDirs,
       orphanHistory: orphanHistory,
       orphanTasks: orphanTasks,
+      coverCacheBytes: coverCacheBytes,
     );
+  }
+
+  /// 查询封面图磁盘缓存占用
+  ///
+  /// 封面使用独立的缓存 key（CoverCacheManager.key），
+  /// 其文件位于临时目录下的同名文件夹。
+  static Future<int> getCoverCacheSize() async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final cacheDir = Directory('${dir.path}/${CoverCacheManager.key}');
+      if (!await cacheDir.exists()) return 0;
+      return await _dirSize(cacheDir);
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  /// 清空封面图磁盘缓存
+  ///
+  /// 返回是否执行成功。清理后下次浏览会重新下载，但能立即释放空间。
+  static Future<bool> clearCoverCache() async {
+    try {
+      await CoverCacheManager.instance.emptyCache();
+      await logger.log('Cache', '已清空封面图缓存');
+      return true;
+    } catch (e) {
+      await logger.log('Cache', '清空封面图缓存失败: $e');
+      return false;
+    }
   }
 
   /// 执行清理
@@ -168,11 +214,20 @@ class CacheService {
     bool deleteTemp = true,
     bool deleteOrphanHistory = true,
     bool deleteOrphanTasks = true,
+    bool deleteCoverCache = false,
   }) async {
     var freedBytes = 0;
     var tempCount = 0;
     var historyCount = 0;
     var taskCount = 0;
+
+    // ─── 清理封面图缓存 ───
+    if (deleteCoverCache) {
+      final size = scanResult.coverCacheBytes;
+      if (await clearCoverCache()) {
+        freedBytes += size;
+      }
+    }
 
     // ─── 清理临时目录 ───
     if (deleteTemp) {

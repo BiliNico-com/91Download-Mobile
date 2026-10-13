@@ -13,8 +13,31 @@ class NativeFloatingService {
   static String? _currentVideoPath;
   static String? _currentTitle;
   
-  /// 当前是否正在悬浮窗播放（基于本地状态）
+  /// 当前是否正在悬浮窗播放（基于**本地**状态）
+  ///
+  /// 注意：这是 Dart 侧记录的期望状态，**不代表原生悬浮窗此刻真的在运行**。
+  /// 用户在悬浮窗上双击/点 × 关闭时，原生服务自行停止，本地标记不会同步。
+  /// 需要判断真实运行状态请用 [isActuallyRunning]。
   static bool get isFloating => _isFloating;
+
+  /// 查询原生悬浮窗**真实**运行状态
+  ///
+  /// 这是判断"悬浮窗是否已关闭"的唯一可靠依据：
+  /// 只有它能感知用户在悬浮窗上的关闭操作。
+  static Future<bool> isActuallyRunning() async {
+    try {
+      final running = await _channel.invokeMethod<bool>('isFloatingRunning');
+      final result = running ?? false;
+      // 顺带把本地标记纠正过来，避免它长期停留在错误值
+      if (!result && _isFloating) {
+        _isFloating = false;
+      }
+      return result;
+    } catch (e) {
+      debugPrint('[NativeFloating] 查询运行状态失败: $e');
+      return false;
+    }
+  }
   
   /// 当前视频路径
   static String? get currentVideoPath => _currentVideoPath;
@@ -75,11 +98,13 @@ class NativeFloatingService {
       print('[NativeFloating] 开始启动原生悬浮窗, videoPath: $videoPath, pos: $initialPositionMs');
       logger.logSync('NativeFloating', '开始启动原生悬浮窗, pos=$initialPositionMs');
       
-      // 如果已有悬浮窗在运行，先关闭
-      if (_isFloating) {
+      // 如果已有悬浮窗**真的**在运行，先关闭
+      // （用原生状态判断：本地 _isFloating 在用户关闭悬浮窗后会停留在 true，
+      //   若据它判断会去做一次无意义的 stop，把刚记录的进度覆盖掉）
+      if (await isActuallyRunning()) {
         print('[NativeFloating] 检测到已有悬浮窗运行，先关闭...');
-        stopFloating();  // 不等待异步结果
-        await Future.delayed(const Duration(milliseconds: 100));  // 减少等待时间
+        await stopFloating();
+        await Future.delayed(const Duration(milliseconds: 100));
       }
       
       // 检查权限
@@ -231,6 +256,8 @@ class NativeFloatingService {
 class FloatingVideoService {
   static bool get isFloating => NativeFloatingService.isFloating;
   static String? get currentVideoPath => NativeFloatingService.currentVideoPath;
+  static Future<bool> isActuallyRunning() =>
+      NativeFloatingService.isActuallyRunning();
   
   static Future<bool> isPermissionGranted() => NativeFloatingService.isPermissionGranted();
   static Future<bool> requestPermission() => NativeFloatingService.requestPermission();

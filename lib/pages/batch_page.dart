@@ -9,6 +9,7 @@ import '../services/followed_authors_service.dart';
 import '../services/floating_video_service.dart';
 import '../utils/logger.dart';
 import '../components/empty_state.dart';
+import '../components/cover_image.dart';
 import 'streaming_page.dart';
 
 class BatchPage extends StatefulWidget {
@@ -599,7 +600,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     return GestureDetector(
       onTap: () async {
         // 如果悬浮窗正在播放，且该视频已下载，则切换到该视频
-        if (FloatingVideoService.isFloating) {
+        // （用原生真实状态判断，本地标记在用户关闭悬浮窗后会失效）
+        if (await FloatingVideoService.isActuallyRunning()) {
           final crawler = appState.crawler;
           final localPath = await crawler?.getDownloadedPath(video.id);
           
@@ -640,17 +642,12 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        if (video.cover != null)
-                          Image.network(
-                            video.cover!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Icon(Icons.video_library, color: Colors.grey),
-                          ),
-                        if (appState.privacyMode)
-                          BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                            child: Container(color: Colors.transparent),
-                          ),
+                        // 封面走磁盘缓存
+                        CoverImage(
+                          url: video.cover,
+                          borderRadius: BorderRadius.zero,
+                          blur: appState.privacyMode,
+                        ),
                         if (isSelected)
                           Positioned(top: 4, left: 4, child: Icon(Icons.check_circle, color: Colors.blue, size: 20)),
                         // 在线播放模式下显示播放角标，提示封面可点
@@ -730,7 +727,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     return GestureDetector(
       onTap: () async {
         // 如果悬浮窗正在播放，且该视频已下载，则切换到该视频
-        if (FloatingVideoService.isFloating) {
+        // （用原生真实状态判断，本地标记在用户关闭悬浮窗后会失效）
+        if (await FloatingVideoService.isActuallyRunning()) {
           final crawler = appState.crawler;
           final localPath = await crawler?.getDownloadedPath(video.id);
           
@@ -756,32 +754,16 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 封面图区域
+            // 封面图区域（磁盘缓存）
             Expanded(
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Container(color: Colors.grey[800]),
-                  if (video.cover != null)
-                    ClipRRect(
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.network(
-                            video.cover!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Center(child: Icon(Icons.video_library, color: Colors.grey)),
-                          ),
-                          if (appState.privacyMode)
-                            Positioned.fill(
-                              child: BackdropFilter(
-                                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                                child: Container(color: Colors.transparent),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
+                  CoverImage(
+                    url: video.cover,
+                    borderRadius: BorderRadius.zero,
+                    blur: appState.privacyMode,
+                  ),
                   // 时长标签（右下角）
                   if (video.duration != null)
                     Positioned(
