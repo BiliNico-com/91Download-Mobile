@@ -66,12 +66,22 @@ class DownloadTask {
     this.downloadSpeed = 0.0,
   }) : startTime = startTime ?? DateTime.now();
   
-  /// 更新下载速度和进度
+  /// 更新下载速度和字节数文本
+  ///
+  /// 注意：**不修改 [progress]**。进度条只由「已完成切片数」驱动，
+  /// 若此处也用字节数写 progress，两个不同口径会互相覆盖导致进度条抽动。
+  ///
+  /// [total] 为 0 表示总量未知（HLS 切片流），此时只显示已下载量与速度。
   void updateProgressWithSpeed(int downloaded, int total) {
     final now = DateTime.now();
     downloadedBytes = downloaded;
-    totalBytes = total;
-    
+
+    // HLS 流的总字节数通常不可知（需先下完 m3u8 全部切片），
+    // 此时保留已知总量，避免把文本渲染成 "3.2 MB/0 B"。
+    if (total > 0) {
+      totalBytes = total;
+    }
+
     if (lastUpdateTime != null) {
       final timeDiff = now.difference(lastUpdateTime!).inMilliseconds;
       if (timeDiff > 0) {
@@ -80,17 +90,16 @@ class DownloadTask {
         downloadSpeed = bytesDiff > 0 ? (bytesDiff / timeDiff * 1000) : downloadSpeed;
       }
     }
-    
+
     lastUpdateTime = now;
     lastDownloadedBytes = downloaded;
-    
-    // 更新进度
-    if (total > 0) {
-      progress = downloaded / total;
+
+    // 更新进度文本（字节 / 速度）
+    if (totalBytes > 0) {
+      progressText = '${FormatUtils.formatBytes(downloaded)}/${FormatUtils.formatBytes(totalBytes)}';
+    } else {
+      progressText = FormatUtils.formatBytes(downloaded);
     }
-    
-    // 更新进度文本
-    progressText = '${FormatUtils.formatBytes(downloaded)}/${FormatUtils.formatBytes(total)}';
     if (downloadSpeed > 0) {
       progressText += ' (${FormatUtils.formatSpeed(downloadSpeed)})';
     }
@@ -398,20 +407,30 @@ class DownloadManager extends ChangeNotifier {
       await logger.log('Download', '保存路径: $savePath');
       
       // 设置进度回调
+      // ── 进度唯一来源是爬虫的「已完成切片数」 ──
+      // （onOverallProgress 只负责速度与字节文本，不写 progress）
       _crawler!.onProgress = (progress, msg) {
-        task.progress = progress;
-        // 如果是简单的百分比消息，转换为带速度的格式
-        if (msg.isNotEmpty && !msg.contains('/')) {
-          task.progressText = '$msg - ${task.speedText}';
-        } else {
-          task.progressText = msg;
+        // 单调递增：任何情况下都不允许进度回退
+        if (progress > task.progress) {
+          task.progress = progress;
+        }
+        // 显示组合：切片进度 + 已下载量/速度（若已有）
+        final speed = task.speedText;
+        if (msg.isNotEmpty) {
+          task.progressText = speed.isNotEmpty ? '$msg · $speed' : msg;
         }
         notifyListeners();
       };
       
-      // 设置总体进度回调（字节数和速度）
+      // 设置总体进度回调（仅用于更新速度与字节数文本，不写 progress）
       _crawler!.onOverallProgress = (downloaded, total) {
         task.updateProgressWithSpeed(downloaded, total);
+        // 保留切片进度文本，仅追加/更新速度部分
+        final speed = task.speedText;
+        if (speed.isNotEmpty) {
+          final base = task.progressText.split(' · ').first;
+          task.progressText = base.isNotEmpty ? '$base · $speed' : speed;
+        }
         notifyListeners();
       };
       

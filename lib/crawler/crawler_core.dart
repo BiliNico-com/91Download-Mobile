@@ -36,6 +36,9 @@ class CrawlerCore {
   Function(String msg, String level)? onLog;
   Function(double progress, String msg)? onProgress;
   Function(int downloaded, int total)? onOverallProgress;
+
+  /// 本次下载已接收的字节总数（用于速度显示）
+  int _receivedBytes = 0;
   
   // 外部数据库路径（用于持久化保存，卸载后不丢失）
   String? externalDbPath;
@@ -1295,6 +1298,9 @@ class CrawlerCore {
     
     onLog?.call('开始下载: ${video.title}', 'info');
     
+    // 重置本次下载的字节统计（速度显示用）
+    _receivedBytes = 0;
+    
     try {
       // 下载 m3u8 文件（禁用缓存）
       final m3u8Resp = await _dio.get(videoUrl, options: _noCacheOptions);
@@ -1318,58 +1324,105 @@ class CrawlerCore {
       // 记录下载状态：true=成功，false=失败
       final downloaded = List<bool>.filled(tsUrls.length, false);
       
-      // 并发下载 TS 切片
-      int success = 0;
-      var futures = <Future<void>>[];
-      
-      // ✅ 进度节流：避免频繁更新UI导致进度条抽动
+      // ─── 进度上报 ───
+      // 进度以「已完成切片数」为唯一口径，且对外单调递增，
+      // 避免并发乱序 / 重试阶段导致进度条回跳（抽动）。
+      final total = tsUrls.length;
+      int finished = 0;            // 已处理完的切片数（成功或失败），只增不减
+      double lastReported = 0.0;   // 最近一次上报的进度值
       DateTime? lastProgressUpdate;
-      const progressThrottleMs = 200;  // 最小200ms更新一次
-      
-      for (var i = 0; i < tsUrls.length; i++) {
-        if (_stopFlag) break;
-        while (_pauseFlag) {
-          await Future.delayed(const Duration(milliseconds: 500));
+      const progressThrottleMs = 200;  // 最小间隔，避免过于频繁刷新UI
+
+      void reportProgress(String msg, {bool force = false}) {
+        final value = finished / total;
+        if (!force && value < lastReported) return;   // 永不后退
+        final now = DateTime.now();
+        final due = lastProgressUpdate == null ||
+            now.difference(lastProgressUpdate!).inMilliseconds >= progressThrottleMs;
+        if (!force && !due) return;
+        lastReported = value > lastReported ? value : lastReported;
+        lastProgressUpdate = now;
+        onProgress?.call(lastReported, msg);
+      }
+
+      // ─── 滑动窗口并发 ───
+      // 每完成一个切片立即补发下一个，始终保持 N 个在途。
+      // 旧实现按批处理（凑满一批再一起 await），会被批内最慢的切片拖住，
+      // 导致并发数调大后实际收益远低于预期。
+      //
+      // 实现说明：_downloadTs 自带重试且始终返回 bool，不会抛出，
+      // 因此这里无需担心未处理的 Future 错误。
+      // 用「未消费的完成信号计数 + 等待者队列」实现，信号不会丢失。
+      var unconsumed = 0;
+      final waiters = <Completer<void>>[];
+
+      void signalDone() {
+        if (waiters.isNotEmpty) {
+          waiters.removeAt(0).complete();
+        } else {
+          unconsumed++;   // 没有等待者，先记账，稍后被消费
         }
-        
+      }
+
+      /// 等待「任意一个」在途任务完成
+      Future<void> waitAny() {
+        if (unconsumed > 0) {
+          unconsumed--;
+          return Future.value();
+        }
+        final c = Completer<void>();
+        waiters.add(c);
+        return c.future;
+      }
+
+      Future<void> runOne(int i) async {
         final tsUrl = tsUrls[i];
         final tsPath = '${tempDir.path}/seg_${i.toString().padLeft(5, '0')}.ts';
-        final index = i;  // 闭包捕获
-        
-        futures.add(_downloadTs(tsUrl, tsPath).then((ok) {
-          downloaded[index] = ok;
-          if (ok) {
-            success++;
-            // ✅ 节流更新进度
-            final now = DateTime.now();
-            if (lastProgressUpdate == null || 
-                now.difference(lastProgressUpdate!).inMilliseconds >= progressThrottleMs) {
-              onProgress?.call(success / tsUrls.length, '下载中 $success/${tsUrls.length}');
-              lastProgressUpdate = now;
-            }
-          }
-        }));
-        
-        // 控制并发数
-        if (futures.length >= _maxConcurrentDownloads) {
-          await Future.wait(futures);
-          futures.clear();
+        final ok = await _downloadTs(tsUrl, tsPath);
+        downloaded[i] = ok;
+        finished++;
+        reportProgress('下载中 $finished/$total');
+        signalDone();
+      }
+
+      var nextIndex = 0;
+      var inFlight = 0;
+
+      // 初始填满窗口
+      while (inFlight < _maxConcurrentDownloads && nextIndex < total) {
+        unawaited(runOne(nextIndex));
+        nextIndex++;
+        inFlight++;
+      }
+
+      // 每完成一个就补发下一个，始终保持窗口满载
+      while (inFlight > 0) {
+        if (_stopFlag) break;
+        await waitAny();
+        inFlight--;
+        if (_stopFlag) break;
+        if (nextIndex < total) {
+          unawaited(runOne(nextIndex));
+          nextIndex++;
+          inFlight++;
         }
       }
-      
-      if (futures.isNotEmpty) {
-        await Future.wait(futures);
+
+      // 收尾：等在途任务全部结束
+      while (inFlight > 0) {
+        await waitAny();
+        inFlight--;
       }
-      
-      // ✅ 下载完成后强制更新一次最终进度
-      onProgress?.call(success / tsUrls.length, '下载中 $success/${tsUrls.length}');
+
+      // ✅ 下载完成后强制上报一次最终进度
+      reportProgress('下载中 $finished/$total', force: true);
       
       if (_stopFlag) {
         onLog?.call('下载已停止', 'warn');
         return false;
       }
       
-      // ✅ 新增：重试失败的切片（最多3轮）
+      // ✅ 重试失败的切片（最多3轮）
       var failedIndices = <int>[];
       for (var i = 0; i < downloaded.length; i++) {
         if (!downloaded[i]) {
@@ -1381,43 +1434,71 @@ class CrawlerCore {
         onLog?.call('重试第 $retryRound 轮，${failedIndices.length} 个切片失败', 'warn');
         
         final stillFailed = <int>[];
-        futures = [];
-        
-        // ✅ 重试时也使用进度节流
-        DateTime? lastRetryProgressUpdate;
-        
-        for (final idx in failedIndices) {
-          if (_stopFlag) break;
-          
-          final tsUrl = tsUrls[idx];
-          final tsPath = '${tempDir.path}/seg_${idx.toString().padLeft(5, '0')}.ts';
-          
-          futures.add(_downloadTs(tsUrl, tsPath).then((ok) {
-            if (ok) {
-              downloaded[idx] = true;
-              success++;
-              // 节流更新
-              final now = DateTime.now();
-              if (lastRetryProgressUpdate == null || 
-                  now.difference(lastRetryProgressUpdate!).inMilliseconds >= progressThrottleMs) {
-                onProgress?.call(success / tsUrls.length, '重试中 $success/${tsUrls.length}');
-                lastRetryProgressUpdate = now;
-              }
-            } else {
-              stillFailed.add(idx);
-            }
-          }));
-          
-          if (futures.length >= _maxConcurrentDownloads) {
-            await Future.wait(futures);
-            futures.clear();
+        // 重试同样使用滑动窗口（同上，用未消费计数避免丢信号）
+        var retryUnconsumed = 0;
+        final retryWaiters = <Completer<void>>[];
+
+        void signalRetryDone() {
+          if (retryWaiters.isNotEmpty) {
+            retryWaiters.removeAt(0).complete();
+          } else {
+            retryUnconsumed++;
           }
         }
-        
-        if (futures.isNotEmpty) {
-          await Future.wait(futures);
+
+        Future<void> waitRetryAny() {
+          if (retryUnconsumed > 0) {
+            retryUnconsumed--;
+            return Future.value();
+          }
+          final c = Completer<void>();
+          retryWaiters.add(c);
+          return c.future;
         }
-        
+
+        Future<void> runRetry(int idx) async {
+          final tsUrl = tsUrls[idx];
+          final tsPath = '${tempDir.path}/seg_${idx.toString().padLeft(5, '0')}.ts';
+          final ok = await _downloadTs(tsUrl, tsPath);
+          if (ok) {
+            downloaded[idx] = true;
+            // 重试成功也计入进度；reportProgress 内部保证不后退
+            finished++;
+            reportProgress('重试中 $finished/$total');
+          } else {
+            stillFailed.add(idx);
+          }
+          signalRetryDone();
+        }
+
+        var retryCursor = 0;
+        var retryInFlight = 0;
+
+        while (retryInFlight < _maxConcurrentDownloads &&
+            retryCursor < failedIndices.length) {
+          unawaited(runRetry(failedIndices[retryCursor]));
+          retryCursor++;
+          retryInFlight++;
+        }
+
+        while (retryInFlight > 0) {
+          if (_stopFlag) break;
+          await waitRetryAny();
+          retryInFlight--;
+          if (_stopFlag) break;
+          if (retryCursor < failedIndices.length) {
+            unawaited(runRetry(failedIndices[retryCursor]));
+            retryCursor++;
+            retryInFlight++;
+          }
+        }
+
+        // 收尾
+        while (retryInFlight > 0) {
+          await waitRetryAny();
+          retryInFlight--;
+        }
+
         failedIndices = stillFailed;
         
         if (_stopFlag) {
@@ -1510,6 +1591,10 @@ class CrawlerCore {
         );
         
         final bytes = resp.data as List<int>;
+
+        // 累加已接收字节，并上报总体字节进度（用于显示速度）
+        _receivedBytes += bytes.length;
+        onOverallProgress?.call(_receivedBytes, 0);
         
         // ✅ 完整性校验1：检查数据是否为空
         if (bytes.isEmpty) {
