@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import '../components/cover_image.dart';
 import '../crawler/crawler_core.dart';
 import '../services/download_manager.dart';
@@ -174,15 +173,9 @@ class CacheService {
   }
 
   /// 查询封面图磁盘缓存占用
-  ///
-  /// 封面使用独立的缓存 key（CoverCacheManager.key），
-  /// 其文件位于临时目录下的同名文件夹。
   static Future<int> getCoverCacheSize() async {
     try {
-      final dir = await getTemporaryDirectory();
-      final cacheDir = Directory('${dir.path}/${CoverCacheManager.key}');
-      if (!await cacheDir.exists()) return 0;
-      return await _dirSize(cacheDir);
+      return await CoverCache.sizeBytes();
     } catch (e) {
       return 0;
     }
@@ -193,7 +186,7 @@ class CacheService {
   /// 返回是否执行成功。清理后下次浏览会重新下载，但能立即释放空间。
   static Future<bool> clearCoverCache() async {
     try {
-      await CoverCacheManager.instance.emptyCache();
+      await CoverCache.clear();
       await logger.log('Cache', '已清空封面图缓存');
       return true;
     } catch (e) {

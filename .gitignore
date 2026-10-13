@@ -78,6 +78,11 @@ android/gradle.properties
 android/gradle/
 android/app/src/debug/
 android/app/src/profile/
+android/app/src/main/res/drawable/
+android/app/src/main/res/drawable-v21/
+android/app/src/main/res/mipmap-*/
+android/app/src/main/res/values/
+android/app/src/main/res/values-night/
 test/
 
 # 签名密钥：绝不能提交（已在历史中泄漏过，见安全说明）
