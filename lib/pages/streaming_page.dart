@@ -1,12 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
-import 'package:chewie/chewie.dart';
 import 'package:provider/provider.dart';
 import '../models/video_info.dart';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
 import '../theme/app_theme.dart';
 import '../utils/logger.dart';
+import '../components/player_glass.dart';
 import 'author_detail_page.dart';
 
 /// 在线播放页（实验性功能）
@@ -21,7 +22,6 @@ class StreamingPage extends StatefulWidget {
 
 class _StreamingPageState extends State<StreamingPage> {
   VideoPlayerController? _videoController;
-  ChewieController? _chewieController;
   bool _isLoading = true;
   String? _error;
   String? _author;
@@ -31,10 +31,51 @@ class _StreamingPageState extends State<StreamingPage> {
   String? _uploadDateText;
   bool _isDownloading = false;
 
+  /// 自绘控件的显隐（与内置播放器一致的交互：点击切换、4 秒后自动隐藏）
+  bool _showControls = true;
+  Timer? _hideControlsTimer;
+
   @override
   void initState() {
     super.initState();
     _loadVideo();
+  }
+
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) _startHideControlsTimer();
+  }
+
+  void _startHideControlsTimer() {
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = Timer(PlayerGlassTokens.autoHideDelay, () {
+      if (mounted && (_videoController?.value.isPlaying ?? false)) {
+        setState(() => _showControls = false);
+      }
+    });
+  }
+
+  void _togglePlayPause() {
+    final c = _videoController;
+    if (c == null) return;
+    if (c.value.isPlaying) {
+      c.pause();
+      _hideControlsTimer?.cancel();
+      setState(() => _showControls = true);
+    } else {
+      c.play();
+      _startHideControlsTimer();
+    }
+    setState(() {});
+  }
+
+  void _seekTo(Duration position) {
+    final c = _videoController;
+    if (c == null) return;
+    var target = position;
+    if (target < Duration.zero) target = Duration.zero;
+    if (target > c.value.duration) target = c.value.duration;
+    c.seekTo(target);
   }
 
   Future<void> _loadVideo() async {
@@ -67,21 +108,13 @@ class _StreamingPageState extends State<StreamingPage> {
       await _videoController!.initialize();
       if (!mounted) return;
 
-      _chewieController = ChewieController(
-        videoPlayerController: _videoController!,
-        autoPlay: true,
-        looping: false,
-        allowFullScreen: true,
-        allowPlaybackSpeedChanging: true,
-        showControls: true,
-        materialProgressColors: ChewieProgressColors(
-          playedColor: AppTheme.primaryColor,
-          handleColor: AppTheme.primaryLight,
-          bufferedColor: AppTheme.primaryColor.withOpacity(0.3),
-        ),
-      );
+      // 说明：此处原使用 Chewie 自带控件，与内置播放器的自绘控件风格不一致。
+      // 现改为只用 video_player 渲染画面 + 自绘玻璃控件，两个播放页保持统一。
+      _videoController!.setLooping(false);
 
       setState(() { _isLoading = false; });
+      // 自动开播后启动控件自动隐藏
+      _startHideControlsTimer();
     } catch (e) {
       logger.log('Streaming', 'Error: $e');
       setState(() { _error = '播放加载失败: $e'; _isLoading = false; });
@@ -130,7 +163,7 @@ class _StreamingPageState extends State<StreamingPage> {
 
   @override
   void dispose() {
-    _chewieController?.dispose();
+    _hideControlsTimer?.cancel();
     _videoController?.dispose();
     super.dispose();
   }
@@ -169,16 +202,181 @@ class _StreamingPageState extends State<StreamingPage> {
               : SingleChildScrollView(
                   child: Column(
                     children: [
-                      // 播放器：屏幕上半区域
+                      // 播放器：屏幕上半区域（自绘玻璃控件）
                       SizedBox(
                         height: screenHeight * 0.42,
-                        child: Chewie(controller: _chewieController!),
+                        child: _buildPlayer(),
                       ),
                       // 视频信息
                       _buildVideoInfo(cardColor, textColor, subColor),
                     ],
                   ),
                 ),
+    );
+  }
+
+  /// 自绘播放器（画面 + 玻璃控件），与内置播放器保持一致的观感
+  Widget _buildPlayer() {
+    final controller = _videoController;
+    if (controller == null || !controller.value.isInitialized) {
+      return const ColoredBox(
+        color: Colors.black,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _toggleControls,
+      child: ColoredBox(
+        color: Colors.black,
+        child: Stack(
+          children: [
+            Center(
+              child: AspectRatio(
+                aspectRatio: controller.value.aspectRatio == 0
+                    ? 16 / 9
+                    : controller.value.aspectRatio,
+                child: VideoPlayer(controller),
+              ),
+            ),
+            // 控件层：随 _showControls 淡入淡出
+            AnimatedOpacity(
+              opacity: _showControls ? 1 : 0,
+              duration: PlayerGlassTokens.fadeDuration,
+              child: IgnorePointer(
+                ignoring: !_showControls,
+                child: _buildPlayerControls(controller),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlayerControls(VideoPlayerController controller) {
+    return Column(
+      children: [
+        // 中央播放/暂停：暂停时始终可见，播放中随控件淡出
+        Expanded(
+          child: Center(
+            child: ValueListenableBuilder<VideoPlayerValue>(
+              valueListenable: controller,
+              builder: (context, value, child) {
+                return GlassIconButton(
+                  icon: value.isPlaying
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  onPressed: _togglePlayPause,
+                  size: 64,
+                  filled: true,
+                  tooltip: value.isPlaying ? '暂停' : '播放',
+                );
+              },
+            ),
+          ),
+        ),
+        // 底部进度 + 时间（玻璃胶囊）
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: GlassPill(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              children: [
+                ValueListenableBuilder<VideoPlayerValue>(
+                  valueListenable: controller,
+                  builder: (context, value, child) {
+                    return Text(
+                      formatPlayerDuration(value.position),
+                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    );
+                  },
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: _buildProgressBar(controller)),
+                const SizedBox(width: 8),
+                ValueListenableBuilder<VideoPlayerValue>(
+                  valueListenable: controller,
+                  builder: (context, value, child) {
+                    return Text(
+                      formatPlayerDuration(value.duration),
+                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProgressBar(VideoPlayerController controller) {
+    return ValueListenableBuilder<VideoPlayerValue>(
+      valueListenable: controller,
+      builder: (context, value, child) {
+        final total = value.duration.inMilliseconds;
+        final progress =
+            total > 0 ? (value.position.inMilliseconds / total) : 0.0;
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final barWidth = constraints.maxWidth;
+
+            void seekToFraction(double fraction) {
+              if (total <= 0) return;
+              final f = fraction.clamp(0.0, 1.0);
+              _seekTo(Duration(milliseconds: (f * total).round()));
+            }
+
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (d) => seekToFraction(d.localPosition.dx / barWidth),
+              onHorizontalDragUpdate: (d) =>
+                  seekToFraction(d.localPosition.dx / barWidth),
+              child: SizedBox(
+                height: 22,
+                child: Stack(
+                  alignment: Alignment.centerLeft,
+                  children: [
+                    Container(
+                      height: 3,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.28),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    FractionallySizedBox(
+                      widthFactor: progress.clamp(0.0, 1.0),
+                      child: Container(
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: (barWidth * progress.clamp(0.0, 1.0)) - 5,
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.black26, width: 0.5),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
-import 'package:chewie/chewie.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:volume_controller/volume_controller.dart';
@@ -11,6 +10,7 @@ import '../services/app_state.dart';
 import '../services/download_manager.dart';
 import '../services/brightness_service.dart';
 import '../components/empty_state.dart';
+import '../components/player_glass.dart';
 import '../services/pip_service.dart';
 import '../services/floating_video_service.dart';
 import '../models/video_info.dart' show VideoInfo;
@@ -1224,7 +1224,6 @@ class VideoPlayerPage extends StatefulWidget {
 
 class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingObserver {
   late VideoPlayerController _videoPlayerController;
-  ChewieController? _chewieController;
   bool _isInitialized = false;
   bool _hasError = false;
   String _errorMessage = '';
@@ -1443,29 +1442,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
         await BrightnessService.saveBrightness();
       } catch (_) {}
       
-      _chewieController = ChewieController(
-        videoPlayerController: _videoPlayerController,
-        autoPlay: true,
-        looping: false,
-        aspectRatio: _videoPlayerController.value.aspectRatio,
-        showControls: false,
-        errorBuilder: (context, errorMessage) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.error, color: Colors.red, size: 48),
-                SizedBox(height: 16),
-                Text('播放错误: $errorMessage', style: TextStyle(color: Colors.red)),
-              ],
-            ),
-          );
-        },
-        placeholder: Container(
-          color: Colors.black,
-          child: Center(child: CircularProgressIndicator(color: Colors.white)),
-        ),
-      );
+      // 说明：此处曾创建 ChewieController，但控件为自绘（showControls 恒为 false），
+      // 且画面由 VideoPlayer 直接渲染，该控制器不承担任何职责，已移除。
+      _videoPlayerController.setLooping(false);
       
       if (mounted) {
         setState(() => _isInitialized = true);
@@ -1680,7 +1659,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     _overlaySubscription?.cancel();
     try { BrightnessService.restoreBrightness(); } catch (_) {}
     _videoPlayerController.dispose();
-    _chewieController?.dispose();
     super.dispose();
   }
   
@@ -1761,7 +1739,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       );
     }
     
-    if (!_isInitialized || _chewieController == null) {
+    if (!_isInitialized) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1827,98 +1805,106 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   Widget _buildControlsOverlay() {
     return Column(
       children: [
-        // 顶部工具栏
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Colors.black54, Colors.transparent],
-            ),
-          ),
-          child: Row(
-            children: [
-              GestureDetector(
-                onTap: () => Navigator.pop(context),
-                behavior: HitTestBehavior.opaque,
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  child: Icon(Icons.arrow_back, color: Colors.white, size: 24),
+        // 顶部工具栏（玻璃拟态，与底部控件风格统一）
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: GlassPill(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Row(
+              children: [
+                GlassIconButton(
+                  icon: Icons.arrow_back,
+                  onPressed: () => Navigator.pop(context),
+                  size: 40,
+                  tooltip: '返回',
                 ),
-              ),
-              Expanded(
-                child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: Colors.white, fontSize: 16)),
-              ),
-              if (_isPipAvailable)
-                GestureDetector(
-                  onTap: _enterPipMode,
-                  behavior: HitTestBehavior.opaque,
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    child: Icon(Icons.picture_in_picture_alt, color: Colors.white, size: 24),
+                Expanded(
+                  child: Text(
+                    widget.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
                   ),
                 ),
-              GestureDetector(
-                onTap: _enterFloatingMode,
-                behavior: HitTestBehavior.opaque,
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  child: Icon(Icons.picture_in_picture, color: Colors.white, size: 24),
+                if (_isPipAvailable)
+                  GlassIconButton(
+                    icon: Icons.picture_in_picture_alt,
+                    onPressed: _enterPipMode,
+                    size: 40,
+                    tooltip: '画中画',
+                  ),
+                GlassIconButton(
+                  icon: Icons.picture_in_picture,
+                  onPressed: _enterFloatingMode,
+                  size: 40,
+                  tooltip: '悬浮窗播放',
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-        Spacer(),
-        // 底部进度条和控件
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-              colors: [Colors.black54, Colors.transparent],
+        const Spacer(),
+        // 底部进度条和控件（玻璃拟态胶囊，参考 BiliPai 的控件观感）
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: GlassPill(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildProgressBar(),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    // 播放/暂停：主操作，用更大的图标突出
+                    IconButton(
+                      icon: Icon(
+                        _videoPlayerController.value.isPlaying
+                            ? Icons.pause_circle_filled
+                            : Icons.play_circle_filled,
+                        color: Colors.white,
+                        size: 36,
+                      ),
+                      onPressed: _togglePlayPause,
+                      tooltip: _videoPlayerController.value.isPlaying ? '暂停' : '播放',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.replay_5, color: Colors.white, size: 26),
+                      onPressed: () {
+                        final pos = _videoPlayerController.value.position;
+                        _seekTo(Duration(milliseconds: pos.inMilliseconds - 5000));
+                      },
+                      tooltip: '后退 5 秒',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.forward_5, color: Colors.white, size: 26),
+                      onPressed: () {
+                        final pos = _videoPlayerController.value.position;
+                        _seekTo(Duration(milliseconds: pos.inMilliseconds + 5000));
+                      },
+                      tooltip: '前进 5 秒',
+                    ),
+                    // 锁定控件按钮
+                    IconButton(
+                      icon: Icon(_controlsLocked ? Icons.lock : Icons.lock_open,
+                          color: _controlsLocked ? Colors.lightBlueAccent : Colors.white, size: 22),
+                      onPressed: _toggleControlsLock,
+                      tooltip: _controlsLocked ? '解锁控件' : '锁定控件',
+                    ),
+                    const Spacer(),
+                    ValueListenableBuilder<VideoPlayerValue>(
+                      valueListenable: _videoPlayerController,
+                      builder: (context, value, child) {
+                        return Text(
+                          '${formatPlayerDuration(value.position)} / ${formatPlayerDuration(value.duration)}',
+                          style: const TextStyle(color: Colors.white70, fontSize: 12),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildProgressBar(),
-              SizedBox(height: 8),
-              Row(
-                children: [
-                  IconButton(icon: Icon(_videoPlayerController.value.isPlaying ? Icons.pause : Icons.play_arrow,
-                      color: Colors.white, size: 32), onPressed: _togglePlayPause),
-                  IconButton(icon: Icon(Icons.replay_5, color: Colors.white, size: 28), onPressed: () {
-                    final pos = _videoPlayerController.value.position;
-                    _seekTo(Duration(milliseconds: pos.inMilliseconds - 5000));
-                  }),
-                  IconButton(icon: Icon(Icons.forward_5, color: Colors.white, size: 28), onPressed: () {
-                    final pos = _videoPlayerController.value.position;
-                    _seekTo(Duration(milliseconds: pos.inMilliseconds + 5000));
-                  }),
-                  // 锁定控件按钮
-                  IconButton(
-                    icon: Icon(_controlsLocked ? Icons.lock : Icons.lock_open, 
-                        color: _controlsLocked ? Colors.blue : Colors.white, size: 24), 
-                    onPressed: _toggleControlsLock,
-                    tooltip: _controlsLocked ? '解锁控件' : '锁定控件',
-                  ),
-                  Spacer(),
-                  ValueListenableBuilder<VideoPlayerValue>(
-                    valueListenable: _videoPlayerController,
-                    builder: (context, value, child) {
-                      return Text(
-                        '${_formatDuration(value.position)} / ${_formatDuration(value.duration)}',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ],
           ),
         ),
       ],
@@ -1951,14 +1937,37 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
                 alignment: Alignment.center,
                 child: Stack(
                   children: [
-                    Container(height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+                    // 轨道：半透明白，配合玻璃底座仍可辨识
+                    Container(
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.28),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    // 已播放部分
                     FractionallySizedBox(
                       widthFactor: progress.clamp(0.0, 1.0),
-                      child: Container(height: 4, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(2))),
+                      child: Container(
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
                     ),
+                    // 拖拽圆点：带细描边，避免在亮画面上糊掉
                     Positioned(
                       left: barWidth * progress.clamp(0.0, 1.0) - 6,
-                      child: Container(width: 12, height: 12, decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.black26, width: 0.5),
+                        ),
+                      ),
                     ),
                   ],
                 ),
