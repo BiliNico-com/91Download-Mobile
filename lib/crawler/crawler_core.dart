@@ -1233,6 +1233,22 @@ class CrawlerCore {
           }
         }
         
+        // 提取上传日期 + 观看数（播放页可见，供在线播放页展示）
+        String? uploadDate = video.uploadDate;
+        if (uploadDate == null) {
+          final dateMatch = RegExp(r'日期[：:]\s*(.+?)</div>').firstMatch(html);
+          if (dateMatch != null) {
+            uploadDate = dateMatch.group(1)!.trim();
+          }
+        }
+        String? views = video.views;
+        if (views == null) {
+          final viewMatch = RegExp(r'观看[：:]\s*(\d+)').firstMatch(html);
+          if (viewMatch != null) {
+            views = viewMatch.group(1)!.trim();
+          }
+        }
+
         return VideoInfo(
           id: video.id,
           url: video.url,
@@ -1241,6 +1257,8 @@ class CrawlerCore {
           author: author,
           authorId: video.authorId, // 保留原有的作者ID
           duration: duration,
+          uploadDate: uploadDate,
+          views: views,
           m3u8Url: videoUrl,
         );
       }
