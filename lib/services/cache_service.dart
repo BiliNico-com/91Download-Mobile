@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import '../crawler/crawler_core.dart';
 import '../services/download_manager.dart';
 import '../utils/logger.dart';

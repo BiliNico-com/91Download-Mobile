@@ -227,6 +227,7 @@ class _StreamingPageState extends State<StreamingPage> {
           // 元数据行
           _buildInfoRow('时长', _durationText, textColor, subColor),
           _buildInfoRow('上传', _uploadDateText, textColor, subColor),
+          _buildInfoRow('观看', _viewsText, textColor, subColor),
 
           // 作者 — 可点击跳转
           if (_authorId != null && _authorId!.isNotEmpty) ...[

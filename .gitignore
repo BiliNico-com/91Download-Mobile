@@ -68,3 +68,18 @@ assets/network_log_*.txt
 AGENTS.md
 crawler_api.md
 assets/
+
+# 由 `flutter create` 本地生成，CI 每次构建会自行重建，不应提交
+.metadata
+analysis_options.yaml
+pubspec.lock
+android/.gitignore
+android/gradle.properties
+android/gradle/
+android/app/src/debug/
+android/app/src/profile/
+test/
+
+# 签名密钥：绝不能提交（已在历史中泄漏过，见安全说明）
+*.keystore
+*.jks

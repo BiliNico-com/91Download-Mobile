@@ -255,7 +255,11 @@ class VersionService {
     }
   }
 
-  String _describeDioError(DioException e) {
+  /// 把 DioException 转成用户可读的提示
+  ///
+  /// 注意：调用方均为 static 方法，此处必须是 static，
+  /// 否则实例方法在静态上下文中不可见（编译报 Method not found）。
+  static String _describeDioError(DioException e) {
     switch (e.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
