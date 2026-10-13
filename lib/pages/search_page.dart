@@ -46,6 +46,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   
   // 滚动控制
   final ScrollController _scrollController = ScrollController();
+  // 页码输入框焦点（用于判断能否安全写入页码）
+  final FocusNode _pageFocusNode = FocusNode();
   bool _showBackToTop = false;
   String _status = '就绪';  // 就绪状态
   
@@ -100,6 +102,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     } catch (_) {}
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _pageFocusNode.dispose();
     _keywordController.dispose();
     _pageController.dispose();
     super.dispose();
@@ -176,7 +179,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         _hasMore = results.isNotEmpty;
       });
       // 同步页码输入框显示（放在 setState 之外）
-      _pageController.text = '1';
+      _syncPageController('1');
     }
   }
   
@@ -210,8 +213,27 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         _hasMore = siteHasMore;
         _isLoadingMore = false;
       });
-      // 同步页码输入框显示（与 _goToPage 保持一致，放在 setState 之外）
-      _pageController.text = '$nextPage';
+      // 同步页码输入框显示
+      _syncPageController('$nextPage');
+    }
+  }
+
+  /// 把页码同步到胶囊输入框
+  ///
+  /// 注意：仅在输入框「未获得焦点」时直接赋值。TextField 处于焦点时
+  /// Flutter 会用其内部编辑态覆盖 controller.text，导致滚动加载后
+  /// 页码显示不更新（手动点翻页时输入框通常已失焦，所以看起来是好的）。
+  /// 聚焦时先收起键盘并解焦，再在下一帧写入，确保显示以代码为准。
+  void _syncPageController(String value) {
+    if (!mounted) return;
+    final node = _pageFocusNode;
+    if (node.hasFocus) {
+      node.unfocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _pageController.text = value;
+      });
+    } else {
+      _pageController.text = value;
     }
   }
 
@@ -850,6 +872,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                 child: Center(
                   child: TextField(
                     controller: _pageController,
+                    focusNode: _pageFocusNode,
                     keyboardType: TextInputType.number,
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -936,7 +959,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     });
 
     // 同步页码输入框显示
-    _pageController.text = '$page';
+    _syncPageController('$page');
     
     // 滚动到顶部
     _scrollController.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
@@ -975,7 +998,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       _lastKeyword = _keywordController.text;
     });
     // 同步页码输入框显示（放在 setState 之外，与 _goToPage/_loadMore 保持一致）
-    _pageController.text = '1';
+    _syncPageController('1');
     
     if (_isAuthorMode) {
       // 搜索作者

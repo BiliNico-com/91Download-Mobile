@@ -49,6 +49,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   final ScrollController _scrollController = ScrollController();
   bool _showBackToTop = false;
   final TextEditingController _pageController = TextEditingController();
+  // 页码输入框焦点（用于判断能否安全写入页码）
+  final FocusNode _pageFocusNode = FocusNode();
 
   // ─── 布局常量 ───
   static const double _kExpandedHeight = 130.0;
@@ -68,6 +70,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _pageFocusNode.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -116,6 +119,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         _isLoadingMore = false;
       });
     } else {
+      // 由爬虫依据站点"下一页"控件判定（条数不固定时更可靠）
+      final siteHasMore = crawler.lastRequestHasMore;
       setState(() {
         // 去重：过滤掉已存在的视频
         final existingIds = _videos.map((v) => v.id).toSet();
@@ -123,9 +128,28 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         _videos.addAll(uniqueNewVideos);
         _totalVideos = _videos.length;
         _loadedPage = nextPage;
-        _hasMore = newVideos.length >= 24;
+        _hasMore = siteHasMore;
         _isLoadingMore = false;
       });
+      // 同步页码显示（滚动加载后胶囊/输入框需要跟着变）
+      _syncPageController('$nextPage');
+    }
+  }
+
+  /// 把页码同步到输入框
+  ///
+  /// 仅在输入框「未获得焦点」时直接赋值：TextField 聚焦时 Flutter 会用
+  /// 内部编辑态覆盖 controller.text，导致滚动加载后页码不更新。
+  void _syncPageController(String value) {
+    if (!mounted) return;
+    final node = _pageFocusNode;
+    if (node.hasFocus) {
+      node.unfocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _pageController.text = value;
+      });
+    } else {
+      _pageController.text = value;
     }
   }
 
@@ -928,6 +952,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                 child: Center(
                   child: TextField(
                     controller: _pageController,
+                    focusNode: _pageFocusNode,
                     keyboardType: TextInputType.number,
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -998,6 +1023,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     });
 
     final videos = await crawler.getVideoList(_selectedType, targetPage);
+    // 由爬虫依据站点"下一页"控件判定是否还有更多（条数不固定时更可靠）
+    final siteHasMore = crawler.lastRequestHasMore;
     setState(() {
       _videos = videos;
       _totalVideos = videos.length;
@@ -1005,8 +1032,9 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       _currentPage = targetPage;
       _isLoading = false;
       _status = videos.isEmpty ? '无结果' : '就绪';
-      _hasMore = videos.length >= 24;
+      _hasMore = videos.isEmpty ? false : siteHasMore;
     });
+    _syncPageController('$targetPage');
     _scrollToTop();
   }
 
