@@ -1398,14 +1398,20 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   
   /// 悬浮窗收起后，把内置播放器恢复到悬浮窗停下的位置并继续播放
   ///
-  /// 进度由原生侧在关闭悬浮窗时记录（见 FloatingWindowService.capturePlaybackPosition），
-  /// 这里读取后 seek 并恢复播放，使「内置播放 ⇄ 悬浮窗」的切换是连续的。
+  /// 进度由原生侧在关闭悬浮窗时记录（见 FloatingWindowService.capturePlaybackPosition）。
+  /// 注意：Flutter 侧有多条路径可能触发恢复（关闭按钮 / 定时器 / 生命周期回调），
+  /// 这里加一个进行中标记，避免并发重复 seek 造成跳动。
+  bool _resumingFromFloating = false;
+
   Future<void> _resumeFromFloating() async {
+    if (_resumingFromFloating) return;
+    _resumingFromFloating = true;
     try {
       final controller = _videoPlayerController;
       if (controller == null || !controller.value.isInitialized) return;
 
       final posMs = await FloatingVideoService.getFloatingLastPosition();
+      debugPrint('[FloatingMode] 读取到悬浮窗进度: ${posMs}ms');
       if (posMs <= 0) return;
 
       final duration = controller.value.duration;
@@ -1428,6 +1434,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       debugPrint('[FloatingMode] 已恢复到 ${target.inSeconds}s 并继续播放');
     } catch (e) {
       debugPrint('[FloatingMode] 恢复播放失败: $e');
+    } finally {
+      _resumingFromFloating = false;
     }
   }
   
@@ -1526,7 +1534,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     setState(() => _showControls = true);
     _startHideControlsTimer();
   }
-  
+
+  /// 单击画面：显示 / 隐藏控件
+  ///
+  /// 控件锁定时不响应，避免误触把控件藏起来后无法操作。
+  void _toggleControlsVisibility() {
+    if (_controlsLocked) return;
+
+    if (_showControls) {
+      _hideControlsTimer?.cancel();
+      setState(() => _showControls = false);
+    } else {
+      _showControlsTemporarily();
+    }
+  }
+
+  /// 双击画面：播放 / 暂停
   void _togglePlayPause() {
     if (_videoPlayerController.value.isPlaying) {
       _videoPlayerController.pause();
@@ -1535,11 +1558,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       _videoPlayerController.play();
       _isPlayingState = true;
     }
+    // 双击后给出图标反馈（中央图标短暂显示）
     setState(() => _showPlayPauseIcon = true);
     Future.delayed(const Duration(milliseconds: 800), () {
       if (mounted) setState(() => _showPlayPauseIcon = false);
     });
-    _showControlsTemporarily();
   }
   
   void _seekTo(Duration position) {
@@ -1753,7 +1776,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     }
     
     return GestureDetector(
-      onTap: _togglePlayPause,
+      // 交互约定（对齐主流播放器）：
+      //   单击 → 显示/隐藏控件
+      //   双击 → 播放/暂停
+      // 注意 onTap 与 onDoubleTap 同存时，Flutter 会自动延迟 onTap
+      // 以等待双击判定，这是标准行为。
+      onTap: _toggleControlsVisibility,
+      onDoubleTap: _togglePlayPause,
       onLongPressStart: (details) => _onLongPressStart(details.globalPosition.dx),
       onLongPressEnd: (_) => _onLongPressEnd(),
       child: Listener(
@@ -1805,11 +1834,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   Widget _buildControlsOverlay() {
     return Column(
       children: [
-        // 顶部工具栏（玻璃拟态，与底部控件风格统一）
+        // 顶部工具栏（长方形玻璃底栏，与底部控件风格统一）
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-          child: GlassPill(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: GlassSurface(
+            borderRadius: const BorderRadius.all(Radius.circular(10)),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             child: Row(
               children: [
                 GlassIconButton(
@@ -1844,32 +1874,33 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
           ),
         ),
         const Spacer(),
-        // 底部进度条和控件（玻璃拟态胶囊，参考 BiliPai 的控件观感）
+        // 底部进度条和控件（长方形玻璃底栏）
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          child: GlassPill(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: GlassSurface(
+            borderRadius: const BorderRadius.all(Radius.circular(10)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 _buildProgressBar(),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Row(
                   children: [
-                    // 播放/暂停：主操作，用更大的图标突出
+                    // 播放/暂停：主操作，用相对大的图标突出
                     IconButton(
                       icon: Icon(
                         _videoPlayerController.value.isPlaying
-                            ? Icons.pause_circle_filled
-                            : Icons.play_circle_filled,
+                            ? Icons.pause
+                            : Icons.play_arrow,
                         color: Colors.white,
-                        size: 36,
+                        size: 30,
                       ),
                       onPressed: _togglePlayPause,
                       tooltip: _videoPlayerController.value.isPlaying ? '暂停' : '播放',
                     ),
                     IconButton(
-                      icon: const Icon(Icons.replay_5, color: Colors.white, size: 26),
+                      icon: const Icon(Icons.replay_5, color: Colors.white, size: 24),
                       onPressed: () {
                         final pos = _videoPlayerController.value.position;
                         _seekTo(Duration(milliseconds: pos.inMilliseconds - 5000));
@@ -1877,7 +1908,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
                       tooltip: '后退 5 秒',
                     ),
                     IconButton(
-                      icon: const Icon(Icons.forward_5, color: Colors.white, size: 26),
+                      icon: const Icon(Icons.forward_5, color: Colors.white, size: 24),
                       onPressed: () {
                         final pos = _videoPlayerController.value.position;
                         _seekTo(Duration(milliseconds: pos.inMilliseconds + 5000));
@@ -1887,7 +1918,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
                     // 锁定控件按钮
                     IconButton(
                       icon: Icon(_controlsLocked ? Icons.lock : Icons.lock_open,
-                          color: _controlsLocked ? Colors.lightBlueAccent : Colors.white, size: 22),
+                          color: _controlsLocked ? Colors.lightBlueAccent : Colors.white, size: 20),
                       onPressed: _toggleControlsLock,
                       tooltip: _controlsLocked ? '解锁控件' : '锁定控件',
                     ),

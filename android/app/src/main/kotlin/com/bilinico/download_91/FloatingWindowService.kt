@@ -72,12 +72,15 @@ class FloatingWindowService : Service() {
 
         fun isRunning(): Boolean = instance != null
 
-        /** 取出并清空上次的播放位置，避免被重复消费 */
-        fun consumeLastPosition(): Int {
-            val p = lastPositionMs
-            lastPositionMs = 0
-            return p
-        }
+        /**
+         * 读取上次播放位置（**不清零**）
+         *
+         * 早期版本在此处清零，但 Flutter 侧存在多条恢复路径
+         * （关闭按钮 / 定时器检测 / 生命周期回调）都可能调用，
+         * 第二次读就变成 0，表现为"进度没传过来"。
+         * 改为不清零，由下一次 capturePlaybackPosition() 覆盖。
+         */
+        fun getLastPosition(): Int = lastPositionMs
     }
 
     private var windowManager: WindowManager? = null
@@ -788,11 +791,17 @@ class FloatingWindowService : Service() {
     /** 记录当前播放位置与播放状态，供 Flutter 侧恢复 */
     private fun capturePlaybackPosition() {
         try {
-            val mp = mediaPlayer ?: return
-            lastPositionMs = mp.currentPosition
+            val mp = mediaPlayer ?: run {
+                android.util.Log.w("FloatingWindow", "capturePlaybackPosition: mediaPlayer 已为空，无法记录进度")
+                return
+            }
+            val pos = mp.currentPosition
+            lastPositionMs = pos
             lastWasPlaying = mp.isPlaying
-        } catch (_: Exception) {
+            android.util.Log.i("FloatingWindow", "记录播放进度: ${pos}ms, wasPlaying=$lastWasPlaying")
+        } catch (e: Exception) {
             // 播放器已释放或状态异常时保持上一次记录
+            android.util.Log.w("FloatingWindow", "记录播放进度失败: ${e.message}")
         }
     }
 

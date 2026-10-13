@@ -55,8 +55,9 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "getFloatingPosition" -> {
-                    // 取出悬浮窗关闭时记录的进度，供内置播放器恢复
-                    result.success(FloatingWindowService.consumeLastPosition())
+                    // 读取悬浮窗关闭时记录的进度，供内置播放器恢复。
+                    // 不清零，可安全重复读取（Flutter 有多条恢复路径）。
+                    result.success(FloatingWindowService.getLastPosition())
                 }
                 "wasFloatingPlaying" -> {
                     result.success(FloatingWindowService.lastWasPlaying)

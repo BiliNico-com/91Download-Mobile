@@ -227,7 +227,11 @@ class _StreamingPageState extends State<StreamingPage> {
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
+      // 与内置播放器一致的交互约定：
+      //   单击 → 显示/隐藏控件
+      //   双击 → 播放/暂停
       onTap: _toggleControls,
+      onDoubleTap: _togglePlayPause,
       child: ColoredBox(
         color: Colors.black,
         child: Stack(
@@ -258,7 +262,7 @@ class _StreamingPageState extends State<StreamingPage> {
   Widget _buildPlayerControls(VideoPlayerController controller) {
     return Column(
       children: [
-        // 中央播放/暂停：暂停时始终可见，播放中随控件淡出
+        // 中央播放/暂停：方形玻璃按钮，与底栏视觉统一
         Expanded(
           child: Center(
             child: ValueListenableBuilder<VideoPlayerValue>(
@@ -266,10 +270,10 @@ class _StreamingPageState extends State<StreamingPage> {
               builder: (context, value, child) {
                 return GlassIconButton(
                   icon: value.isPlaying
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
+                      ? Icons.pause
+                      : Icons.play_arrow,
                   onPressed: _togglePlayPause,
-                  size: 64,
+                  size: 52,
                   filled: true,
                   tooltip: value.isPlaying ? '暂停' : '播放',
                 );
@@ -277,11 +281,12 @@ class _StreamingPageState extends State<StreamingPage> {
             ),
           ),
         ),
-        // 底部进度 + 时间（玻璃胶囊）
+        // 底部进度 + 时间（长方形玻璃底栏）
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          child: GlassPill(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: GlassSurface(
+            borderRadius: const BorderRadius.all(Radius.circular(10)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: Row(
               children: [
                 ValueListenableBuilder<VideoPlayerValue>(

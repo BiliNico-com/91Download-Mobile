@@ -124,7 +124,8 @@ class NativeFloatingService {
   
   /// 读取悬浮窗关闭时记录的播放位置（毫秒）
   ///
-  /// 取用后原生侧会清零，避免重复消费。返回 0 表示无有效位置。
+  /// 原生侧**不清零**，可安全重复读取（Flutter 有多条恢复路径都可能调用）。
+  /// 返回 0 表示无有效位置。
   static Future<int> getFloatingLastPosition() async {
     try {
       final pos = await _channel.invokeMethod<int>('getFloatingPosition');

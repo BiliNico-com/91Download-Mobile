@@ -132,9 +132,9 @@ class GlassPill extends StatelessWidget {
   }
 }
 
-/// 圆形玻璃按钮
+/// 方形（圆角矩形）玻璃按钮
 ///
-/// 用于播放/暂停、全屏、返回等单个图标的操作。
+/// 与圆形按钮相比更贴合长方形底栏的视觉语言，边角比例与底栏一致。
 class GlassIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onPressed;
@@ -153,11 +153,13 @@ class GlassIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const radius = BorderRadius.all(Radius.circular(8));
+
     final button = Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onPressed,
-        customBorder: const CircleBorder(),
+        borderRadius: radius,
         child: SizedBox(
           width: size,
           height: size,
@@ -174,10 +176,7 @@ class GlassIconButton extends StatelessWidget {
     );
 
     final wrapped = filled
-        ? GlassSurface(
-            borderRadius: const BorderRadius.all(Radius.circular(50)),
-            child: button,
-          )
+        ? GlassSurface(borderRadius: radius, child: button)
         : button;
 
     return tooltip == null ? wrapped : Tooltip(message: tooltip!, child: wrapped);
