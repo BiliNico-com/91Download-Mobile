@@ -189,11 +189,228 @@ class VersionService {
     return remote.buildNumber > localVersion.buildNumber;
   }
 
-  /// 从 GitHub Release API 获取最新版本
+  /// GitHub Release 页面（网页端，不走 API 限额）
+  static const _releasePageUrl =
+      'https://github.com/$_owner/$_repo/releases/latest';
+
+  /// 获取最新 Release 信息
   ///
-  /// 使用官方 API 而非爬 HTML：返回结构化 JSON，不受页面改版影响。
+  /// 采用「爬页面为主、API 兜底」的策略：
+  ///
+  /// 1. **优先请求 `releases/latest` 网页**。网页端不计入 GitHub API 限额，
+  ///    而匿名 API 限制为 **每 IP 每小时 60 次**——移动网络下大量用户共享出口 IP，
+  ///    极易被打满（实测会返回 403），因此不能把 API 作为唯一来源。
+  ///
+  /// 2. 网页解析失败时（GitHub 改版等）再回退到 Release API，
+  ///    此时才可能碰到限流，失败则给出明确提示。
   static Future<VersionInfo?> _fetchLatestRelease() async {
-    Logger().logSync('Version', '开始请求: $_apiUrl');
+    // ── 方式 1：网页（不受 API 限额） ──
+    final fromPage = await _fetchFromReleasePage();
+    if (fromPage != null) return fromPage;
+
+    Logger().logSync('Version', '网页解析未成功，回退到 Release API');
+
+    // ── 方式 2：API 兜底 ──
+    return await _fetchFromApi();
+  }
+
+  /// 从 GitHub Release 网页解析版本信息
+  ///
+  /// 关键点：请求 `releases/latest` 会 302 重定向到具体 tag 页面
+  /// （如 `/releases/tag/v1.0.6.458`），我们既可以从重定向后的 URL 取 tag，
+  /// 也可以从页面内容里取。这里两者都尝试，提高健壮性。
+  static Future<VersionInfo?> _fetchFromReleasePage() async {
+    Logger().logSync('Version', '请求 Release 页面: $_releasePageUrl');
+
+    try {
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 15),
+        headers: {
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+        },
+        validateStatus: (status) => status != null && status < 500,
+      ));
+
+      final response = await dio.get(_releasePageUrl);
+
+      // 重定向后的最终地址通常形如 .../releases/tag/v1.0.6.458
+      final finalUrl = response.realUri.toString();
+      Logger().logSync('Version', '页面状态: ${response.statusCode}, 最终地址: $finalUrl');
+
+      if (response.statusCode != 200) {
+        // 403 多为 GitHub 的网页风控/限流
+        if (response.statusCode == 403) {
+          lastError = 'GitHub 访问受限，请稍后再试';
+        } else if (response.statusCode == 404) {
+          lastError = '尚未发布任何 Release';
+        } else {
+          lastError = '请求失败: HTTP ${response.statusCode}';
+        }
+        Logger().logSync('Version', lastError!);
+        return null;
+      }
+
+      final html = response.data.toString();
+
+      // 优先从最终 URL 里取 tag，最准确
+      String? tagName;
+      final tagFromUrl =
+          RegExp(r'/releases/tag/([^/?#]+)').firstMatch(finalUrl)?.group(1);
+      if (tagFromUrl != null && tagFromUrl.isNotEmpty) {
+        tagName = Uri.decodeComponent(tagFromUrl);
+      }
+
+      // URL 里没有就从页面内容找（新版 GitHub 把 tag 放在 title/og:title 等处）
+      tagName ??= _extractTagFromHtml(html);
+
+      if (tagName == null || tagName.isEmpty) {
+        lastError = '无法从页面识别版本号';
+        Logger().logSync('Version', lastError!);
+        return null;
+      }
+
+      final parsed = _parseTag(tagName);
+      if (parsed == null) return null;
+
+      return VersionInfo(
+        version: parsed.$1,
+        buildNumber: parsed.$2,
+        // 固定链接指向最新 release 的附件，与版本天然对应
+        downloadUrl:
+            'https://github.com/$_owner/$_repo/releases/latest/download/app-release.apk',
+        publishedAt: _extractPublishedAt(html) ?? '',
+        releaseNotes: _extractNotesFromHtml(html),
+        tagName: tagName,
+      );
+    } on DioException catch (e) {
+      lastError = _describeDioError(e);
+      Logger().logSync('Version', '网页请求失败: ${e.type} / ${lastError!}');
+      return null;
+    } catch (e) {
+      lastError = '页面解析异常: $e';
+      Logger().logSync('Version', lastError!);
+      return null;
+    }
+  }
+
+  /// 从 HTML 中提取 tag 名
+  ///
+  /// 实测（2026-08 抓取 GitHub 页面）标题形如
+  ///   `<title>Release Build 468 · BiliNico-com/91Download-Mobile · GitHub</title>`
+  /// **标题里并不含版本号**，而页面正文中存在 `/releases/tag/v1.0.6.468` 链接。
+  /// 因此优先匹配 tag 链接，标题只作为兜底。
+  static String? _extractTagFromHtml(String html) {
+    // 1) 页面中的 tag 链接（最可靠）
+    //    注意：页面里可能先出现 "*name" 这类模板占位符，
+    //    因此必须遍历找到第一个「合法版本号」，不能只取首个匹配。
+    for (final m in RegExp(r'/releases/tag/([^"''\s&#?]+)').allMatches(html)) {
+      final raw = Uri.decodeComponent(m.group(1)!.trim());
+      if (RegExp(r'^v?\d+\.\d+\.\d+').hasMatch(raw)) return raw;
+    }
+
+    // 2) 正文中直接出现的版本号（如 asset 链接、release 标题文本）
+    final versionMatch = RegExp(r'\bv(\d+\.\d+\.\d+\.\d+)\b').firstMatch(html);
+    if (versionMatch != null) return 'v${versionMatch.group(1)}';
+
+    // 3) 标题兜底：部分仓库会把 tag 写进 title / og:title
+    final titleMatch = RegExp(r'<title>([^<]*)</title>').firstMatch(html);
+    if (titleMatch != null) {
+      final v = RegExp(r'(v?\d+\.\d+\.\d+(?:\.\d+)?)').firstMatch(titleMatch.group(1)!);
+      if (v != null) return v.group(1);
+    }
+
+    final ogMatch =
+        RegExp(r'property="og:title"\s+content="([^"]*)"').firstMatch(html);
+    if (ogMatch != null) {
+      final v = RegExp(r'(v?\d+\.\d+\.\d+(?:\.\d+)?)').firstMatch(ogMatch.group(1)!);
+      if (v != null) return v.group(1);
+    }
+
+    return null;
+  }
+
+  /// 解析 tag 为 (version, buildNumber)
+  ///
+  /// 支持：
+  ///   v1.0.6.458 → (1.0.6, 458)
+  ///   v1.0.6     → (1.0.6, 0)   旧格式，仅比语义版本
+  static (String, int)? _parseTag(String tagName) {
+    final newFormat =
+        RegExp(r'^v?(\d+\.\d+\.\d+)\.(\d+)$').firstMatch(tagName.trim());
+    if (newFormat != null) {
+      return (
+        newFormat.group(1)!,
+        int.tryParse(newFormat.group(2)!) ?? 0,
+      );
+    }
+
+    final oldFormat = RegExp(r'^v?(\d+\.\d+\.\d+)$').firstMatch(tagName.trim());
+    if (oldFormat != null) {
+      return (oldFormat.group(1)!, 0);
+    }
+
+    lastError = '无法识别 Release tag: $tagName';
+    Logger().logSync('Version', lastError!);
+    return null;
+  }
+
+  /// 从页面提取发布时间
+  static String? _extractPublishedAt(String html) {
+    final m = RegExp(r'datetime="([^"]+)"').firstMatch(html);
+    return m?.group(1);
+  }
+
+  /// 从 Release 页面 HTML 提取更新说明
+  ///
+  /// 优先取 markdown-body 区域内的列表项，取不到则回退整段文本。
+  static List<String> _extractNotesFromHtml(String html) {
+    final bodyMatch = RegExp(
+      r'class="markdown-body[^"]*"[^>]*>([\s\S]*?)</div>',
+    ).firstMatch(html);
+
+    if (bodyMatch == null) return [];
+
+    final bodyHtml = bodyMatch.group(1)!;
+
+    final notes = <String>[];
+    for (final li in RegExp(r'<li[^>]*>([\s\S]*?)</li>').allMatches(bodyHtml)) {
+      final text = _stripHtmlTags(li.group(1)!).trim();
+      if (text.isNotEmpty) notes.add(text);
+      if (notes.length >= 8) break;
+    }
+
+    if (notes.isEmpty) {
+      final text = _stripHtmlTags(bodyHtml).trim();
+      for (final line in text.split('\n')) {
+        final t = line.trim();
+        if (t.isNotEmpty) notes.add(t);
+        if (notes.length >= 8) break;
+      }
+    }
+
+    return notes;
+  }
+
+  /// 去除 HTML 标签与实体
+  static String _stripHtmlTags(String html) {
+    return html
+        .replaceAll(RegExp(r'<[^>]*>'), '')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&nbsp;', ' ')
+        .trim();
+  }
+
+  /// 从 GitHub Release API 获取（兜底路径，可能受匿名限额影响）
+  static Future<VersionInfo?> _fetchFromApi() async {
+    Logger().logSync('Version', '请求 Release API: $_apiUrl');
 
     try {
       final dio = Dio(BaseOptions(
@@ -210,7 +427,7 @@ class VersionService {
       ));
 
       final response = await dio.get(_apiUrl);
-      Logger().logSync('Version', '响应状态码: ${response.statusCode}');
+      Logger().logSync('Version', 'API 状态码: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final data = response.data is String
@@ -235,8 +452,8 @@ class VersionService {
         return null;
       }
       if (response.statusCode == 403) {
-        // 匿名 API 限额 60 次/小时，超限会返回 403
-        lastError = 'GitHub API 访问受限，请稍后再试';
+        // 匿名限额 60 次/小时（按 IP 计），移动网络下极易打满
+        lastError = 'GitHub 访问受限（API 限额已满），请稍后再试';
         Logger().logSync('Version', lastError!);
         return null;
       }
@@ -283,26 +500,11 @@ class VersionService {
       final body = (json['body'] ?? '').toString();
       final publishedAt = (json['published_at'] ?? '').toString();
 
-      // 从 tag 解析版本号，支持两种格式：
-      //   新格式（推荐）：v1.0.6.458   → version=1.0.6, build=458
-      //   旧格式（兼容）：v1.0.5     → version=1.0.5, build=0
-      final newFormat = RegExp(r'^v?(\d+\.\d+\.\d+)\.(\d+)$').firstMatch(tagName);
-      final oldFormat = RegExp(r'^v?(\d+\.\d+\.\d+)$').firstMatch(tagName);
-
-      String version;
-      int buildNumber;
-
-      if (newFormat != null) {
-        version = newFormat.group(1)!;
-        buildNumber = int.tryParse(newFormat.group(2)!) ?? 0;
-      } else if (oldFormat != null) {
-        version = oldFormat.group(1)!;
-        buildNumber = 0;
-      } else {
-        lastError = '无法识别 Release tag: $tagName';
-        Logger().logSync('Version', lastError!);
-        return null;
-      }
+      // 复用统一的 tag 解析（与网页路径保持一致）
+      final parsed = _parseTag(tagName);
+      if (parsed == null) return null;
+      final version = parsed.$1;
+      final buildNumber = parsed.$2;
 
       // 下载地址优先取 Release 附件，保证与当前 Release 版本严格对应；
       // 取不到时回退到 releases/latest 的固定链接。
