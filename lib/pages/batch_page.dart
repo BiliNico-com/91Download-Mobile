@@ -9,6 +9,7 @@ import '../services/followed_authors_service.dart';
 import '../services/floating_video_service.dart';
 import '../utils/logger.dart';
 import '../components/empty_state.dart';
+import 'streaming_page.dart';
 
 class BatchPage extends StatefulWidget {
   const BatchPage({super.key});
@@ -209,13 +210,15 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         _isLoading = false;
       });
     } else {
+      // 由爬虫依据站点"下一页"控件判定（条数不固定时更可靠）
+      final siteHasMore = crawler.lastRequestHasMore;
       setState(() {
         // 去重：过滤掉已存在的视频
         final existingIds = _authorVideos.map((v) => v.id).toSet();
         final uniqueNewVideos = newVideos.where((v) => !existingIds.contains(v.id)).toList();
         _authorVideos.addAll(uniqueNewVideos);
         _isLoading = false;
-        if (newVideos.length < 20) _authorHasMore = false;
+        _authorHasMore = siteHasMore;
       });
     }
   }
@@ -599,40 +602,49 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           child: Row(
             children: [
               // 封面图
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  width: 120,
-                  height: 68,
-                  color: Colors.grey[800],
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (video.cover != null)
-                        Image.network(
-                          video.cover!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Icon(Icons.video_library, color: Colors.grey),
-                        ),
-                      if (appState.privacyMode)
-                        BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                          child: Container(color: Colors.transparent),
-                        ),
-                      if (isSelected)
-                        Positioned(top: 4, left: 4, child: Icon(Icons.check_circle, color: Colors.blue, size: 20)),
-                      // 时长标签
-                      if (video.duration != null)
-                        Positioned(
-                          right: 4,
-                          bottom: 4,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                            decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(4)),
-                            child: Text(video.duration!, style: TextStyle(color: Colors.white, fontSize: 10)),
+              GestureDetector(
+                // 在线播放模式：点击封面直接播放；否则冒泡到外层做选中
+                onTap: appState.streamingMode
+                    ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => StreamingPage(video: video)))
+                    : null,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    width: 120,
+                    height: 68,
+                    color: Colors.grey[800],
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (video.cover != null)
+                          Image.network(
+                            video.cover!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Icon(Icons.video_library, color: Colors.grey),
                           ),
-                        ),
-                    ],
+                        if (appState.privacyMode)
+                          BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                            child: Container(color: Colors.transparent),
+                          ),
+                        if (isSelected)
+                          Positioned(top: 4, left: 4, child: Icon(Icons.check_circle, color: Colors.blue, size: 20)),
+                        // 在线播放模式下显示播放角标，提示封面可点
+                        if (appState.streamingMode)
+                          const Positioned(left: 4, bottom: 4, child: Icon(Icons.play_circle_fill, color: Colors.white70, size: 20)),
+                        // 时长标签
+                        if (video.duration != null)
+                          Positioned(
+                            right: 4,
+                            bottom: 4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(4)),
+                              child: Text(video.duration!, style: TextStyle(color: Colors.white, fontSize: 10)),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),

@@ -260,6 +260,34 @@ class CrawlerConfig {
     r'添加时间[：:]\s*</span>\s*([^<\n]+)',
   );
 
+  // ==================== 分页控件正则 ====================
+
+  /// 分页区域容器（pagination / pager / page-nav 等常见 CMS 类名）
+  /// 只在分页区域内查找"下一页"，避免误命中正文里的普通链接
+  static final RegExp paginationBlockPattern = RegExp(
+    r'<(?:ul|div|nav)[^>]*class="[^"]*(?:pagination|pager|page-nav|pagenavi|pages)[^"]*"[^>]*>[\s\S]{0,3000}?</(?:ul|div|nav)>',
+    caseSensitive: false,
+  );
+
+  /// 指向更大页码的链接（如 page=2、page-2.htm、search-2.htm）
+  /// 用于判断"是否还有下一页"：当前页为 N 时，存在 N+1 的链接即说明有下一页
+  static final RegExp paginationPageLinkPattern = RegExp(
+    r'''(?:page[=/_-]|page=|/)(\d+)(?:\.htm|\.html|["'?#]|$)''',
+    caseSensitive: false,
+  );
+
+  /// 文本形式的"下一页"（中文 / 英文 / 符号）
+  /// 注意：要排除 disabled 态（当前已在最后一页时，站点常把"下一页"置灰）
+  static final RegExp nextPageTextPattern = RegExp(
+    r'>\s*(?:下一页|下页|次页|next|Next|NEXT|›|»|&gt;|&raquo;)\s*<',
+  );
+
+  /// disabled / 置灰标记：命中说明该分页元素不可点击（通常出现在最后一页）
+  static final RegExp paginationDisabledPattern = RegExp(
+    r'class="[^"]*(?:disabled|is-disabled)[^"]*"',
+    caseSensitive: false,
+  );
+
   // ==================== 文本清理正则（避免循环中重复编译）====================
 
   /// HTML 标签剥离
@@ -270,6 +298,16 @@ class CrawlerConfig {
 
   /// 空白字符规范化（含全角空格）
   static final RegExp whitespacePattern = RegExp(r'[\s　]+');
+
+  // ==================== 分页配置 ====================
+
+  /// 条数兜底阈值
+  ///
+  /// 仅当站点分页控件解析失败时使用：返回条数 >= 此值即认为可能还有下一页。
+  /// 之所以取 12（而非原来硬编码的 20）：站点每页条数并不固定，
+  /// 用 20 会在实际返回 15~19 条时被误判为"没有更多"，导致无限滚动提前停止。
+  /// 取一个偏小的值只会多请求一次（代价可控），而误判为 false 会直接中断列表。
+  static const int fallbackPageSize = 12;
 
   // ==================== 下载配置 ====================
   

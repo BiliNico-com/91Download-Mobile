@@ -10,6 +10,7 @@ import '../components/video_card.dart';
 import '../components/empty_state.dart';
 import '../components/skeleton_card.dart';
 import '../utils/debouncer.dart';
+import 'streaming_page.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({super.key});
@@ -197,6 +198,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         _isLoadingMore = false;
       });
     } else {
+      // 由爬虫依据站点"下一页"控件判定是否还有更多（条数不固定时更可靠）
+      final siteHasMore = crawler.lastRequestHasMore;
       setState(() {
         // 去重：过滤掉已存在的视频
         final existingIds = _results.map((v) => v.id).toSet();
@@ -204,10 +207,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         _results.addAll(uniqueNewResults);
         _loadedPage = nextPage;
         _currentPage = nextPage;
-        // 如果返回结果少于每页数量，说明没有更多了
-        if (newResults.length < 20) {
-          _hasMore = false;
-        }
+        _hasMore = siteHasMore;
         _isLoadingMore = false;
       });
       // 同步页码输入框显示（与 _goToPage 保持一致，放在 setState 之外）
@@ -231,15 +231,14 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     if (newVideos.isEmpty) {
       _authorHasMore = false;
     } else {
+      // 由爬虫依据站点"下一页"控件判定（条数不固定时更可靠）
+      final siteHasMore = crawler.lastRequestHasMore;
       setState(() {
         // 去重：过滤掉已存在的视频
         final existingIds = _authorVideos.map((v) => v.id).toSet();
         final uniqueNewVideos = newVideos.where((v) => !existingIds.contains(v.id)).toList();
         _authorVideos.addAll(uniqueNewVideos);
-        // 如果返回结果少于每页数量，说明没有更多了
-        if (newVideos.length < 20) {
-          _authorHasMore = false;
-        }
+        _authorHasMore = siteHasMore;
       });
     }
     
@@ -974,8 +973,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       _loadedPage = 0;
       _hasMore = true;
       _lastKeyword = _keywordController.text;
-      _pageController.text = '1';
     });
+    // 同步页码输入框显示（放在 setState 之外，与 _goToPage/_loadMore 保持一致）
+    _pageController.text = '1';
     
     if (_isAuthorMode) {
       // 搜索作者
@@ -1128,41 +1128,50 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           child: Row(
             children: [
               // 封面图（与批量页一致：120x68）
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  width: 120,
-                  height: 68,
-                  color: Colors.grey[800],
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (video.cover != null)
-                        Image.network(
-                          video.cover!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Icon(Icons.video_library, color: Colors.grey),
-                        ),
-                      if (appState.privacyMode)
-                        BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                          child: Container(color: Colors.transparent),
-                        ),
-                      // 选中标记（与批量页一致）
-                      if (isSelected)
-                        Positioned(top: 4, left: 4, child: Icon(Icons.check_circle, color: Colors.blue, size: 20)),
-                      // 时长标签
-                      if (video.duration != null)
-                        Positioned(
-                          right: 4,
-                          bottom: 4,
-                          child: Container(
-                            padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                            decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(4)),
-                            child: Text(video.duration!, style: TextStyle(color: Colors.white, fontSize: 10)),
+              GestureDetector(
+                // 在线播放模式：点击封面直接播放；否则冒泡到外层做选中
+                onTap: appState.streamingMode
+                    ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => StreamingPage(video: video)))
+                    : null,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    width: 120,
+                    height: 68,
+                    color: Colors.grey[800],
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (video.cover != null)
+                          Image.network(
+                            video.cover!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Icon(Icons.video_library, color: Colors.grey),
                           ),
-                        ),
-                    ],
+                        if (appState.privacyMode)
+                          BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                            child: Container(color: Colors.transparent),
+                          ),
+                        // 选中标记（与批量页一致）
+                        if (isSelected)
+                          Positioned(top: 4, left: 4, child: Icon(Icons.check_circle, color: Colors.blue, size: 20)),
+                        // 在线播放模式下显示播放角标，提示封面可点
+                        if (appState.streamingMode)
+                          const Positioned(left: 4, bottom: 4, child: Icon(Icons.play_circle_fill, color: Colors.white70, size: 20)),
+                        // 时长标签
+                        if (video.duration != null)
+                          Positioned(
+                            right: 4,
+                            bottom: 4,
+                            child: Container(
+                              padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(4)),
+                              child: Text(video.duration!, style: TextStyle(color: Colors.white, fontSize: 10)),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -1258,58 +1267,71 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           children: [
             // 缩略图
             Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Container(color: Colors.grey[800]),
-                  if (video.cover != null)
-                    ClipRRect(
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.network(
-                            video.cover!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Center(
-                              child: Icon(Icons.video_library, color: Colors.grey),
-                            ),
-                          ),
-                          // 隐私模式模糊
-                          if (appState.privacyMode)
-                            Positioned.fill(
-                              child: BackdropFilter(
-                                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                                child: Container(color: Colors.transparent),
+              child: GestureDetector(
+                // 在线播放模式：点击封面直接播放；否则冒泡到外层做选中
+                onTap: appState.streamingMode
+                    ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => StreamingPage(video: video)))
+                    : null,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Container(color: Colors.grey[800]),
+                    if (video.cover != null)
+                      ClipRRect(
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.network(
+                              video.cover!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Center(
+                                child: Icon(Icons.video_library, color: Colors.grey),
                               ),
                             ),
-                        ],
-                      ),
-                    ),
-                  // 时长
-                  if (video.duration != null)
-                    Positioned(
-                      right: 4,
-                      bottom: 4,
-                      child: Container(
-                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.black87,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          video.duration ?? '',
-                          style: TextStyle(color: Colors.white, fontSize: 10),
+                            // 隐私模式模糊
+                            if (appState.privacyMode)
+                              Positioned.fill(
+                                child: BackdropFilter(
+                                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                                  child: Container(color: Colors.transparent),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                    ),
-                  // 选中标记
-                  if (isSelected)
-                    Positioned(
-                      top: 4,
-                      right: 4,
-                      child: Icon(Icons.check_circle, color: Colors.blue),
-                    ),
-                ],
+                    // 时长
+                    if (video.duration != null)
+                      Positioned(
+                        right: 4,
+                        bottom: 4,
+                        child: Container(
+                          padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.black87,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            video.duration ?? '',
+                            style: TextStyle(color: Colors.white, fontSize: 10),
+                          ),
+                        ),
+                      ),
+                    // 在线播放模式下显示播放角标，提示封面可点
+                    if (appState.streamingMode)
+                      const Positioned(
+                        left: 4,
+                        bottom: 4,
+                        child: Icon(Icons.play_circle_fill, color: Colors.white70, size: 20),
+                      ),
+                    // 选中标记
+                    if (isSelected)
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: Icon(Icons.check_circle, color: Colors.blue),
+                      ),
+                  ],
+                ),
               ),
             ),
             // 标题

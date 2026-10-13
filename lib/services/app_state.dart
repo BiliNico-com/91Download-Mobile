@@ -89,6 +89,9 @@ class AppState extends ChangeNotifier {
   // 视频显示模式: 'grid' 大图模式, 'list' 列表模式
   String videoDisplayMode = 'grid';
 
+  // 在线播放模式（实验性功能）
+  bool streamingMode = false;
+
   // 隐私模式：模糊预览图
   bool privacyMode = false;
   
@@ -185,6 +188,7 @@ class AppState extends ChangeNotifier {
     themeMode = prefs.getInt('themeMode') ?? ThemeModeType.dark.value;
     _isDarkMode = prefs.getBool('isDarkMode') ?? true;
     videoDisplayMode = prefs.getString('videoDisplayMode') ?? 'grid';
+    streamingMode = prefs.getBool('streamingMode') ?? false;
     showBackToTop = prefs.getBool('showBackToTop') ?? true;
     backToTopPosition = prefs.getString('backToTopPosition') ?? 'right';
     useExternalPlayer = prefs.getBool('useExternalPlayer') ?? false;
@@ -207,6 +211,7 @@ class AppState extends ChangeNotifier {
       prefs.setInt('themeMode', themeMode),
       prefs.setBool('isDarkMode', _isDarkMode),
       prefs.setString('videoDisplayMode', videoDisplayMode),
+      prefs.setBool('streamingMode', streamingMode),
       prefs.setBool('showBackToTop', showBackToTop),
       prefs.setString('backToTopPosition', backToTopPosition),
       prefs.setBool('useExternalPlayer', useExternalPlayer),
@@ -492,6 +497,13 @@ class AppState extends ChangeNotifier {
   // 设置视频显示模式
   void setVideoDisplayMode(String mode) {
     videoDisplayMode = mode;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 切换在线播放模式（实验性功能）
+  void toggleStreamingMode(bool enable) {
+    streamingMode = enable;
     _saveSettings();
     notifyListeners();
   }

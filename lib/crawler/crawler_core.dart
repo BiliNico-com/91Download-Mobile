@@ -59,7 +59,94 @@ class CrawlerCore {
   
   /// 获取站点类型
   String get siteType => _siteType;
-  
+
+  // ==================== 分页状态 ====================
+
+  /// 最近一次列表/搜索请求后，站点是否还有下一页
+  ///
+  /// 由 [_detectHasNextPage] 在每次请求后更新，页面通过此 getter 读取，
+  /// 取代原先 `videos.length < 20` 的猜测式判断（条数不固定时会误判，
+  /// 导致无限滚动在第 1 页后就被永久关闭）。
+  bool get lastRequestHasMore => _lastRequestHasMore;
+  bool _lastRequestHasMore = true;
+
+  /// 最近一次请求是否成功解析到站点分页控件
+  ///
+  /// false 表示走了条数兜底逻辑，调用方可据此记录日志辅助排查。
+  bool get lastPaginationParsed => _lastPaginationParsed;
+  bool _lastPaginationParsed = false;
+
+  /// 从列表页 HTML 判断是否还有下一页（双重保险策略）
+  ///
+  /// 优先级：
+  ///   1. 站点分页控件 —— 在分页区域内查找比 [currentPage] 更大的页码链接，
+  ///      或未置灰的"下一页"文本。这是最可靠的依据。
+  ///   2. 条数兜底 —— 解析不到分页控件时（站点改版等），退回按返回条数判断。
+  ///
+  /// [currentPage] 当前页码，[itemCount] 本次解析出的视频条数。
+  bool _detectHasNextPage(String html, int currentPage, int itemCount) {
+    // ---- 策略 1：站点分页控件 ----
+    try {
+      // 先在分页区域内找，避免误命中正文中的普通链接
+      final blocks = CrawlerConfig.paginationBlockPattern.allMatches(html);
+
+      for (final block in blocks) {
+        final content = block.group(0)!;
+
+        // 1a. 存在比当前页更大的页码链接（如当前 page=2，存在 page=3）
+        for (final m in CrawlerConfig.paginationPageLinkPattern.allMatches(content)) {
+          final n = int.tryParse(m.group(1) ?? '');
+          if (n != null && n > currentPage) {
+            _lastPaginationParsed = true;
+            _logPagination('分页控件命中：存在第 $n 页链接（当前 $currentPage）', true);
+            return true;
+          }
+        }
+
+        // 1b. 存在"下一页"文本，且未被置灰
+        final nextMatch = CrawlerConfig.nextPageTextPattern.firstMatch(content);
+        if (nextMatch != null) {
+          // 截取该文本附近的片段，判断是否带 disabled 标记
+          final start = nextMatch.start > 120 ? nextMatch.start - 120 : 0;
+          final end = nextMatch.end + 120 < content.length ? nextMatch.end + 120 : content.length;
+          final nearby = content.substring(start, end);
+
+          if (CrawlerConfig.paginationDisabledPattern.hasMatch(nearby)) {
+            _lastPaginationParsed = true;
+            _logPagination('分页控件命中："下一页"已置灰，判定为最后一页', false);
+            return false;
+          }
+          _lastPaginationParsed = true;
+          _logPagination('分页控件命中：存在可点击的"下一页"', true);
+          return true;
+        }
+      }
+
+      // 分页区域没有可识别的"下一页"，但整个页面存在更大页码链接时也认为有下一页
+      // （部分 CMS 的分页 class 不在预设列表里）
+      for (final m in CrawlerConfig.paginationPageLinkPattern.allMatches(html)) {
+        final n = int.tryParse(m.group(1) ?? '');
+        if (n != null && n > currentPage) {
+          _lastPaginationParsed = true;
+          _logPagination('整页命中：存在第 $n 页链接（当前 $currentPage）', true);
+          return true;
+        }
+      }
+    } catch (e) {
+      Logger().logSync('Crawler', '分页控件解析异常，回退到条数判断: $e');
+    }
+
+    // ---- 策略 2：条数兜底 ----
+    _lastPaginationParsed = false;
+    final hasMore = itemCount >= CrawlerConfig.fallbackPageSize;
+    _logPagination('未解析到分页控件，按条数兜底：$itemCount 条 → hasMore=$hasMore', hasMore);
+    return hasMore;
+  }
+
+  void _logPagination(String msg, bool hasMore) {
+    Logger().logSync('Crawler', '$msg [hasMore=$hasMore]');
+  }
+
   /// 保存 HTML 到文件（调试用）
   Future<void> _saveHtmlToFile(String html, String listType, int page) async {
     // 检查开关
@@ -289,11 +376,15 @@ class CrawlerCore {
       
       // ✅ 关键调试日志：记录 URL 和解析结果的对应关系
       await logger.log('Crawler', '解析结果: URL=$urlWithCache -> ${videos.length} 个视频');
-      
+
+      // 依据站点分页控件判断是否还有下一页（取代条数猜测）
+      _lastRequestHasMore = _detectHasNextPage(html, page, videos.length);
+
       return videos;
       
     } catch (e) {
       await logger.log('Crawler', '获取视频列表失败: $e (URL=$urlWithCache)');
+      _lastPaginationParsed = false;
       return [];
     }
   }
@@ -779,10 +870,15 @@ class CrawlerCore {
       }
       
       await logger.log('Crawler', '搜索结果: ${videos.length} 个视频');
-      
+
+      // 依据站点分页控件判断是否还有下一页（取代条数猜测）
+      _lastRequestHasMore = _detectHasNextPage(html, page, videos.length);
+
       return videos;
     } catch (e) {
       await logger.log('Crawler', '搜索失败: $e (URL=$urlWithCache)');
+      // 请求失败时不武断关闭无限滚动，保留上一次的判断
+      _lastPaginationParsed = false;
       return [];
     }
   }
@@ -877,10 +973,14 @@ class CrawlerCore {
       } else {
         videos = _parseVideoListOriginal(html);
       }
-      
+
+      // 依据站点分页控件判断是否还有下一页（取代条数猜测）
+      _lastRequestHasMore = _detectHasNextPage(html, page, videos.length);
+
       return videos;
     } catch (e) {
       await logger.log('Crawler', '获取作者视频失败: $e (URL=$urlWithCache)');
+      _lastPaginationParsed = false;
       return [];
     }
   }

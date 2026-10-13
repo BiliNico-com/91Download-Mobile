@@ -576,6 +576,29 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   ),
                   Divider(),
                   
+                  // 在线播放（实验性功能）
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Row(
+                      children: [
+                        Text('在线播放'),
+                        SizedBox(width: 8),
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text('实验', style: TextStyle(fontSize: 10, color: Colors.orange)),
+                        ),
+                      ],
+                    ),
+                    subtitle: Text('列表模式时点击封面直接在线播放'),
+                    value: appState.streamingMode,
+                    onChanged: appState.toggleStreamingMode,
+                  ),
+                  Divider(),
+                  
                   // 回顶部按钮设置
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,

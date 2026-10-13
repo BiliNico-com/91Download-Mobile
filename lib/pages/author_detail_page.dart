@@ -95,13 +95,13 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
         if (newVideos.isEmpty) {
           setState(() => _authorHasMore = false);
         } else {
+          // 由爬虫依据站点"下一页"控件判定（条数不固定时更可靠）
+          final siteHasMore = crawler.lastRequestHasMore;
           setState(() {
             final existingIds = _authorVideos.map((v) => v.id).toSet();
             final unique = newVideos.where((v) => !existingIds.contains(v.id)).toList();
             _authorVideos.addAll(unique);
-            if (newVideos.length < 20) {
-              _authorHasMore = false;
-            }
+            _authorHasMore = siteHasMore;
           });
         }
       }
