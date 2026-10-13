@@ -1260,6 +1260,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   bool _isLongPressing = false;
   String _longPressSide = '';
   bool _showLongPressIndicator = false;
+
+  /// 用户选择的常驻播放倍速
+  ///
+  /// 长按临时变速后要恢复到它，而不是硬编码回到 1.0x
+  /// （否则用户选过 1.5x，长按一次就被打回原速）。
+  double _playbackSpeed = 1.0;
   
   // ====== PiP ======
   bool _isPipAvailable = false;
@@ -1625,9 +1631,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     final screenWidth = MediaQuery.of(context).size.width;
     final dx = globalX - _dragStartX;
     final totalDuration = _videoPlayerController.value.duration;
-    final seekRatio = dx / (screenWidth / 2);
-    final seekSeconds = (seekRatio * 10).round();
-    final newPosition = _dragStartPosition + Duration(seconds: seekSeconds);
+
+    // 灵敏度自适应：整屏宽度对应「整个视频时长」，
+    // 一次滑动即可覆盖全片；过短视频/超长视频用上下限兜住手感。
+    //   旧实现固定「半屏 = 10 秒」，看长视频要滑很多次。
+    final spanMs = totalDuration.inMilliseconds.clamp(20000, 3600000);
+    final offsetMs = (dx / screenWidth * spanMs).round();
+
+    final newPosition = _dragStartPosition + Duration(milliseconds: offsetMs);
     _seekPosition = Duration(
       milliseconds: newPosition.inMilliseconds.clamp(0, totalDuration.inMilliseconds),
     );
@@ -1689,7 +1700,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       _showLongPressIndicator = true;
       _showControls = false;
     });
-    // 设置倍速播放
+    // 长按临时变速（松手后恢复用户选择的常驻倍速）
     _videoPlayerController.setPlaybackSpeed(isLeftSide ? 0.5 : 2.0);
     if (!_videoPlayerController.value.isPlaying) {
       _videoPlayerController.play();
@@ -1698,14 +1709,77 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   
   void _onLongPressEnd() {
     if (_isLongPressing) {
-      // 恢复正常速度
-      _videoPlayerController.setPlaybackSpeed(1.0);
+      // 恢复到用户选择的常驻倍速，而不是固定 1.0x
+      _videoPlayerController.setPlaybackSpeed(_playbackSpeed);
       setState(() { 
         _isLongPressing = false; 
         _showLongPressIndicator = false; 
       });
       _showControlsTemporarily();
     }
+  }
+
+  /// 设置常驻播放倍速
+  void _setPlaybackSpeed(double speed) {
+    setState(() => _playbackSpeed = speed);
+    // 长按进行中时不要立刻覆盖临时倍速
+    if (!_isLongPressing) {
+      _videoPlayerController.setPlaybackSpeed(speed);
+    }
+  }
+
+  /// 弹出倍速选择面板
+  void _showSpeedPicker() {
+    _hideControlsTimer?.cancel();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 14),
+                child: Text(
+                  '播放速度',
+                  style: TextStyle(color: Colors.white, fontSize: 15),
+                ),
+              ),
+              const Divider(height: 1, color: Colors.white24),
+              ...kPlayerSpeedOptions.map((speed) {
+                final selected = (speed - _playbackSpeed).abs() < 0.001;
+                return ListTile(
+                  dense: true,
+                  title: Text(
+                    speed == 1.0 ? '正常 (1.0x)' : '${speed}x',
+                    style: TextStyle(
+                      color: selected ? Theme.of(context).colorScheme.primary : Colors.white,
+                      fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: selected
+                      ? Icon(Icons.check, color: Theme.of(context).colorScheme.primary, size: 20)
+                      : null,
+                  onTap: () {
+                    _setPlaybackSpeed(speed);
+                    Navigator.of(sheetContext).pop();
+                    _showControlsTemporarily();
+                  },
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    ).then((_) {
+      // 面板关闭后重新计时隐藏控件
+      if (mounted) _startHideControlsTimer();
+    });
   }
   
   @override
@@ -1963,6 +2037,21 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
                       tooltip: _controlsLocked ? '解锁控件' : '锁定控件',
                     ),
                     const Spacer(),
+                    // 倍速：非常驻 1.0x 时高亮，便于一眼看出当前速度
+                    TextButton(
+                      onPressed: _showSpeedPicker,
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(0, 32),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        foregroundColor: _playbackSpeed == 1.0
+                            ? Colors.white70
+                            : Colors.lightBlueAccent,
+                      ),
+                      child: Text(
+                        '${_playbackSpeed}x',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                    ),
                     ValueListenableBuilder<VideoPlayerValue>(
                       valueListenable: _videoPlayerController,
                       builder: (context, value, child) {

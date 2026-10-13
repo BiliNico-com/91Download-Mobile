@@ -1,6 +1,11 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 
+/// 播放器可选倍速档位
+///
+/// 内置播放器与在线播放页共用，保证两处档位一致。
+const List<double> kPlayerSpeedOptions = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
 /// 播放器控件的玻璃拟态（glassmorphism）视觉规范
 ///
 /// 设计参考自 BiliPai（jay3-yy/BiliPai）的播放器控件：

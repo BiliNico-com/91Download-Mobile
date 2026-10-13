@@ -15,7 +15,7 @@ class CoverCacheManager {
     Config(
       key,
       stalePeriod: CoverTokens.cacheStalePeriod,
-      maxNrOfCacheObjects: 2000,
+      maxNrOfCacheObjects: CoverTokens.maxCacheObjects,
       repo: JsonCacheInfoRepository(databaseName: key),
       fileSystem: IOFileSystem(key),
       fileService: HttpFileService(),
@@ -34,17 +34,14 @@ class CoverTokens {
   /// 圆角
   static const double radius = 8;
 
-  /// 磁盘缓存上限（字节）
+  /// 缓存条目数量上限
   ///
-  /// 封面多为几十 KB 的缩略图，300MB 可容纳上万张；
+  /// 封面多为几十 KB 的缩略图，2000 条足以覆盖正常浏览；
   /// 超出后 flutter_cache_manager 会按 LRU 自动淘汰最旧的。
-  static const int maxCacheBytes = 300 * 1024 * 1024;
+  static const int maxCacheObjects = 2000;
 
-  /// 缓存有效期（超过则视为过期，但仍可离线展示）
+  /// 缓存有效期（超过则视为过期，会重新拉取）
   static const Duration cacheStalePeriod = Duration(days: 30);
-
-  /// 单张图片在内存缓存中的最长存活时间
-  static const Duration maxCacheAge = Duration(days: 30);
 }
 
 /// 统一封面图组件

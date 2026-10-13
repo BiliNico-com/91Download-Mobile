@@ -35,6 +35,9 @@ class _StreamingPageState extends State<StreamingPage> {
   bool _showControls = true;
   Timer? _hideControlsTimer;
 
+  /// 常驻播放倍速（与内置播放器一致）
+  double _playbackSpeed = 1.0;
+
   @override
   void initState() {
     super.initState();
@@ -310,12 +313,86 @@ class _StreamingPageState extends State<StreamingPage> {
                     );
                   },
                 ),
+                const SizedBox(width: 4),
+                // 倍速：与内置播放器保持一致
+                TextButton(
+                  onPressed: _showSpeedPicker,
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 32),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    foregroundColor: _playbackSpeed == 1.0
+                        ? Colors.white70
+                        : Colors.lightBlueAccent,
+                  ),
+                  child: Text(
+                    '${_playbackSpeed}x',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
               ],
             ),
           ),
         ),
       ],
     );
+  }
+
+  /// 弹出倍速选择面板
+  void _showSpeedPicker() {
+    _hideControlsTimer?.cancel();
+    final controller = _videoController;
+    if (controller == null) return;
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 14),
+                child: Text('播放速度',
+                    style: TextStyle(color: Colors.white, fontSize: 15)),
+              ),
+              const Divider(height: 1, color: Colors.white24),
+              ...kPlayerSpeedOptions.map((speed) {
+                final selected = (speed - _playbackSpeed).abs() < 0.001;
+                return ListTile(
+                  dense: true,
+                  title: Text(
+                    speed == 1.0 ? '正常 (1.0x)' : '${speed}x',
+                    style: TextStyle(
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.white,
+                      fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: selected
+                      ? Icon(Icons.check,
+                          color: Theme.of(context).colorScheme.primary, size: 20)
+                      : null,
+                  onTap: () {
+                    setState(() => _playbackSpeed = speed);
+                    controller.setPlaybackSpeed(speed);
+                    Navigator.of(sheetContext).pop();
+                    _startHideControlsTimer();
+                  },
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    ).then((_) {
+      if (mounted) setState(() => _showControls = true);
+    });
   }
 
   Widget _buildProgressBar(VideoPlayerController controller) {
