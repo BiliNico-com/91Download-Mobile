@@ -1341,10 +1341,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     
     print('[FloatingMode] 启动悬浮窗，文件: ${widget.filePath}');
     logger.logSync('FloatingMode', '启动悬浮窗，文件: ${widget.filePath}');
+    // 记录当前进度并传给悬浮窗，让它接着播（否则会从头开始）
+    final currentPosMs =
+        _videoPlayerController?.value.position.inMilliseconds ?? 0;
     // 启动悬浮窗
     final success = await FloatingVideoService.startFloating(
       videoPath: widget.filePath,
       title: widget.title,
+      initialPositionMs: currentPosMs,
     );
     
     print('[FloatingMode] 悬浮窗启动结果: $success');
@@ -1378,6 +1382,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
         if (mounted && _isInFloatingMode) {
           setState(() => _isInFloatingMode = false);
           debugPrint('[FloatingMode] 检测到悬浮窗已关闭，自动退出悬浮模式');
+          // 用户直接在悬浮窗上关闭时，同样要接回原进度继续播放
+          _resumeFromFloating();
         }
       }
     });
@@ -1387,6 +1393,43 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     _floatingCheckTimer?.cancel();
     await FloatingVideoService.stopFloating();
     if (mounted) setState(() => _isInFloatingMode = false);
+    // 收起悬浮窗后接着原进度继续播放，避免"进度丢失 + 还要手点播放"
+    await _resumeFromFloating();
+  }
+  
+  /// 悬浮窗收起后，把内置播放器恢复到悬浮窗停下的位置并继续播放
+  ///
+  /// 进度由原生侧在关闭悬浮窗时记录（见 FloatingWindowService.capturePlaybackPosition），
+  /// 这里读取后 seek 并恢复播放，使「内置播放 ⇄ 悬浮窗」的切换是连续的。
+  Future<void> _resumeFromFloating() async {
+    try {
+      final controller = _videoPlayerController;
+      if (controller == null || !controller.value.isInitialized) return;
+
+      final posMs = await FloatingVideoService.getFloatingLastPosition();
+      if (posMs <= 0) return;
+
+      final duration = controller.value.duration;
+      var target = Duration(milliseconds: posMs);
+      // 越界保护：避免 seek 到视频末尾或超出时长
+      if (target >= duration) {
+        target = duration - const Duration(seconds: 1);
+      }
+      if (target < Duration.zero) target = Duration.zero;
+
+      await controller.seekTo(target);
+      await controller.play();
+
+      if (mounted) {
+        setState(() {
+          _showControls = false;
+        });
+        _startHideControlsTimer();
+      }
+      debugPrint('[FloatingMode] 已恢复到 ${target.inSeconds}s 并继续播放');
+    } catch (e) {
+      debugPrint('[FloatingMode] 恢复播放失败: $e');
+    }
   }
   
   Future<void> _initializePlayer() async {
@@ -1451,13 +1494,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       // 检查悬浮窗是否已关闭
       Future.delayed(const Duration(milliseconds: 200), () async {
         if (!FloatingVideoService.isFloating && mounted && _isInFloatingMode) {
-          // 悬浮窗已关闭，恢复播放
+          // 悬浮窗已关闭，恢复播放（含进度）
           setState(() {
             _isInFloatingMode = false;
             _isInPipMode = false;  // 同时清除 PiP 状态
-            _showControls = true;
+            _showControls = false;
           });
-          _videoPlayerController?.play();
+          await _resumeFromFloating();
           _startHideControlsTimer();
         }
       });
@@ -1680,8 +1723,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
             SizedBox(height: 24),
             TextButton(
               onPressed: () async {
-                await FloatingVideoService.stopFloating();
-                setState(() => _isInFloatingMode = false);
+                // 统一走 _exitFloatingMode：停表 + 关悬浮窗 + 接回原进度继续播放
+                await _exitFloatingMode();
               },
               child: Text('关闭悬浮窗'),
             ),

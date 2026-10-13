@@ -41,6 +41,9 @@ class FloatingWindowService : Service() {
         const val EXTRA_HEIGHT = "extra_height"
         const val EXTRA_SEEK_POS = "extra_seek_pos"
 
+        /** 启动悬浮窗时的初始播放位置（毫秒），用于接续内置播放器的进度 */
+        const val EXTRA_INITIAL_POS = "extra_initial_pos"
+
         private const val NOTIFICATION_CHANNEL_ID = "floating_window_channel"
         private const val NOTIFICATION_CHANNEL_NAME = "悬浮窗播放"
         private const val NOTIFICATION_ID = 1001
@@ -56,7 +59,25 @@ class FloatingWindowService : Service() {
         var instance: FloatingWindowService? = null
             private set
 
+        /**
+         * 悬浮窗关闭时的播放位置（毫秒）与是否处于播放中。
+         *
+         * 用于让 Flutter 侧在收起悬浮窗后接着原来的进度继续播放，
+         * 避免"从悬浮窗回到页面后进度丢失、还得手动点播放"的割裂体验。
+         */
+        var lastPositionMs: Int = 0
+            private set
+        var lastWasPlaying: Boolean = false
+            private set
+
         fun isRunning(): Boolean = instance != null
+
+        /** 取出并清空上次的播放位置，避免被重复消费 */
+        fun consumeLastPosition(): Int {
+            val p = lastPositionMs
+            lastPositionMs = 0
+            return p
+        }
     }
 
     private var windowManager: WindowManager? = null
@@ -85,6 +106,9 @@ class FloatingWindowService : Service() {
     // 窗口参数
     private var windowWidth = 800
     private var windowHeight = 450
+
+    /** 本次启动希望从哪个位置开始播放（毫秒），0 表示从头 */
+    private var initialPositionMs = 0
     private var params: WindowManager.LayoutParams? = null
 
     // 控件自动隐藏
@@ -145,6 +169,8 @@ class FloatingWindowService : Service() {
                 val title = intent.getStringExtra(EXTRA_TITLE) ?: ""
                 windowWidth = intent.getIntExtra(EXTRA_WIDTH, 800)
                 windowHeight = intent.getIntExtra(EXTRA_HEIGHT, 450)
+                // 接续内置播放器的进度：进入悬浮窗时不再从头播放
+                initialPositionMs = intent.getIntExtra(EXTRA_INITIAL_POS, 0)
                 showFloatingWindow(path, title)
             }
             ACTION_STOP -> stopFloating()
@@ -510,6 +536,16 @@ class FloatingWindowService : Service() {
                 setDataSource(videoPath)
                 prepareAsync()
                 setOnPreparedListener { mp ->
+                    // 接续内置播放器进度：先 seek 再播放，
+                    // 否则从悬浮窗进来会从头开始（进度丢失）。
+                    if (initialPositionMs > 0) {
+                        try {
+                            val dur = mp.duration
+                            if (dur > 0 && initialPositionMs < dur) {
+                                mp.seekTo(initialPositionMs)
+                            }
+                        } catch (_: Exception) {}
+                    }
                     mp.start()
                     updatePlayButton(true)
                     startProgressUpdate()
@@ -710,6 +746,9 @@ class FloatingWindowService : Service() {
     }
 
     private fun stopFloating() {
+        // 同样要在释放播放器之前记录位置
+        capturePlaybackPosition()
+
         releaseMediaPlayer()
         try {
             if (floatingView != null && floatingView?.windowToken != null) {
@@ -732,6 +771,10 @@ class FloatingWindowService : Service() {
     }
 
     private fun cleanup() {
+        // 必须在 releaseMediaPlayer() 之前记录位置，否则拿不到 currentPosition，
+        // Flutter 侧就无法在收起悬浮窗后接着原进度继续播放。
+        capturePlaybackPosition()
+
         releaseMediaPlayer()
         try {
             if (floatingView != null && floatingView?.isAttachedToWindow == true) {
@@ -740,6 +783,17 @@ class FloatingWindowService : Service() {
         } catch (_: Exception) {}
         floatingView = null
         instance = null
+    }
+
+    /** 记录当前播放位置与播放状态，供 Flutter 侧恢复 */
+    private fun capturePlaybackPosition() {
+        try {
+            val mp = mediaPlayer ?: return
+            lastPositionMs = mp.currentPosition
+            lastWasPlaying = mp.isPlaying
+        } catch (_: Exception) {
+            // 播放器已释放或状态异常时保持上一次记录
+        }
     }
 
     // ====== 工具方法 ======

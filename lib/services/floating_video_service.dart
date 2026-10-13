@@ -63,13 +63,17 @@ class NativeFloatingService {
   }
 
   /// 启动悬浮窗播放
+  ///
+  /// [initialPositionMs] 为内置播放器的当前进度，悬浮窗会从这里接着播，
+  /// 避免"切到悬浮窗后从头开始"。
   static Future<bool> startFloating({
     required String videoPath,
     required String title,
+    int initialPositionMs = 0,
   }) async {
     try {
-      print('[NativeFloating] 开始启动原生悬浮窗, videoPath: $videoPath');
-      logger.logSync('NativeFloating', '开始启动原生悬浮窗, videoPath: $videoPath');
+      print('[NativeFloating] 开始启动原生悬浮窗, videoPath: $videoPath, pos: $initialPositionMs');
+      logger.logSync('NativeFloating', '开始启动原生悬浮窗, pos=$initialPositionMs');
       
       // 如果已有悬浮窗在运行，先关闭
       if (_isFloating) {
@@ -100,6 +104,7 @@ class NativeFloatingService {
         'title': title,
         'width': width,
         'height': height,
+        'initialPositionMs': initialPositionMs,
       });
       
       _isFloating = true;
@@ -114,6 +119,19 @@ class NativeFloatingService {
       debugPrint('[NativeFloating] 启动悬浮窗失败: $e');
       logger.logSync('NativeFloating', '启动悬浮窗失败: $e');
       return false;
+    }
+  }
+  
+  /// 读取悬浮窗关闭时记录的播放位置（毫秒）
+  ///
+  /// 取用后原生侧会清零，避免重复消费。返回 0 表示无有效位置。
+  static Future<int> getFloatingLastPosition() async {
+    try {
+      final pos = await _channel.invokeMethod<int>('getFloatingPosition');
+      return pos ?? 0;
+    } catch (e) {
+      debugPrint('[NativeFloating] 读取悬浮窗进度失败: $e');
+      return 0;
     }
   }
   
@@ -202,8 +220,18 @@ class FloatingVideoService {
   static Future<bool> isPermissionGranted() => NativeFloatingService.isPermissionGranted();
   static Future<bool> requestPermission() => NativeFloatingService.requestPermission();
   static Future<void> openSettings() => NativeFloatingService.openSettings();
-  static Future<bool> startFloating({required String videoPath, required String title}) =>
-      NativeFloatingService.startFloating(videoPath: videoPath, title: title);
+  static Future<bool> startFloating({
+    required String videoPath,
+    required String title,
+    int initialPositionMs = 0,
+  }) =>
+      NativeFloatingService.startFloating(
+        videoPath: videoPath,
+        title: title,
+        initialPositionMs: initialPositionMs,
+      );
+  static Future<int> getFloatingLastPosition() =>
+      NativeFloatingService.getFloatingLastPosition();
   static Future<bool> stopFloating() => NativeFloatingService.stopFloating();
   static Future<void> pause() => NativeFloatingService.pause();
   static Future<void> play() => NativeFloatingService.play();

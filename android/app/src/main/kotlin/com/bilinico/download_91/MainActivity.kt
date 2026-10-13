@@ -49,8 +49,17 @@ class MainActivity : FlutterActivity() {
                     val title = call.argument<String>("title") ?: ""
                     val width = call.argument<Int>("width") ?: 400
                     val height = call.argument<Int>("height") ?: 250
-                    startNativeFloating(path, title, width, height)
+                    // 内置播放器传入的当前进度，悬浮窗据此接着播
+                    val initialPos = call.argument<Int>("initialPositionMs") ?: 0
+                    startNativeFloating(path, title, width, height, initialPos)
                     result.success(true)
+                }
+                "getFloatingPosition" -> {
+                    // 取出悬浮窗关闭时记录的进度，供内置播放器恢复
+                    result.success(FloatingWindowService.consumeLastPosition())
+                }
+                "wasFloatingPlaying" -> {
+                    result.success(FloatingWindowService.lastWasPlaying)
                 }
                 "stopFloating" -> {
                     stopNativeFloating()
@@ -90,13 +99,20 @@ class MainActivity : FlutterActivity() {
     /**
      * 启动原生悬浮窗服务
      */
-    private fun startNativeFloating(path: String, title: String, width: Int, height: Int) {
+    private fun startNativeFloating(
+        path: String,
+        title: String,
+        width: Int,
+        height: Int,
+        initialPositionMs: Int = 0
+    ) {
         val intent = Intent(this, FloatingWindowService::class.java).apply {
             action = FloatingWindowService.ACTION_START
             putExtra(FloatingWindowService.EXTRA_VIDEO_PATH, path)
             putExtra(FloatingWindowService.EXTRA_TITLE, title)
             putExtra(FloatingWindowService.EXTRA_WIDTH, width)
             putExtra(FloatingWindowService.EXTRA_HEIGHT, height)
+            putExtra(FloatingWindowService.EXTRA_INITIAL_POS, initialPositionMs)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
