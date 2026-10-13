@@ -135,6 +135,20 @@ class NativeFloatingService {
       return 0;
     }
   }
+
+  /// 读取悬浮窗关闭时是否处于播放状态
+  ///
+  /// 用于让内置播放器"跟随悬浮窗"：悬浮窗在播就继续播，
+  /// 悬浮窗已暂停就保持暂停，而不是一律自动播放。
+  static Future<bool> wasFloatingPlaying() async {
+    try {
+      final playing = await _channel.invokeMethod<bool>('wasFloatingPlaying');
+      return playing ?? false;
+    } catch (e) {
+      debugPrint('[NativeFloating] 读取悬浮窗播放状态失败: $e');
+      return false;
+    }
+  }
   
   /// 关闭悬浮窗
   static Future<bool> stopFloating() async {
@@ -233,6 +247,8 @@ class FloatingVideoService {
       );
   static Future<int> getFloatingLastPosition() =>
       NativeFloatingService.getFloatingLastPosition();
+  static Future<bool> wasFloatingPlaying() =>
+      NativeFloatingService.wasFloatingPlaying();
   static Future<bool> stopFloating() => NativeFloatingService.stopFloating();
   static Future<void> pause() => NativeFloatingService.pause();
   static Future<void> play() => NativeFloatingService.play();

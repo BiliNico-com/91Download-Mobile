@@ -1371,17 +1371,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   }
   
   /// 启动悬浮窗状态检查定时器
+  ///
+  /// 原生侧关闭悬浮窗后会停止服务，`FloatingVideoService.isFloating`
+  /// 这里靠轮询感知。周期取 250ms：比原来的 500ms 更快摘掉遮罩，
+  /// 缓解"双击返回后上面还盖着一层黑幕"的割裂感（纯原生广播桥接成本更高，
+  /// 轮询在本场景足够且更可靠）。
   void _startFloatingCheckTimer() {
     _floatingCheckTimer?.cancel();
-    _floatingCheckTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
+    _floatingCheckTimer = Timer.periodic(const Duration(milliseconds: 250), (timer) {
       // 检查原生悬浮窗是否还在运行
       if (!FloatingVideoService.isFloating) {
         // 悬浮窗已关闭（用户点击了x或双击返回）
         timer.cancel();
         if (mounted && _isInFloatingMode) {
+          // 立即摘掉遮罩，再恢复进度/播放状态
           setState(() => _isInFloatingMode = false);
-          debugPrint('[FloatingMode] 检测到悬浮窗已关闭，自动退出悬浮模式');
-          // 用户直接在悬浮窗上关闭时，同样要接回原进度继续播放
+          debugPrint('[FloatingMode] 检测到悬浮窗已关闭，退出悬浮模式');
           _resumeFromFloating();
         }
       }
@@ -1396,11 +1401,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     await _resumeFromFloating();
   }
   
-  /// 悬浮窗收起后，把内置播放器恢复到悬浮窗停下的位置并继续播放
+  /// 悬浮窗收起后，把内置播放器恢复到悬浮窗停下的位置
+  ///
+  /// 播放状态**跟随悬浮窗**：
+  ///   - 悬浮窗关闭时在播放 → 内置播放器继续播
+  ///   - 悬浮窗关闭时已暂停 → 只恢复进度，保持暂停
   ///
   /// 进度由原生侧在关闭悬浮窗时记录（见 FloatingWindowService.capturePlaybackPosition）。
-  /// 注意：Flutter 侧有多条路径可能触发恢复（关闭按钮 / 定时器 / 生命周期回调），
-  /// 这里加一个进行中标记，避免并发重复 seek 造成跳动。
+  /// Flutter 侧有多条路径可能触发恢复（关闭按钮 / 定时器 / 生命周期回调），
+  /// 这里用进行中标记避免并发重复 seek 造成跳动。
   bool _resumingFromFloating = false;
 
   Future<void> _resumeFromFloating() async {
@@ -1411,19 +1420,29 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       if (controller == null || !controller.value.isInitialized) return;
 
       final posMs = await FloatingVideoService.getFloatingLastPosition();
-      debugPrint('[FloatingMode] 读取到悬浮窗进度: ${posMs}ms');
-      if (posMs <= 0) return;
+      final wasPlaying = await FloatingVideoService.wasFloatingPlaying();
+      debugPrint('[FloatingMode] 悬浮窗进度=${posMs}ms, 当时在播放=$wasPlaying');
 
-      final duration = controller.value.duration;
-      var target = Duration(milliseconds: posMs);
-      // 越界保护：避免 seek 到视频末尾或超出时长
-      if (target >= duration) {
-        target = duration - const Duration(seconds: 1);
+      if (posMs > 0) {
+        final duration = controller.value.duration;
+        var target = Duration(milliseconds: posMs);
+        // 越界保护：避免 seek 到视频末尾或超出时长
+        if (target >= duration) {
+          target = duration - const Duration(seconds: 1);
+        }
+        if (target < Duration.zero) target = Duration.zero;
+        await controller.seekTo(target);
+        debugPrint('[FloatingMode] 已恢复到 ${target.inSeconds}s');
       }
-      if (target < Duration.zero) target = Duration.zero;
 
-      await controller.seekTo(target);
-      await controller.play();
+      // 跟随悬浮窗的播放状态，而不是无条件自动播放
+      if (wasPlaying) {
+        await controller.play();
+        debugPrint('[FloatingMode] 悬浮窗当时在播放 → 继续播放');
+      } else {
+        await controller.pause();
+        debugPrint('[FloatingMode] 悬浮窗当时已暂停 → 保持暂停');
+      }
 
       if (mounted) {
         setState(() {
@@ -1431,7 +1450,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
         });
         _startHideControlsTimer();
       }
-      debugPrint('[FloatingMode] 已恢复到 ${target.inSeconds}s 并继续播放');
     } catch (e) {
       debugPrint('[FloatingMode] 恢复播放失败: $e');
     } finally {
@@ -1703,31 +1721,37 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     );
   }
   
+  /// 悬浮窗播放中的提示层
+  ///
+  /// 早期用 Colors.black87 全屏盖住，视觉上像"多了一层遮罩"，
+  /// 切换回来时那层黑幕延迟消失会很割裂。
+  /// 现改为半透明 + 轻量提示，既能说明状态，又不至于糊住整个页面。
   Widget _buildFloatingModeOverlay() {
     return Container(
-      color: Colors.black87,
+      color: Colors.black.withOpacity(0.55),
       child: Center(
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.picture_in_picture_alt, color: Colors.white54, size: 64),
-            SizedBox(height: 16),
-            Text(
-              '视频正在悬浮窗中播放',
-              style: TextStyle(color: Colors.white70, fontSize: 16),
+            const Icon(Icons.picture_in_picture_alt,
+                color: Colors.white70, size: 48),
+            const SizedBox(height: 12),
+            const Text(
+              '正在悬浮窗中播放',
+              style: TextStyle(color: Colors.white, fontSize: 15),
             ),
-            SizedBox(height: 8),
-            Text(
-              '双击悬浮窗可返回此页面',
-              style: TextStyle(color: Colors.white54, fontSize: 12),
+            const SizedBox(height: 6),
+            const Text(
+              '双击悬浮窗可返回',
+              style: TextStyle(color: Colors.white60, fontSize: 12),
             ),
-            SizedBox(height: 24),
-            TextButton(
-              onPressed: () async {
-                // 统一走 _exitFloatingMode：停表 + 关悬浮窗 + 接回原进度继续播放
-                await _exitFloatingMode();
-              },
-              child: Text('关闭悬浮窗'),
+            const SizedBox(height: 16),
+            // 保留一个显式的关闭入口，避免只能靠双击悬浮窗
+            TextButton.icon(
+              onPressed: _exitFloatingMode,
+              icon: const Icon(Icons.close_fullscreen, size: 18),
+              label: const Text('收回并继续播放'),
+              style: TextButton.styleFrom(foregroundColor: Colors.white70),
             ),
           ],
         ),
