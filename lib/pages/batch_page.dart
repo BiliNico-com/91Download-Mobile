@@ -6,6 +6,7 @@ import '../services/app_state.dart';
 import '../services/floating_video_service.dart';
 import '../components/empty_state.dart';
 import '../components/video_list_items.dart';
+import '../components/category_chips.dart';
 import '../theme/app_theme.dart';
 import '../theme/ui_style.dart';
 import 'streaming_page.dart';
@@ -52,7 +53,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   final FocusNode _pageFocusNode = FocusNode();
 
   // ─── 布局常量 ───
-  static const double _kExpandedHeight = 130.0;
+  // 展开态内容：标题行(48) + 副标题(20) + 分类标签行(38+14 padding) ≈ 140
+  static const double _kExpandedHeight = 142.0;
   static const double _kCollapsedHeight = 56.0;
 
   @override
@@ -422,7 +424,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                         if (mounted) setState(() {});
                       } : null,
                       onTypeChanged: (v) async {
-                        if (v != null && v != _selectedType) {
+                        if (v != _selectedType) {
                           setState(() {
                             _selectedType = v;
                             _videos.clear();
@@ -430,6 +432,15 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                             _loadedPage = 0;
                           });
                           _pageController.text = '1';
+                          // 切换分类会重新请求并回到第 1 页，显式提示避免"点了没反应"的困惑
+                          final label = _getTypeNames(appState.crawler?.siteType ?? 'original')[v] ?? v;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('已切换到「$label」，正在加载'),
+                              duration: const Duration(seconds: 1),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
                           await _goToPage();
                         }
                       },
@@ -947,7 +958,7 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
   final bool isFollowed;
   final VoidCallback? onBack;
   final VoidCallback? onFollowToggle;
-  final ValueChanged<String?> onTypeChanged;
+  final ValueChanged<String> onTypeChanged;
   final VoidCallback onPrivacyToggle;
   final VoidCallback onSelectAll;
 
@@ -1139,7 +1150,7 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
                                   ],
                                 ),
                               )
-                            : _buildTypeChip(ctx, isDark),
+                            : const SizedBox.shrink(),
                     // 收起时加 Spacer 让右侧按钮靠右
                     if (collapseRatio >= 0.5) const Spacer(),
                     // 右侧按钮
@@ -1151,7 +1162,7 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
               // ── 第二行：副标题（展开时显示）──
               if (collapseRatio < 0.5)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                  padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
                   child: Text(
                     isAuthorPageMode 
                         ? '已加载 $videoCount 个视频 (作者主页)' 
@@ -1159,12 +1170,18 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
                     style: TextStyle(fontSize: 12, color: subTextColor),
                   ),
                 ),
-              
-              // ── 第三行：下拉选择器（展开时显示，非作者模式下显示）──
+
+              // ── 第三行：分类标签（横滑，展开时显示）──
+              // 展开态与收起态现在共用同一套标签，不再各写一份下拉。
               if (collapseRatio < 0.5 && !isAuthorPageMode)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                  child: _buildTypeChip(ctx, isDark),
+                  padding: const EdgeInsets.only(top: 6, bottom: 8),
+                  child: CategoryChips(
+                    entries: typeNames,
+                    selected: selectedType,
+                    onSelected: onTypeChanged,
+                    isDark: isDark,
+                  ),
                 ),
             ],
           ),
@@ -1268,57 +1285,8 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
   }
   
   // 列表选择器组件
-  Widget _buildTypeChip(BuildContext ctx, bool isDark) {
-    final dropdownBg = isDark ? const Color(0xFF252525) : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black87;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF252525) : Colors.white.withOpacity(0.95),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark ? const Color(0xFF333333) : Colors.grey[300]!,
-          width: 0.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF4a9eff).withOpacity(0.1),
-            blurRadius: 8,
-            spreadRadius: 1,
-          ),
-          BoxShadow(
-            color: Colors.black.withOpacity(0.15),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.list_alt, size: 16, color: const Color(0xFF4a9eff)),
-          const SizedBox(width: 6),
-          Theme(
-            data: Theme.of(ctx).copyWith(canvasColor: dropdownBg),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: selectedType,
-                isDense: true,
-                icon: Icon(Icons.keyboard_arrow_down, size: 16, color: Colors.grey[600]),
-                style: TextStyle(fontSize: 12, color: textColor),
-                items: typeNames.entries.map((e) => DropdownMenuItem(
-                  value: e.key,
-                  child: Text(e.value, style: TextStyle(fontSize: 12, color: isDark ? Colors.grey[300] : Colors.black87)),
-                )).toList(),
-                onChanged: onTypeChanged,
-                underline: const SizedBox(),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  // 说明：原 _buildTypeChip（带蓝色光晕的下拉）已移除，
+  // 分类选择统一由 CategoryChips 横滑标签承担。
 
   bool shouldRebuild(_BatchHeaderDelegate old) =>
       old.collapseRatio != collapseRatio ||
