@@ -38,6 +38,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   int _loadedPage = 0;  // 已加载的页码（用于瀑布流加载）
   bool _hasMore = true;
   String _lastKeyword = '';
+
+  /// 上一次渲染时的站点地址，用于检测"更换网址"并清掉旧站结果
+  String? _lastSiteUrl;
   String _sortBy = 'default';  // default, new, hot
   
   // 作者主页模式相关
@@ -322,6 +325,32 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     
     return Consumer<AppState>(
       builder: (context, appState, _) {
+        // ── 更换网址处理 ──
+        // 本页被 KeepAlive 保活，换站后旧站的搜索结果会一直留在这里，
+        // 用户看到的是"另一个网站的内容"。以网址为准清空一次。
+        // 首次构建只记录，不触发（否则会与自动搜索重复）。
+        final siteUrl = appState.currentSite ?? '';
+        if (_lastSiteUrl == null) {
+          _lastSiteUrl = siteUrl;
+        } else if (_lastSiteUrl != siteUrl) {
+          _lastSiteUrl = siteUrl;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _results.clear();
+              _authorResults.clear();
+              _selectedIds.clear();
+              _currentPage = 1;
+              _loadedPage = 0;
+              _hasMore = true;
+              _status = '就绪';
+              // 站点都换了，作者主页模式必然失效
+              _isAuthorPageMode = false;
+            });
+            _syncPageController('1');
+          });
+        }
+
         return Scaffold(
             extendBodyBehindAppBar: true,
             body: Stack(
@@ -738,16 +767,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
               height: 18,
               color: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade300,
             ),
-            // 搜索类型下拉
-            _buildSearchDropdown(
-              value: _isAuthorMode,
-              items: [DropdownMenuItem(value: false, child: Text('搜视频')), DropdownMenuItem(value: true, child: Text('搜作者'))],
-              onChanged: (v) {
-                setState(() => _isAuthorMode = v!);
-                _updateWillPopCallback();
-              },
-              isDark: isDark,
-            ),
+            // 搜索类型：分段控件（只有两个选项，同时可见、一次点击）
+            // 原来用下拉，需要"点开→选"两步，且看不出另一个选项是什么。
+            _buildSearchTypeSegmented(isDark),
             // 排序下拉（仅视频搜索模式 + original CMS）
             if (showSort) ...[
               Container(
@@ -765,6 +787,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                 onChanged: (v) {
                   if (v != null && v != _sortBy) {
                     setState(() => _sortBy = v);
+                    // 切换排序必然重置到第 1 页，明确告知避免"我明明在第 5 页"的困惑
+                    const labels = {'default': '默认', 'new': '最新', 'hot': '最热'};
+                    _showSearchToast('已按「${labels[v] ?? v}」排序，已回到第 1 页');
                     if (_lastKeyword.isNotEmpty) _search();
                   }
                 },
@@ -829,6 +854,118 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           onChanged: onChanged,
           padding: const EdgeInsets.symmetric(horizontal: 8),
         ),
+      ),
+    );
+  }
+
+  /// 搜索类型分段控件（视频 / 作者）
+  ///
+  /// 只有两个选项，用分段控件让两者**同时可见、一次点击**即可切换；
+  /// 原来用下拉需要"点开 → 选"两步，且看不出另一个选项是什么。
+  ///
+  /// 切换后会：
+  ///   · 若已有搜索关键词，自动用该关键词重新搜索（避免状态与结果不一致）
+  ///   · 若没有关键词，清空结果并提示输入
+  Widget _buildSearchTypeSegmented(bool isDark) {
+    final trackBg = isDark ? const Color(0xFF2C2C2E) : const Color(0xFFECEFF3);
+    final unselectedFg = isDark ? Colors.white70 : const Color(0xFF5F6368);
+
+    Widget item(String label, bool value) {
+      final on = _isAuthorMode == value;
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: on ? null : () => _onSearchTypeChanged(value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 170),
+          height: 26,
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: on ? (isDark ? const Color(0xFF3A3A3C) : Colors.white) : null,
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd - 1),
+            boxShadow: on
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.13),
+                      blurRadius: 3,
+                      offset: const Offset(0, 1),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: on ? AppTheme.primaryColor : unselectedFg,
+              fontWeight: on ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: trackBg,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          item('视频', false),
+          item('作者', true),
+        ],
+      ),
+    );
+  }
+
+  /// 切换搜索类型
+  ///
+  /// 原来的实现只改标志位、不动结果，会出现"切到搜作者后，
+  /// 屏幕上还留着上一次的视频结果"。这里让状态与结果保持一致：
+  /// 输入框有内容就立刻按新类型重搜，没有就清空结果并提示输入。
+  void _onSearchTypeChanged(bool toAuthor) {
+    if (_isAuthorMode == toAuthor) return;
+
+    final keyword = _keywordController.text.trim();
+
+    setState(() {
+      _isAuthorMode = toAuthor;
+      _selectedIds.clear();
+      // 结果与当前类型不再匹配，先清空，避免闪出错误内容
+      _results.clear();
+      _authorResults.clear();
+      _currentPage = 1;
+      _hasMore = true;
+      _status = '就绪';
+    });
+    _syncPageController('1');
+    _updateWillPopCallback();
+
+    if (keyword.isNotEmpty) {
+      _showSearchToast('已切换到搜${toAuthor ? "作者" : "视频"}，正在重新搜索');
+      _search(); // _search 内部会按 _isAuthorMode 分流
+    } else {
+      _showSearchToast('已切换到搜${toAuthor ? "作者" : "视频"}，请输入关键词');
+    }
+  }
+
+  /// 搜索页轻提示
+  ///
+  /// 统一封装，避免各处重复写 ScaffoldMessenger（并确保先 hide 掉上一条，
+  /// 否则连续切换时提示会排队、显示滞后）。
+  void _showSearchToast(String message) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(milliseconds: 1600),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
       ),
     );
   }

@@ -55,10 +55,34 @@ class _CategoryChipsState extends State<CategoryChips> {
   @override
   void didUpdateWidget(CategoryChips oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 选中项变化时把它滚进可视区域，避免"切了但看不到"
+
+    // ① 换站点：分类集合整个变了（例如 12 项 → 5 项）。
+    //    此时必须把横向滚动位置复位，否则旧的偏移量会让新的短列表
+    //    整行滚出视野、看起来像"空白"。这是从下拉改成横滑标签后
+    //    才出现的问题——下拉没有滚动位置的概念。
+    final keysChanged = !_sameKeys(oldWidget.entries, widget.entries);
+    if (keysChanged) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_controller.hasClients) _controller.jumpTo(0);
+      });
+      return; // entries 变了就只需复位，不必再针对旧下标滚动
+    }
+
+    // ② 选中项变化：把它滚进可视区域，避免"切了但看不到"
     if (oldWidget.selected != widget.selected) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelected());
     }
+  }
+
+  /// 比较两个分类映射的键序列是否一致
+  static bool _sameKeys(Map<String, String> a, Map<String, String> b) {
+    if (a.length != b.length) return false;
+    final ka = a.keys.toList();
+    final kb = b.keys.toList();
+    for (var i = 0; i < ka.length; i++) {
+      if (ka[i] != kb[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -92,6 +116,9 @@ class _CategoryChipsState extends State<CategoryChips> {
     return SizedBox(
       height: 38,
       child: ListView.separated(
+        // key 随分类集合变化，确保换站点时 ListView 重建，
+        // 不残留旧的滚动偏移与缓存的 item
+        key: ValueKey(widget.entries.keys.join(',')),
         controller: _controller,
         scrollDirection: Axis.horizontal,
         padding: EdgeInsets.symmetric(horizontal: widget.horizontalPadding),

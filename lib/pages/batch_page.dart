@@ -20,6 +20,14 @@ class BatchPage extends StatefulWidget {
 
 class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixin {
   String _selectedType = 'list';
+
+  /// 上一次渲染时的站点地址，用于检测"更换网址"
+  ///
+  /// 用**网址**而不是 siteType：两个不同网址可能属于同一类型
+  /// （例如都在 original CMS 体系下），那时 siteType 不变，
+  /// 只比较 siteType 会漏判，页面会继续显示上一个网址的数据。
+  String? _lastSiteUrl;
+
   int _currentPage = 1;
   int _loadedPage = 0;
   bool _hasMore = true;
@@ -346,10 +354,45 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         if (!appState.isSiteSelected) {
           return _buildNoSiteSelected();
         }
-        // ✅ 修复：站点切换时，检查当前选中类型是否在新站点类型列表中
-        final typeNames = _getTypeNames(appState.crawler?.siteType ?? 'original');
-        if (!typeNames.containsKey(_selectedType)) {
-          // 当前选中类型不存在于新站点，自动切回第一个
+
+        final siteType = appState.crawler?.siteType ?? 'original';
+        final typeNames = _getTypeNames(siteType);
+
+        // ── 更换网址处理 ──
+        // 两个站点常共用同一个分类键 'list'（视频），所以换站后
+        // 「当前选中项是否仍存在」往往是 true，只靠 containsKey 会漏掉——
+        // 结果是页面上还显示着上一个网址的数据。
+        //
+        // 这里以**网址**为准（而不是 siteType）：同一 CMS 体系下的两个不同
+        // 网址 siteType 相同，但内容完全不同，同样需要重置。
+        //
+        // 注意：首次构建时 _lastSiteUrl 为 null，那只是"第一次见到"，
+        // 不是切换，不能触发重置（否则会和下面的"自动加载第一页"重复请求）。
+        final siteUrl = appState.currentSite ?? '';
+        if (_lastSiteUrl == null) {
+          _lastSiteUrl = siteUrl;
+        } else if (_lastSiteUrl != siteUrl) {
+          _lastSiteUrl = siteUrl;
+          // 新站点若不含当前分类，先回落第一个
+          final fallback =
+              typeNames.containsKey(_selectedType) ? _selectedType : typeNames.keys.first;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _selectedType = fallback;
+              _videos.clear();
+              _selectedIds.clear();
+              _loadedPage = 0;
+              _currentPage = 1;
+              _hasMore = true;
+              _status = '就绪';
+            });
+            _syncPageController('1');
+            _scrollToTop();
+            _goToPage();
+          });
+        } else if (!typeNames.containsKey(_selectedType)) {
+          // 同一站点内分类集合变化（如自定义站点调整）时的兜底
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               setState(() {
@@ -359,7 +402,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                 _loadedPage = 0;
                 _hasMore = true;
               });
-              _pageController.text = '1';
+              _syncPageController('1');
               _goToPage();
             }
           });
