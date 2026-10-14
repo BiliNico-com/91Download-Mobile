@@ -605,10 +605,13 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     try {
       // 重置任务状态为 pending 并重新添加到队列
       await appState.downloadManager.retryTask(task.id);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('已开始重试下载')),
       );
     } catch (e) {
+      // 异常路径同样可能发生在页面销毁之后
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('重试失败: $e')),
       );

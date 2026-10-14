@@ -348,8 +348,12 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         return;
       }
     } catch (e) {
+      // file_picker 不可用时回退到手动输入，这里忽略具体异常
     }
-    
+
+    // await 之后页面可能已被销毁，使用 context 前必须检查
+    if (!mounted) return;
+
     // 如果 file_picker 失败，显示手动输入对话框
     final controller = TextEditingController(text: appState.downloadDir);
     final result = await showDialog<String>(
@@ -929,7 +933,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     if (currentPin == null || !mounted) return;
     
     final success = await _pinService.verifyPin(currentPin);
-    if (!success && mounted) {
+    if (!mounted) return;
+    if (!success) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('当前PIN码错误')),
       );
@@ -1146,7 +1151,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
     
     final remoteVersion = await VersionService.checkUpdate();
-    
+    if (!mounted) return;
+
     if (remoteVersion == null) {
       // 展示具体失败原因（超时/限流/未发布等），便于用户判断
       final reason = VersionService.lastError ?? '请检查网络连接';
@@ -1279,6 +1285,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   
   Future<void> _exportLog() async {
     final content = await logger.getLogContent();
+    if (!mounted) return;
+
     if (content.isEmpty || content == '暂无日志') {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('暂无日志可导出')),
@@ -1401,6 +1409,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     
     if (confirm == true) {
       await logger.clearLogs();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('日志已清空')),
       );
@@ -1499,15 +1508,20 @@ class _LogManagerDialogState extends State<_LogManagerDialog> {
         if (_selectedFiles.isNotEmpty)
           TextButton(
             onPressed: () async {
+              final count = _selectedFiles.length;
+              // 在 await 之前取好 Navigator / ScaffoldMessenger，
+              // 避免 await 之后再通过 context 查找（此时可能已失效）
+              final navigator = Navigator.of(context);
+              final messenger = ScaffoldMessenger.of(context);
+
               for (final path in _selectedFiles) {
                 await logger.deleteLogFile(path);
               }
-              if (mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('已删除 ${_selectedFiles.length} 个日志文件')),
-                );
-              }
+
+              navigator.pop();
+              messenger.showSnackBar(
+                SnackBar(content: Text('已删除 $count 个日志文件')),
+              );
             },
             child: Text('删除选中', style: TextStyle(color: Colors.red)),
           ),

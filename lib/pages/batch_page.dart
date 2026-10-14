@@ -1,15 +1,11 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
-import '../crawler/config.dart';
 import '../models/video_info.dart';
 import '../services/app_state.dart';
-import '../services/followed_authors_service.dart';
 import '../services/floating_video_service.dart';
-import '../utils/logger.dart';
 import '../components/empty_state.dart';
-import '../components/cover_image.dart';
+import '../components/video_list_items.dart';
 import 'streaming_page.dart';
 
 class BatchPage extends StatefulWidget {
@@ -561,58 +557,42 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     }
   }
 
-  /// 构建作者行（列表模式）- 不包含关注按钮，关注按钮在作者主页
-  Widget _buildAuthorRowWithFollow(VideoInfo video, AppState appState) {
-    final isFollowed = appState.followedAuthorsService.isFollowedSync(video.authorId ?? '');
-    debugPrint('[BatchPage] 作者: ${video.author}, authorId: ${video.authorId}, 已关注: $isFollowed');
-    return GestureDetector(
-      onTap: () => _enterAuthorPageMode(video.authorId!, video.author!),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.person_outline, size: 14, color: Colors.blue),
-          SizedBox(width: 2),
-          Text(
-            video.author!,
-            style: TextStyle(fontSize: 12, color: Colors.blue),
-          ),
-          if (isFollowed) ...[
-            SizedBox(width: 4),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.8),
-                borderRadius: BorderRadius.circular(3),
-              ),
-              child: Text('已关注', style: TextStyle(fontSize: 9, color: Colors.white)),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
+  // 说明：作者行（含「已关注」角标）已统一到共用组件 VideoListItem，
+  // 原 _buildAuthorRowWithFollow / _buildGridAuthorRow 已移除。
 
+
+  /// 列表模式的单个视频项 —— 呈现抽到共用组件
+  ///
+  /// 本页特有交互：
+  ///   · 点击时若悬浮窗正在播放且该视频已下载，则切换悬浮窗视频
+  ///   · 点击作者名进入页内作者主页模式
   Widget _buildVideoListItem(VideoInfo video, AppState appState) {
     final isSelected = _selectedIds.contains(video.id);
-    final hasAuthor = video.author != null && video.author!.isNotEmpty &&
-                      video.authorId != null && video.authorId!.isNotEmpty;
-    
-    return GestureDetector(
+    final authorId = video.authorId;
+    final hasAuthor = video.author != null &&
+        video.author!.isNotEmpty &&
+        authorId != null &&
+        authorId.isNotEmpty;
+
+    return VideoListItem(
+      video: video,
+      appState: appState,
+      isSelected: isSelected,
+      showUploadDate: true,
       onTap: () async {
         // 如果悬浮窗正在播放，且该视频已下载，则切换到该视频
         // （用原生真实状态判断，本地标记在用户关闭悬浮窗后会失效）
         if (await FloatingVideoService.isActuallyRunning()) {
           final crawler = appState.crawler;
           final localPath = await crawler?.getDownloadedPath(video.id);
-          
+
           if (localPath != null && localPath.isNotEmpty) {
-            // 已下载，切换悬浮窗视频
             await _switchToFloatingVideo(video);
             return;
           }
           // 未下载，继续执行勾选逻辑
         }
-        // 切换选择状态
+        if (!mounted) return;
         setState(() {
           if (isSelected) {
             _selectedIds.remove(video.id);
@@ -621,125 +601,41 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           }
         });
       },
-      child: Card(
-        color: isSelected ? Colors.blue.withOpacity(0.2) : null,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              // 封面图
-              GestureDetector(
-                // 在线播放模式：点击封面直接播放；否则冒泡到外层做选中
-                onTap: appState.streamingMode
-                    ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => StreamingPage(video: video)))
-                    : null,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    width: 120,
-                    height: 68,
-                    color: Colors.grey[800],
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        // 封面走磁盘缓存
-                        CoverImage(
-                          url: video.cover,
-                          borderRadius: BorderRadius.zero,
-                          blur: appState.privacyMode,
-                        ),
-                        if (isSelected)
-                          Positioned(top: 4, left: 4, child: Icon(Icons.check_circle, color: Colors.blue, size: 20)),
-                        // 在线播放模式下显示播放角标，提示封面可点
-                        if (appState.streamingMode)
-                          const Positioned(left: 4, bottom: 4, child: Icon(Icons.play_circle_fill, color: Colors.white70, size: 20)),
-                        // 时长标签
-                        if (video.duration != null)
-                          Positioned(
-                            right: 4,
-                            bottom: 4,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                              decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(4)),
-                              child: Text(video.duration!, style: TextStyle(color: Colors.white, fontSize: 10)),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(width: 12),
-              // 标题和作者
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(video.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14)),
-                    SizedBox(height: 4),
-                    // 作者（有 authorId 可点击跳转，否则只显示）
-                    if (video.author != null && video.author!.isNotEmpty)
-                      video.authorId != null && video.authorId!.isNotEmpty
-                        ? _buildAuthorRowWithFollow(video, appState)
-                        : Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.person_outline, size: 14, color: Colors.grey),
-                              SizedBox(width: 2),
-                              Text(
-                                video.author!,
-                                style: TextStyle(fontSize: 12, color: Colors.grey),
-                              ),
-                            ],
-                          ),
-                    // 上传时间
-                    if (video.uploadDate != null && video.uploadDate!.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.access_time, size: 12, color: Colors.grey),
-                            SizedBox(width: 2),
-                            Text(
-                              video.uploadDate!,
-                              style: TextStyle(fontSize: 10, color: Colors.grey),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      onCoverTap: appState.streamingMode
+          ? () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => StreamingPage(video: video)),
+              )
+          : null,
+      onAuthorTap: hasAuthor
+          ? () => _enterAuthorPageMode(authorId, video.author!)
+          : null,
+      isAuthorFollowed:
+          hasAuthor && appState.followedAuthorsService.isFollowedSync(authorId),
     );
   }
 
+  /// 网格模式的单个视频项 —— 呈现抽到共用组件
   Widget _buildVideoGridItem(VideoInfo video, AppState appState) {
     final isSelected = _selectedIds.contains(video.id);
-    final hasAuthor = video.author != null && video.author!.isNotEmpty &&
-                      video.authorId != null && video.authorId!.isNotEmpty;
-    final isFollowed = hasAuthor && appState.followedAuthorsService.isFollowedSync(video.authorId!);
-    
-    return GestureDetector(
+
+    return VideoGridItem(
+      video: video,
+      appState: appState,
+      isSelected: isSelected,
+      showUpdateDateBadge: true,
       onTap: () async {
-        // 如果悬浮窗正在播放，且该视频已下载，则切换到该视频
-        // （用原生真实状态判断，本地标记在用户关闭悬浮窗后会失效）
+        // 悬浮窗在播且该视频已下载 → 切换悬浮窗视频（与列表模式一致）
         if (await FloatingVideoService.isActuallyRunning()) {
           final crawler = appState.crawler;
           final localPath = await crawler?.getDownloadedPath(video.id);
-          
+
           if (localPath != null && localPath.isNotEmpty) {
-            // 已下载，切换悬浮窗视频
             await _switchToFloatingVideo(video);
             return;
           }
-          // 未下载，继续执行勾选逻辑
         }
-        // 切换选择状态
+        if (!mounted) return;
         setState(() {
           if (isSelected) {
             _selectedIds.remove(video.id);
@@ -748,120 +644,12 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           }
         });
       },
-      child: Card(
-        color: isSelected ? Colors.blue.withOpacity(0.2) : null,
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 封面图区域（磁盘缓存）
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  CoverImage(
-                    url: video.cover,
-                    borderRadius: BorderRadius.zero,
-                    blur: appState.privacyMode,
-                  ),
-                  // 时长标签（右下角）
-                  if (video.duration != null)
-                    Positioned(
-                      right: 4,
-                      bottom: 4,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(4)),
-                        child: Text(video.duration!, style: TextStyle(color: Colors.white, fontSize: 10)),
-                      ),
-                    ),
-                  // 更新日期标签（左下角）
-                  if (video.uploadDate != null && video.uploadDate!.isNotEmpty)
-                    Positioned(
-                      left: 4,
-                      bottom: 4,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6), 
-                          borderRadius: BorderRadius.circular(4)
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.access_time, size: 10, color: Colors.white70),
-                            SizedBox(width: 2),
-                            Text(
-                              video.uploadDate!.length > 10 ? video.uploadDate!.substring(0, 10) : video.uploadDate!,
-                              style: TextStyle(color: Colors.white, fontSize: 9),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  // 选中标记
-                  if (isSelected)
-                    Positioned(top: 4, right: 4, child: Icon(Icons.check_circle, color: Colors.blue)),
-                ],
-              ),
-            ),
-            // 标题区域
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
-              child: Text(video.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12)),
-            ),
-            // 作者（底部，有 authorId 可点击）
-            if (video.author != null && video.author!.isNotEmpty)
-              video.authorId != null && video.authorId!.isNotEmpty
-                ? _buildGridAuthorRow(video, appState)
-                : Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.person_outline, size: 12, color: Colors.grey),
-                        SizedBox(width: 2),
-                        Text(video.author!, style: TextStyle(fontSize: 10, color: Colors.grey)),
-                      ],
-                    ),
-                  ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 构建网格模式下的作者行（不包含关注按钮）
-  Widget _buildGridAuthorRow(VideoInfo video, AppState appState) {
-    final isFollowed = appState.followedAuthorsService.isFollowedSync(video.authorId ?? '');
-    return GestureDetector(
-      onTap: () => _enterAuthorPageMode(video.authorId!, video.author!),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.person_outline, size: 12, color: Colors.blue),
-            SizedBox(width: 2),
-            Text(
-              video.author!.length > 8 ? video.author!.substring(0, 8) + '..' : video.author!,
-              style: TextStyle(fontSize: 10, color: Colors.blue),
-            ),
-            if (isFollowed) ...[
-              SizedBox(width: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.8),
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                child: Text('已关注', style: TextStyle(fontSize: 8, color: Colors.white)),
-              ),
-            ],
-            Icon(Icons.chevron_right, size: 12, color: Colors.blue),
-          ],
-        ),
-      ),
+      onCoverTap: appState.streamingMode
+          ? () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => StreamingPage(video: video)),
+              )
+          : null,
     );
   }
 
@@ -1050,7 +838,11 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
         );
       }
     }
-    
+
+    // 上面的循环里 await 过（isVideoDownloaded），页面可能已被销毁。
+    // 之后还要用 context 弹窗，这里必须先确认仍然挂载。
+    if (!mounted) return;
+
     // 如果有已下载的视频，弹窗询问是否覆盖
     bool overwriteConfirmed = false;
     if (alreadyDownloaded.isNotEmpty) {

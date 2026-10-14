@@ -592,19 +592,12 @@ class DownloadManager extends ChangeNotifier {
   Future<void> retryTask(String taskId) async {
     final task = _taskMap[taskId];
     if (task != null && task.status == DownloadStatus.failed) {
-      // ✅ 重试前清理可能残留的临时文件
-      if (task.filePath != null && task.filePath!.isNotEmpty) {
-        try {
-          final tempDir = Directory('${task.filePath}_temp');
-          if (await tempDir.exists()) {
-            await tempDir.delete(recursive: true);
-            await logger.log('Download', '重试前清理临时目录: ${task.filePath}_temp');
-          }
-        } catch (e) {
-          // 忽略清理错误
-        }
-      }
-      // ✅ 重置爬虫状态
+      // 断点续传：**保留**已下载的切片，重试时 _downloadTs 会跳过它们。
+      // （此前这里会删除临时目录，导致每次都从零开始重下，
+      //   对长视频尤其浪费流量与时间。）
+      // 临时目录只会在这两种情况下清理：
+      //   1. 下载成功完成
+      //   2. 用户在下载页删除该任务（见 deleteFilesForTask）
       _crawler?.reset();
       task.status = DownloadStatus.pending;
       task.error = null;

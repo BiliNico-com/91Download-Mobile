@@ -1345,6 +1345,25 @@ class CrawlerCore {
         onProgress?.call(lastReported, msg);
       }
 
+      // ─── 断点续传：统计已缓存的切片 ───
+      // 上次失败时保留了临时目录，这里先探一遍有多少切片可直接复用，
+      // 让用户知道这次不用从头下载。
+      int cachedSegments = 0;
+      try {
+        for (var i = 0; i < total; i++) {
+          final f = File('${tempDir.path}/seg_${i.toString().padLeft(5, '0')}.ts');
+          if (await f.exists() && await f.length() >= 188) {
+            cachedSegments++;
+          }
+        }
+      } catch (_) {
+        cachedSegments = 0;
+      }
+      if (cachedSegments > 0) {
+        onLog?.call('检测到 $cachedSegments/$total 个已下载切片，将续传',
+            'info');
+      }
+
       // ─── 滑动窗口并发 ───
       // 每完成一个切片立即补发下一个，始终保持 N 个在途。
       // 旧实现按批处理（凑满一批再一起 await），会被批内最慢的切片拖住，
@@ -1379,8 +1398,7 @@ class CrawlerCore {
         final tsUrl = tsUrls[i];
         final tsPath = '${tempDir.path}/seg_${i.toString().padLeft(5, '0')}.ts';
         final ok = await _downloadTs(tsUrl, tsPath);
-        downloaded[i] = ok;
-        finished++;
+        downloaded[i] = ok;        finished++;
         reportProgress('下载中 $finished/$total');
         signalDone();
       }
@@ -1517,8 +1535,8 @@ class CrawlerCore {
             ? failedSegNums 
             : '$failedSegNums ... 共${failedIndices.length}个';
         onLog?.call('下载失败：${failedIndices.length} 个切片无法下载（$successCount/${tsUrls.length}），失败切片: $failedSummary', 'error');
-        onLog?.call('已清理临时文件，请检查网络后重试', 'error');
-        await tempDir.delete(recursive: true);
+        // 断点续传：保留临时目录，下次下载会跳过已成功的切片
+        onLog?.call('已保留 $successCount 个已下载切片，重试时可续传', 'info');
         return false;
       }
       
@@ -1542,14 +1560,9 @@ class CrawlerCore {
       
     } catch (e) {
       onLog?.call('下载失败: $e', 'error');
-      // ✅ 清理临时目录，避免磁盘空间泄漏
-      try {
-        final tempDir = Directory('${savePath}_temp');
-        if (await tempDir.exists()) {
-          await tempDir.delete(recursive: true);
-          onLog?.call('已清理临时文件', 'info');
-        }
-      } catch (_) {}
+      // 断点续传：异常时同样保留已下载的切片，便于重试续传。
+      // 仅在明确不再重试（用户删除任务）时才清理，见 _cleanupTempDir。
+      onLog?.call('已保留临时文件，重试时可续传', 'info');
       return false;
     }
   }
@@ -1576,7 +1589,32 @@ class CrawlerCore {
   }
 
   /// 下载单个 TS 切片（带完整性校验）
+  ///
+  /// 断点续传：如果目标文件已存在且通过校验，直接复用，不再重新下载。
+  /// 切片按索引命名（seg_00042.ts），因此重试时能精确对应到同一切片。
   Future<bool> _downloadTs(String url, String savePath) async {
+    // ── 续传检查：已存在且合法的切片直接复用 ──
+    try {
+      final existing = File(savePath);
+      if (await existing.exists()) {
+        final len = await existing.length();
+        if (len >= 188) {
+          // 抽检首字节：解密后的 TS 必须以 0x47 同步字节开头
+          final raf = await existing.open();
+          final head = await raf.readByte();
+          await raf.close();
+          if (head == 0x47) {
+            _receivedBytes += len;
+            return true;
+          }
+        }
+        // 文件不合法（残缺/非 TS），删掉重新下载
+        await existing.delete();
+      }
+    } catch (_) {
+      // 检查失败时按"未缓存"处理，正常走下载流程
+    }
+
     for (var retry = 0; retry < CrawlerConfig.maxRetries; retry++) {
       try {
         final resp = await _dio.get(
