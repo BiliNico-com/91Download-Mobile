@@ -343,11 +343,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Widget _buildKey(String label, {bool isBackspace = false}) {
     return InkWell(
       onTap: isBackspace ? _onDeletePressed : () => _onNumberPressed(label),
-      borderRadius: BorderRadius.circular(40),
+      borderRadius: BorderRadius.circular(AppTheme.radiusPill),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.grey[850],
-          borderRadius: BorderRadius.circular(40),
+          borderRadius: BorderRadius.circular(AppTheme.radiusPill),
         ),
         child: Center(
           child: Text(

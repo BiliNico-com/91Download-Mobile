@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../theme/app_theme.dart';
 
 /// PIN码输入对话框（固定4位）
 class PinInputDialog extends StatefulWidget {
@@ -101,7 +102,7 @@ class _PinInputDialogState extends State<PinInputDialog> {
     
     return Dialog(
       backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusPill)),
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -192,11 +193,11 @@ class _PinInputDialogState extends State<PinInputDialog> {
     
     return InkWell(
       onTap: isBackspace ? _onDeletePressed : () => _onNumberPressed(label),
-      borderRadius: BorderRadius.circular(40),
+      borderRadius: BorderRadius.circular(AppTheme.radiusPill),
       child: Container(
         decoration: BoxDecoration(
           color: isDark ? Colors.grey[800] : Colors.grey[200],
-          borderRadius: BorderRadius.circular(40),
+          borderRadius: BorderRadius.circular(AppTheme.radiusPill),
         ),
         child: Center(
           child: Text(

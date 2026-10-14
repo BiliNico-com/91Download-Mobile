@@ -6,6 +6,7 @@ import '../services/app_state.dart';
 import '../services/floating_video_service.dart';
 import '../components/empty_state.dart';
 import '../components/video_list_items.dart';
+import '../theme/app_theme.dart';
 import 'streaming_page.dart';
 
 class BatchPage extends StatefulWidget {
@@ -659,7 +660,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
 
   Widget _buildBottomPageNavigation() {
     final appState = Provider.of<AppState>(context, listen: false);
-    final isDark = appState.isDarkMode;
+    // 用实际渲染主题判断深浅色（不能用 appState.isDarkMode：
+    // 「跟随系统」时它与 MaterialApp 真正生效的主题可能不一致，
+    // 会导致浅色页面上出现深色控件）
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Positioned(
       bottom: 16,
       left: 0,
@@ -669,7 +673,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: isDark ? Colors.grey[850] : Colors.white.withOpacity(0.95),
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(AppTheme.radiusPill),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.2),
@@ -690,7 +694,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     color: (_loadedPage <= 1)
                       ? (isDark ? Colors.grey[700] : Colors.grey[300])
                       : (isDark ? Colors.blue[900] : Colors.blue[100]),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusPill),
                   ),
                   child: Icon(
                     Icons.arrow_left,
@@ -749,7 +753,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
                     color: isDark ? Colors.blue[900] : Colors.blue[100],
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusPill),
                   ),
                   child: Icon(
                     Icons.arrow_right,

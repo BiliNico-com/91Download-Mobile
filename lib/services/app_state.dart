@@ -13,6 +13,7 @@ import 'download_manager.dart';
 import 'followed_authors_service.dart';
 import 'version_service.dart';
 import 'floating_video_service.dart';
+import '../theme/ui_style.dart';
 
 /// 主题模式枚举
 enum ThemeModeType {
@@ -162,6 +163,7 @@ class AppState extends ChangeNotifier {
   // 初始化 - 请求权限并设置默认下载目录
   Future<void> init() async {
     await _loadSettings();  // 先加载保存的设置
+    await UiStyle.load();   // 恢复界面风格（毛玻璃开关）
     await requestPermissions();
     overlayPermissionGranted = await NativeFloatingService.isPermissionGranted();
     await initDownloadDir();
@@ -488,7 +490,12 @@ class AppState extends ChangeNotifier {
   }
 
   // 主题相关
-  // 当前实际主题（考虑跟随系统）
+  /// 当前**设置**是否为深色
+  ///
+  /// ⚠️ 仅用于「显示当前设置」（如设置页文案）。
+  /// 决定**控件配色**时请改用 `Theme.of(context).brightness`——
+  /// 那才是 MaterialApp 实际渲染的主题。两者在「跟随系统」模式下
+  /// 可能不一致，用错会导致浅色页面上出现深色控件。
   bool get isDarkMode {
     if (themeMode == 2) {
       // 跟随系统：通过MediaQuery获取系统主题

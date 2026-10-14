@@ -12,6 +12,8 @@ import '../components/cover_image.dart';
 import '../components/video_list_items.dart';
 import '../components/skeleton_card.dart';
 import '../utils/debouncer.dart';
+import '../theme/app_theme.dart';
+import '../theme/ui_style.dart';
 import 'streaming_page.dart';
 
 class SearchPage extends StatefulWidget {
@@ -593,7 +595,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   Widget _buildSearchBar(AppState appState) {
     final siteType = appState.crawler?.siteType ?? 'original';
     final showSort = !_isAuthorMode && siteType != 'porn91';
-    final isDark = appState.isDarkMode;
+    // 用实际渲染主题判断深浅色，避免与「跟随系统」设置不一致
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     
     // 作者主页模式下，隐藏下拉菜单，只显示返回按钮和搜索框
     if (_isAuthorPageMode) {
@@ -604,7 +607,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           height: 44,
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(AppTheme.radiusPill),
             border: Border.all(
               color: isDark ? Colors.white.withOpacity(0.08) : Colors.grey.shade300,
               width: 0.5,
@@ -655,7 +658,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         decoration: BoxDecoration(
           // 去线化：与胶囊翻页器风格统一，取消外边框
           color: isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(AppTheme.radiusPill),
           // 使用弥散阴影建立悬浮感，替代边框
           boxShadow: isDark
               ? [
@@ -808,26 +811,22 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
 
   /// 底部页码跳转区域（悬浮胶囊）
   Widget _buildBottomPageNavigation(AppState appState) {
-    final isDark = appState.isDarkMode;
+    // 用实际渲染主题判断深浅色，避免与「跟随系统」设置不一致
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     
     return Positioned(
       bottom: 16,
       left: 0,
       right: 0,
       child: Center(
-        child: Container(
+        // 通过 AdaptiveSurface 统一风格：开启毛玻璃时为半透明模糊，
+        // 关闭时回落为实心色（设置页可实时切换）。
+        child: AdaptiveSurface(
+          borderRadius: AppTheme.brPill,
+          solid: true,
+          fallbackColor:
+              isDark ? Colors.grey[850] : Colors.white.withOpacity(0.95),
           padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: isDark ? Colors.grey[850] : Colors.white.withOpacity(0.95),
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 8,
-                offset: Offset(0, 2),
-              ),
-            ],
-          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -842,7 +841,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     color: (_currentPage <= 1)
                       ? (isDark ? Colors.grey[700] : Colors.grey[300])
                       : (isDark ? Colors.blue[900] : Colors.blue[100]),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusPill),
                   ),
                   child: Icon(
                     Icons.arrow_left,
@@ -908,7 +907,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
                     color: isDark ? Colors.blue[900] : Colors.blue[100],
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusPill),
                   ),
                   child: Icon(
                     Icons.arrow_right,
@@ -924,8 +923,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     );
   }
 
-  void _toggleAll() {
-    setState(() {
+  void _toggleAll() {    setState(() {
       final currentVideos = _isAuthorPageMode ? _authorVideos : _results;
       if (_selectedIds.length == currentVideos.length) {
         _selectedIds.clear();

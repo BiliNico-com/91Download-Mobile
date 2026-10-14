@@ -9,6 +9,7 @@ import '../services/version_service.dart';
 import '../services/pin_service.dart';
 import '../utils/logger.dart';
 import '../utils/open_directory.dart';
+import '../theme/ui_style.dart';
 import 'pin_input_dialog.dart';
 import 'cache_manager_page.dart';
 
@@ -807,6 +808,27 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   ),
                 ],
               ),
+            ),
+            const Divider(height: 24),
+            // ── 界面风格：玻璃拟态开关 ──
+            // 可在两种观感间即时切换，觉得毛玻璃卡顿或不好看可直接关掉，
+            // 无需回滚代码。
+            ValueListenableBuilder<bool>(
+              valueListenable: UiStyle.glassEnabled,
+              builder: (context, glass, _) {
+                return SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('毛玻璃效果', style: TextStyle(fontSize: 14)),
+                  subtitle: Text(
+                    glass
+                        ? '已开启：控件半透明模糊，观感更现代（低端机可能略耗性能）'
+                        : '已关闭：控件为实心色，性能更好',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  value: glass,
+                  onChanged: (v) => UiStyle.setGlassEnabled(v),
+                );
+              },
             ),
           ],
         ),
