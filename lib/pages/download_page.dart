@@ -149,16 +149,41 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                 ],
               ),
             ),
-            // 任务列表
+            // 任务列表（进行中在前，失败项单独分组沉底）
             Expanded(
               child: RefreshIndicator(
                 onRefresh: _onRefresh,
-                child: ListView.builder(
-                  itemCount: tasks.length,
-                  itemBuilder: (context, index) {
-                    final task = tasks[index];
-                    final selected = _selectedIds.contains(task.id);
-                    return _buildSlidableDownloadItem(task, selected, appState);
+                child: Builder(
+                  builder: (context) {
+                    // 拆成两段，便于在失败组前插入分组标题
+                    final active =
+                        tasks.where((t) => t.status != DownloadStatus.failed).toList();
+                    final failed =
+                        tasks.where((t) => t.status == DownloadStatus.failed).toList();
+
+                    // 行数 = 进行中 + (失败组标题 + 失败项)
+                    final rowCount =
+                        active.length + (failed.isEmpty ? 0 : failed.length + 1);
+
+                    return ListView.builder(
+                      itemCount: rowCount,
+                      itemBuilder: (context, index) {
+                        if (index < active.length) {
+                          final task = active[index];
+                          return _buildSlidableDownloadItem(
+                              task, _selectedIds.contains(task.id), appState);
+                        }
+
+                        // 失败组
+                        final fi = index - active.length;
+                        if (fi == 0) {
+                          return _buildFailedGroupHeader(failed.length);
+                        }
+                        final task = failed[fi - 1];
+                        return _buildSlidableDownloadItem(
+                            task, _selectedIds.contains(task.id), appState);
+                      },
+                    );
                   },
                 ),
               ),
@@ -591,6 +616,8 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
 
   Widget _buildDownloadTaskItem(DownloadTask task, bool selected, AppState appState) {
+    final isFailed = task.status == DownloadStatus.failed;
+
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -603,7 +630,16 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
       },
       child: Card(
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        color: selected ? Colors.blue.withOpacity(0.1) : null,
+        // 失败项给一层淡红底 + 左侧红条，滑动列表时也能一眼认出
+        color: selected
+            ? Colors.blue.withOpacity(0.1)
+            : (isFailed ? Colors.red.withOpacity(0.06) : null),
+        shape: isFailed && !selected
+            ? RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: const BorderSide(color: Colors.red, width: 1),
+              )
+            : null,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -717,6 +753,40 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   );
   }
   
+  /// 失败任务分组标题
+  ///
+  /// 失败项与进行中的任务同处"下载中"标签页，用一条带颜色的小标题区分，
+  /// 避免混在一起看不清哪些需要重试。
+  Widget _buildFailedGroupHeader(int count) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline, size: 16, color: Colors.red),
+          const SizedBox(width: 6),
+          Text(
+            '下载失败 ($count)',
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.red,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Spacer(),
+          const Text(
+            '可重试或删除',
+            style: TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTaskControls(DownloadTask task, AppState appState) {
     switch (task.status) {
       case DownloadStatus.pending:

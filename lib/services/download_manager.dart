@@ -199,13 +199,38 @@ class DownloadManager extends ChangeNotifier {
   ///
   /// 失败任务归入这里（而不是"已下载"），因为它并未完成，
   /// 且需要就地提供"重试/删除"操作，与其它未完成项一致。
-  List<DownloadTask> get downloadingTasks => _tasks
-      .where((t) =>
-          t.status == DownloadStatus.downloading ||
-          t.status == DownloadStatus.pending ||
-          t.status == DownloadStatus.paused ||
-          t.status == DownloadStatus.failed)
-      .toList();
+  ///
+  /// 排序：进行中的排在前面，失败的整体沉到末尾。
+  /// 这样失败项不会插在正在下载的任务之间打断视线，
+  /// 界面上再配一个分组标题即可清晰区分。
+  List<DownloadTask> get downloadingTasks {
+    final active = <DownloadTask>[];
+    final failed = <DownloadTask>[];
+
+    for (final t in _tasks) {
+      switch (t.status) {
+        case DownloadStatus.downloading:
+        case DownloadStatus.pending:
+        case DownloadStatus.paused:
+          active.add(t);
+          break;
+        case DownloadStatus.failed:
+          failed.add(t);
+          break;
+        case DownloadStatus.completed:
+          break;
+      }
+    }
+
+    // 失败项按失败时间倒序（最近失败的靠前）
+    failed.sort((a, b) {
+      final ta = a.endTime ?? a.startTime;
+      final tb = b.endTime ?? b.startTime;
+      return tb.compareTo(ta);
+    });
+
+    return [...active, ...failed];
+  }
 
   /// 已完成的任务，按完成时间倒序（最近完成的在最上面）
   ///
