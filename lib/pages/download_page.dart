@@ -117,18 +117,12 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                   TextButton(
                     onPressed: () {
                       setState(() {
-                        // 只选择下载中的任务ID
-                        final downloadingIds = tasks
-                            .where((t) => t.status == DownloadStatus.downloading || 
-                                          t.status == DownloadStatus.paused ||
-                                          t.status == DownloadStatus.pending ||
-                                          t.status == DownloadStatus.failed)
-                            .map((t) => t.id)
-                            .toSet();
-                        if (_selectedIds.length == downloadingIds.length) {
+                        // 本标签页中的任务全部可选（含失败待重试的）
+                        final ids = tasks.map((t) => t.id).toSet();
+                        if (_selectedIds.length == ids.length) {
                           _selectedIds.clear();
                         } else {
-                          _selectedIds = downloadingIds;
+                          _selectedIds = ids;
                         }
                       });
                     },
@@ -357,10 +351,8 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   Widget _buildCompletedTab() {
     return Consumer<AppState>(
       builder: (context, appState, _) {
-        final tasks = [
-          ...appState.downloadManager.completedTasks,
-          ...appState.downloadManager.failedTasks,
-        ];
+        // 只展示真正下载完成的任务；失败项归"下载中"标签页（可重试）
+        final tasks = appState.downloadManager.completedTasks;
         
         if (tasks.isEmpty) {
           return EmptyState(
@@ -1206,9 +1198,30 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     return title;
   }
   
+  /// 显示完整的年月日时分
+  ///
+  /// 旧实现只输出「时:分:秒」，看不出是哪天下的，
+  /// 隔天再看得靠猜。这里给出完整日期时间，并对今天/昨天做友好化。
   String _formatTime(DateTime? time) {
     if (time == null) return '未知';
-    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}:${time.second.toString().padLeft(2, '0')}';
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final that = DateTime(time.year, time.month, time.day);
+    final hm = '${time.hour.toString().padLeft(2, '0')}:'
+        '${time.minute.toString().padLeft(2, '0')}';
+
+    final diffDays = today.difference(that).inDays;
+    if (diffDays == 0) return '今天 $hm';
+    if (diffDays == 1) return '昨天 $hm';
+
+    final md = '${time.month.toString().padLeft(2, '0')}-'
+        '${time.day.toString().padLeft(2, '0')}';
+    // 跨年时补上年份，避免"同月同日不同年"无法分辨
+    if (time.year != now.year) {
+      return '${time.year}-$md $hm';
+    }
+    return '$md $hm';
   }
 }
 

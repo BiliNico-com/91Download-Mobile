@@ -194,12 +194,39 @@ class DownloadManager extends ChangeNotifier {
   }
   
   List<DownloadTask> get tasks => List.unmodifiable(_tasks);
-  List<DownloadTask> get downloadingTasks => 
-    _tasks.where((t) => t.status == DownloadStatus.downloading || t.status == DownloadStatus.pending || t.status == DownloadStatus.paused).toList();
-  List<DownloadTask> get completedTasks => 
-    _tasks.where((t) => t.status == DownloadStatus.completed).toList();
-  List<DownloadTask> get failedTasks => 
-    _tasks.where((t) => t.status == DownloadStatus.failed).toList();
+
+  /// 未完成的任务：下载中 / 等待 / 暂停 / 失败
+  ///
+  /// 失败任务归入这里（而不是"已下载"），因为它并未完成，
+  /// 且需要就地提供"重试/删除"操作，与其它未完成项一致。
+  List<DownloadTask> get downloadingTasks => _tasks
+      .where((t) =>
+          t.status == DownloadStatus.downloading ||
+          t.status == DownloadStatus.pending ||
+          t.status == DownloadStatus.paused ||
+          t.status == DownloadStatus.failed)
+      .toList();
+
+  /// 已完成的任务，按完成时间倒序（最近完成的在最上面）
+  ///
+  /// 不再包含失败任务：失败项已归入 [downloadingTasks]。
+  /// 显式排序是必要的——_tasks 的顺序取决于任务何时被加入列表，
+  /// 与"何时下载完成"并不一致（恢复自数据库的任务是追加在后，
+  /// 而本次会话新增的任务是插在最前）。
+  List<DownloadTask> get completedTasks {
+    final list = _tasks
+        .where((t) => t.status == DownloadStatus.completed)
+        .toList();
+    list.sort((a, b) {
+      final ta = a.endTime ?? a.startTime;
+      final tb = b.endTime ?? b.startTime;
+      return tb.compareTo(ta);
+    });
+    return list;
+  }
+
+  List<DownloadTask> get failedTasks =>
+      _tasks.where((t) => t.status == DownloadStatus.failed).toList();
   
   int get downloadingCount => downloadingTasks.length;
   int get completedCount => completedTasks.length;
