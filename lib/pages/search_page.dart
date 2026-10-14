@@ -350,17 +350,26 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                           final expandRatio = ((constraints.maxHeight - 56 - statusBarHeight) / 56).clamp(0.0, 1.0);
                           final isExpanded = expandRatio > 0.5;
                       
-                      return ClipRect(
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                          child: Container(
-                            color: isExpanded
-                              ? (Theme.of(context).brightness == Brightness.dark 
-                                  ? Colors.black.withOpacity(0.5) 
-                                  : Colors.white.withOpacity(0.85))
-                              : (Theme.of(context).brightness == Brightness.dark 
-                                  ? Colors.black.withOpacity(0.75) 
-                                  : Colors.white.withOpacity(0.95)),
+                      return ValueListenableBuilder<bool>(
+                        valueListenable: UiStyle.glassEnabled,
+                        builder: (context, glass, _) {
+                          final isDark =
+                              Theme.of(context).brightness == Brightness.dark;
+
+                          // 关闭玻璃 → 完全不透明，内容被挡住；
+                          // 开启 → 半透明，列表从栏下穿过时可见模糊。
+                          final barColor = !glass
+                              ? (isDark ? const Color(0xFF242424) : Colors.white)
+                              : (isExpanded
+                                  ? (isDark
+                                      ? Colors.black.withOpacity(0.45)
+                                      : Colors.white.withOpacity(0.72))
+                                  : (isDark
+                                      ? Colors.black.withOpacity(0.65)
+                                      : Colors.white.withOpacity(0.88)));
+
+                          final bar = Container(
+                            color: barColor,
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -405,13 +414,28 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                                 // 搜索区域（始终可见，吸附到顶部）
                                 Container(
                                   height: 56,
-                                  color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.95),
+                                  color: glass
+                                      ? Theme.of(context)
+                                          .scaffoldBackgroundColor
+                                          .withOpacity(0.95)
+                                      : (isDark
+                                          ? const Color(0xFF242424)
+                                          : Colors.white),
                                   child: _buildSearchBar(appState),
                                 ),
                               ],
                             ),
-                          ),
-                        ),
+                          );
+
+                          if (!glass) return bar;
+
+                          return ClipRect(
+                            child: BackdropFilter(
+                              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                              child: bar,
+                            ),
+                          );
+                        },
                       );
                     },
                   ),

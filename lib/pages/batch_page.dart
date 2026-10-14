@@ -7,6 +7,7 @@ import '../services/floating_video_service.dart';
 import '../components/empty_state.dart';
 import '../components/video_list_items.dart';
 import '../theme/app_theme.dart';
+import '../theme/ui_style.dart';
 import 'streaming_page.dart';
 
 class BatchPage extends StatefulWidget {
@@ -983,14 +984,24 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
     // 作者模式下显示作者名称
     final displayTitle = isAuthorPageMode ? '作者: $authorName' : '批量爬取';
     // 主题适配颜色
-    final bgColor = isDark ? Colors.black.withOpacity(0.75) : Colors.white.withOpacity(0.9);
     final textColor = isDark ? Colors.white : Colors.black87;
     final subTextColor = isDark ? Colors.grey : Colors.black54;
-    
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
+
+    // 顶部栏背后是滚动的视频列表 —— 这里最能体现毛玻璃开关的差异：
+    //   开启 → 半透明，内容从栏下穿过时可见模糊
+    //   关闭 → 完全不透明，内容被挡住
+    return ValueListenableBuilder<bool>(
+      valueListenable: UiStyle.glassEnabled,
+      builder: (context, glass, _) {
+        final bgColor = glass
+            ? (isDark
+                ? Colors.black.withOpacity(0.55)
+                : Colors.white.withOpacity(0.72))
+            : (isDark
+                ? (Theme.of(ctx).cardColor)
+                : Colors.white);
+
+        final header = Container(
           color: bgColor,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1157,8 +1168,18 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
                 ),
             ],
           ),
-        ),
-      ),
+        );
+
+        // 玻璃关闭时直接返回实心容器，完全省掉 BackdropFilter 的开销
+        if (!glass) return header;
+
+        return ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: header,
+          ),
+        );
+      },
     );
   }
   

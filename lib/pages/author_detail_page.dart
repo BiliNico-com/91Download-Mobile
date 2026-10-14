@@ -7,6 +7,7 @@ import '../components/empty_state.dart';
 import '../components/skeleton_card.dart';
 import '../components/video_card.dart';
 import '../theme/app_theme.dart';
+import '../theme/ui_style.dart';
 
 /// 作者详情页
 /// 
@@ -426,15 +427,20 @@ class _AuthorHeaderDelegate extends SliverPersistentHeaderDelegate {
     final isDark = Theme.of(ctx).brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : Colors.black87;
     final subTextColor = isDark ? Colors.grey : Colors.black54;
-    final bgColor =
-        isDark ? Colors.black.withOpacity(0.75) : Colors.white.withOpacity(0.9);
 
     final expanded = collapseRatio < 0.5;
 
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
+    // 顶部栏背后是滚动的视频列表，毛玻璃开关在这里差异最明显
+    return ValueListenableBuilder<bool>(
+      valueListenable: UiStyle.glassEnabled,
+      builder: (context, glass, _) {
+        final bgColor = glass
+            ? (isDark
+                ? Colors.black.withOpacity(0.55)
+                : Colors.white.withOpacity(0.72))
+            : (isDark ? Theme.of(ctx).cardColor : Colors.white);
+
+        final header = Container(
           color: bgColor,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -533,8 +539,18 @@ class _AuthorHeaderDelegate extends SliverPersistentHeaderDelegate {
                 ),
             ],
           ),
-        ),
-      ),
+        );
+
+        // 关闭玻璃时省掉 BackdropFilter 开销
+        if (!glass) return header;
+
+        return ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: header,
+          ),
+        );
+      },
     );
   }
 
