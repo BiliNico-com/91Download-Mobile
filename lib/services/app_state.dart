@@ -13,6 +13,7 @@ import 'download_manager.dart';
 import 'followed_authors_service.dart';
 import 'version_service.dart';
 import 'floating_video_service.dart';
+import 'search_history_service.dart';
 import '../theme/ui_style.dart';
 
 /// 主题模式枚举
@@ -118,12 +119,17 @@ class AppState extends ChangeNotifier {
   
   // 关注作者服务
   FollowedAuthorsService get followedAuthorsService => FollowedAuthorsService.instance;
+
+  // 搜索历史服务
+  final SearchHistoryService searchHistory = SearchHistoryService();
   
   AppState() {
     // 监听下载管理器的变化并转发通知
     _downloadManager = DownloadManager()..addListener(_onDownloadManagerChanged);
     // 监听关注服务的变化并转发通知
     followedAuthorsService.addListener(_onFollowedAuthorsChanged);
+    // 监听搜索历史变化，让历史列表即时刷新
+    searchHistory.addListener(notifyListeners);
   }
   
   void _onDownloadManagerChanged() {
@@ -164,6 +170,7 @@ class AppState extends ChangeNotifier {
   Future<void> init() async {
     await _loadSettings();  // 先加载保存的设置
     await UiStyle.load();   // 恢复界面风格（毛玻璃开关）
+    await searchHistory.load();  // 恢复搜索历史
     await requestPermissions();
     overlayPermissionGranted = await NativeFloatingService.isPermissionGranted();
     await initDownloadDir();
@@ -179,6 +186,25 @@ class AppState extends ChangeNotifier {
     await VersionService.init();
     // 恢复未完成的下载任务
     await _downloadManager.restorePendingTasks();
+    // 启动后静默检查关注作者更新（后台执行，不阻塞界面）
+    scheduleFollowedAuthorsAutoCheck();
+  }
+
+  /// 启动后静默检查关注作者更新
+  ///
+  /// 节流 6 小时，后台静默执行；仅更新角标，不弹任何提示。
+  /// 必须等站点配置就绪才能爬取，未配置站点时直接跳过。
+  void scheduleFollowedAuthorsAutoCheck() {
+    Future.microtask(() async {
+      try {
+        final activeCrawler = crawler;
+        if (activeCrawler == null) return;
+        if (followedAuthorsService.followedList.isEmpty) return;
+        await followedAuthorsService.autoCheckForUpdates(activeCrawler);
+      } catch (e) {
+        Logger().logSync('AppState', '后台检查作者更新失败: $e');
+      }
+    });
   }
 
   /// 设置备份文件的路径

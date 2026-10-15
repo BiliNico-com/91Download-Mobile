@@ -109,6 +109,10 @@ class _MainPageState extends State<MainPage> {
 
   @override
   Widget build(BuildContext context) {
+    final appState = context.watch<AppState>();
+    // 已关注页签的红点角标：有作者更新时提示
+    final newCount = appState.followedAuthorsService.newContentCount;
+
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) {
@@ -132,28 +136,36 @@ class _MainPageState extends State<MainPage> {
           onDestinationSelected: (index) {
             goToPage(index);
           },
-          destinations: const [
-            NavigationDestination(
+          destinations: [
+            const NavigationDestination(
               icon: Icon(Icons.download_rounded),
               selectedIcon: Icon(Icons.download),
               label: '批量',
             ),
-            NavigationDestination(
+            const NavigationDestination(
               icon: Icon(Icons.search_rounded),
               selectedIcon: Icon(Icons.search),
               label: '搜索',
             ),
             NavigationDestination(
-              icon: Icon(Icons.favorite_border_rounded),
-              selectedIcon: Icon(Icons.favorite),
+              icon: Badge(
+                isLabelVisible: newCount > 0,
+                label: Text(newCount > 99 ? '99+' : '$newCount'),
+                child: const Icon(Icons.favorite_border_rounded),
+              ),
+              selectedIcon: Badge(
+                isLabelVisible: newCount > 0,
+                label: Text(newCount > 99 ? '99+' : '$newCount'),
+                child: const Icon(Icons.favorite),
+              ),
               label: '已关注',
             ),
-            NavigationDestination(
+            const NavigationDestination(
               icon: Icon(Icons.history_rounded),
               selectedIcon: Icon(Icons.history),
               label: '已下载',
             ),
-            NavigationDestination(
+            const NavigationDestination(
               icon: Icon(Icons.settings_rounded),
               selectedIcon: Icon(Icons.settings),
               label: '设置',

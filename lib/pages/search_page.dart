@@ -55,6 +55,10 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   final ScrollController _scrollController = ScrollController();
   // 页码输入框焦点（用于判断能否安全写入页码）
   final FocusNode _pageFocusNode = FocusNode();
+  // 关键词输入框焦点（聚焦时展示搜索历史）
+  final FocusNode _keywordFocusNode = FocusNode();
+  // 是否展示搜索历史下拉
+  bool _showHistory = false;
   bool _showBackToTop = false;
   String _status = '就绪';  // 就绪状态
   
@@ -98,6 +102,42 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     _scrollController.addListener(_onScroll);
     _pageController.text = '1';
     _searchDebouncer = Debouncer(milliseconds: 500);
+    _keywordFocusNode.addListener(_onKeywordFocusChange);
+  }
+
+  /// 输入框获得焦点且历史非空时展示历史下拉
+  void _onKeywordFocusChange() {
+    final focused = _keywordFocusNode.hasFocus;
+    if (focused) {
+      final appState = context.read<AppState>();
+      final has = appState.searchHistory.isNotEmpty;
+      if (has && !_showHistory) {
+        setState(() => _showHistory = true);
+      }
+    } else if (_showHistory) {
+      setState(() => _showHistory = false);
+    }
+  }
+
+  /// 点击历史条目：填充并立即搜索
+  void _applyHistory(AppState appState, String keyword) {
+    _keywordController.text = keyword;
+    // 输入框处于焦点时直接赋值 controller.text 不会同步光标位置，
+    // 这里用 setState 让 TextField 重新读取 controller 值。
+    setState(() {
+      _showHistory = false;
+      _isAuthorPageMode = false;
+      _currentPage = 1;
+    });
+    _keywordFocusNode.unfocus();
+    _search();
+  }
+
+  /// 从输入框内容记录一条历史
+  void _rememberKeyword(AppState appState, String keyword) {
+    final k = keyword.trim();
+    if (k.isEmpty) return;
+    appState.searchHistory.add(k);
   }
   
   @override
@@ -110,6 +150,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _pageFocusNode.dispose();
+    _keywordFocusNode.removeListener(_onKeywordFocusChange);
+    _keywordFocusNode.dispose();
     _keywordController.dispose();
     _pageController.dispose();
     super.dispose();
@@ -703,6 +745,19 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       );
     }
     
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildSearchBarRow(isDark, showSort),
+        // 搜索历史下拉（跟随搜索栏下沿展开，吸顶时一起吸附）
+        if (_showHistory && appState.searchHistory.isNotEmpty)
+          _buildSearchHistoryDropdown(appState, isDark),
+      ],
+    );
+  }
+
+  /// 搜索栏本体（胶囊输入框 + 分段控件 + 搜索按钮）
+  Widget _buildSearchBarRow(bool isDark, bool showSort) {
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       color: Theme.of(context).scaffoldBackgroundColor,
@@ -737,6 +792,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                 padding: const EdgeInsets.only(left: 14),
                 child: TextField(
                   controller: _keywordController,
+                  focusNode: _keywordFocusNode,
                   style: TextStyle(
                     color: isDark ? Colors.white.withOpacity(0.9) : Colors.black87,
                     fontSize: 14,
@@ -757,6 +813,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     }
                   },
                   onSubmitted: (_) => _search(),
+                  onTap: () {
+                    // 点回输入框时重新展开历史（焦点未变化时 listener 不会触发）
+                    final appState = context.read<AppState>();
+                    if (appState.searchHistory.isNotEmpty && !_showHistory) {
+                      setState(() => _showHistory = true);
+                    }
+                  },
                   textInputAction: TextInputAction.search,
                 ),
               ),
@@ -813,6 +876,102 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 搜索历史下拉
+  ///
+  /// 展示在搜索栏下方，点击条目直接搜索；右侧 × 删除单条；右上角清空全部。
+  Widget _buildSearchHistoryDropdown(AppState appState, bool isDark) {
+    final entries = appState.searchHistory.entries;
+
+    return Container(
+      margin: EdgeInsets.fromLTRB(16, 0, 16, 8),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.35 : 0.12),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 标题行 + 清空
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 6, 4),
+            child: Row(
+              children: [
+                Icon(Icons.history, size: 14,
+                    color: isDark ? Colors.white.withOpacity(0.45) : Colors.grey),
+                const SizedBox(width: 6),
+                Text(
+                  '搜索历史',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isDark ? Colors.white.withOpacity(0.45) : Colors.grey,
+                  ),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () async {
+                    await appState.searchHistory.clear();
+                    if (!mounted) return;
+                    setState(() => _showHistory = false);
+                  },
+                  style: TextButton.styleFrom(
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('清空', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ),
+              ],
+            ),
+          ),
+          // 历史条目（最多展示 8 条，避免下拉过高遮挡结果）
+          ...entries.take(8).map((keyword) => InkWell(
+                onTap: () => _applyHistory(appState, keyword),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          keyword,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: isDark ? Colors.white.withOpacity(0.85) : Colors.black87,
+                          ),
+                        ),
+                      ),
+                      // 单条删除
+                      GestureDetector(
+                        onTap: () => appState.searchHistory.remove(keyword),
+                        behavior: HitTestBehavior.opaque,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Icon(
+                            Icons.close,
+                            size: 16,
+                            color: isDark ? Colors.white.withOpacity(0.3) : Colors.grey.shade400,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )),
+          const SizedBox(height: 4),
+        ],
       ),
     );
   }
@@ -1160,6 +1319,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     });
     // 同步页码输入框显示（放在 setState 之外，与 _goToPage/_loadMore 保持一致）
     _syncPageController('1');
+
+    // 记录搜索历史（自动去重并置顶；空白词已在 service 内过滤）
+    _rememberKeyword(appState, _keywordController.text);
+    // 搜索后收起历史下拉
+    if (_showHistory) {
+      setState(() => _showHistory = false);
+    }
     
     if (_isAuthorMode) {
       // 搜索作者

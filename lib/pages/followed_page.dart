@@ -22,6 +22,19 @@ class _FollowedPageState extends State<FollowedPage> with AutomaticKeepAliveClie
   bool get wantKeepAlive => true;
 
   @override
+  void initState() {
+    super.initState();
+    // 首次进入本页时补一次静默检查。
+    // 启动时的检查可能因为「当时站点还没配置好」而被跳过，
+    // 进到这一页说明用户关心更新情况，是个合适的补检时机。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final appState = context.read<AppState>();
+      appState.scheduleFollowedAuthorsAutoCheck();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     super.build(context);
     final appState = context.watch<AppState>();

@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 作者信息模型
 class FollowedAuthor {
@@ -380,6 +380,57 @@ class FollowedAuthorsService extends ChangeNotifier {
 
     notifyListeners();
     return updatedAuthors;
+  }
+
+  /// 最近一次自动检查的时间（持久化，用于节流）
+  static const String _prefLastAutoCheck = 'followed_last_auto_check';
+
+  /// 自动检查的最小间隔：6 小时
+  static const Duration autoCheckInterval = Duration(hours: 6);
+
+  /// 是否应该执行自动检查（距上次自动检查超过 [autoCheckInterval]）
+  Future<bool> shouldAutoCheck() async {
+    if (_followedList.isEmpty) return false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_prefLastAutoCheck);
+      if (raw == null) return true;
+      final last = DateTime.tryParse(raw);
+      if (last == null) return true;
+      return DateTime.now().difference(last) >= autoCheckInterval;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 记录本次自动检查时间，避免频繁触发
+  Future<void> _markAutoChecked() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefLastAutoCheck, DateTime.now().toIso8601String());
+    } catch (_) {}
+  }
+
+  /// 后台静默检查更新
+  ///
+  /// 与 [checkForUpdates] 的区别：不回调进度、不弹提示，只更新数据与角标。
+  /// 检查失败静默忽略（网络问题不该打扰用户）。
+  /// 返回发现更新的作者数量；未执行检查时返回 0。
+  Future<int> autoCheckForUpdates(dynamic crawler) async {
+    if (_followedList.isEmpty) return 0;
+    if (!await shouldAutoCheck()) return 0;
+
+    // 先落盘时间戳：即使这次检查中途失败，也不会反复重试打扰用户
+    await _markAutoChecked();
+
+    try {
+      final updated = await checkForUpdates(crawler);
+      debugPrint('[FollowedAuthors] 自动检查完成，${updated.length} 位作者有更新');
+      return updated.length;
+    } catch (e) {
+      debugPrint('[FollowedAuthors] 自动检查失败: $e');
+      return 0;
+    }
   }
 
   /// 保存检查结果到数据库
