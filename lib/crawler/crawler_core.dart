@@ -1670,7 +1670,24 @@ class CrawlerCore {
   Future<bool> _downloadDirectMp4(VideoInfo video, String mp4Url, String savePath) async {
     onLog?.call('开始下载 MP4: ${video.title}', 'info');
     onLog?.call('MP4 URL: $mp4Url', 'debug');
-    
+
+    // 直链下载同样需要把字节数上报给 onOverallProgress，
+    // 否则 DownloadTask 拿不到速度（downloadSpeed 恒为 0 → 界面不显示速度）。
+    // TS 切片路径在收到每个切片时上报，这里在 onReceiveProgress 里上报。
+    _receivedBytes = 0;
+    DateTime? lastSpeedReport;
+    const speedReportIntervalMs = 300;  // 节流，避免高频刷新界面
+
+    void reportBytes(int received, int total) {
+      final now = DateTime.now();
+      final due = lastSpeedReport == null ||
+          now.difference(lastSpeedReport!).inMilliseconds >= speedReportIntervalMs;
+      if (!due) return;
+      lastSpeedReport = now;
+      _receivedBytes = received;
+      onOverallProgress?.call(received, total);
+    }
+
     try {
       // 获取文件大小
       final headResp = await _dio.head(mp4Url);
@@ -1685,6 +1702,9 @@ class CrawlerCore {
         mp4Url,
         savePath,
         onReceiveProgress: (received, total) {
+          // 上报字节数，让上层算出下载速度
+          reportBytes(received, total > 0 ? total : contentLength);
+
           if (total > 0) {
             final progress = received / total;
             final downloadedMB = (received / 1024 / 1024).toStringAsFixed(1);
