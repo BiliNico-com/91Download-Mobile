@@ -86,12 +86,15 @@ class FloatingWindowService : Service() {
     private var windowManager: WindowManager? = null
     private var floatingView: View? = null
     private var surfaceView: SurfaceView? = null
+    private var surfaceCallback: SurfaceHolder.Callback? = null
     private var mediaPlayer: MediaPlayer? = null
     private var controlOverlay: View? = null
     private var btnClose: ImageView? = null
     private var btnPlay: ImageView? = null
     private var seekBar: SeekBar? = null
     private var timeText: TextView? = null
+    /** 用户是否正在拖动进度条（拖动期间禁止自动刷新回写进度） */
+    private var isUserSeeking = false
 
     // 拖拽相关
     private var initialX = 0
@@ -265,7 +268,7 @@ class FloatingWindowService : Service() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
             holder.setFormat(PixelFormat.TRANSPARENT)
-            holder.addCallback(object : SurfaceHolder.Callback {
+            val callback = object : SurfaceHolder.Callback {
                 override fun surfaceCreated(holder: SurfaceHolder) {
                     mediaPlayer?.setDisplay(holder)
                 }
@@ -273,7 +276,11 @@ class FloatingWindowService : Service() {
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
                     mediaPlayer?.setDisplay(null)
                 }
-            })
+            }
+            // 记下来以便销毁时反注册：addCallback 会持有 SurfaceView 与 Service 引用，
+            // 只 add 不 remove 会让 Service 实例无法被回收（每次开悬浮窗泄漏一个）。
+            surfaceCallback = callback
+            holder.addCallback(callback)
         }
         rootLayout.addView(surfaceView)
 
@@ -363,6 +370,10 @@ class FloatingWindowService : Service() {
                         // 点击事件（双击关闭）
                         val now = System.currentTimeMillis()
                         if (now - lastTapTime < 300) {
+                            // 双击后必须把时间戳清零：以前只调 closeAndReturnToApp()
+                            // 不复位 lastTapTime，残留时间戳会让「之后第一次单击」
+                            // 也被判定成双击（若关闭未生效就是又一次误触关闭）。
+                            lastTapTime = 0L
                             closeAndReturnToApp()
                         } else {
                             toggleControls()
@@ -488,13 +499,20 @@ class FloatingWindowService : Service() {
                         if (fromUser && mediaPlayer != null) {
                             val duration = mediaPlayer!!.duration
                             if (duration > 0) {
+                                // 拖动过程中实时把目标时间显示到时间文本上。
+                                // 以前这里算出 pos 之后什么都不做，用户拖了好几秒
+                                // 却看不到任何反馈，只有松手才跳。
                                 val pos = (duration * progress / 100).toLong().toInt()
-                                // 不在这里 seek，只在停止拖动时 seek
+                                timeText?.text = "${formatTime(pos)} / ${formatTime(duration)}"
                             }
                         }
                     }
-                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                        // 拖动期间暂停自动刷新，否则进度回调会把滑块拽回去
+                        isUserSeeking = true
+                    }
                     override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                        isUserSeeking = false
                         if (mediaPlayer != null) {
                             val duration = mediaPlayer!!.duration
                             if (duration > 0) {
@@ -562,8 +580,11 @@ class FloatingWindowService : Service() {
                     it.start()
                     updatePlayButton(true)
                 }
-                setOnErrorListener { _, _, _ ->
-                    false
+                setOnErrorListener { _, what, extra ->
+                    // 以前固定返回 false 且什么都不做：源损坏/编码不支持时
+                    // 画面停在黑屏，用户以为卡死。现在给出可见提示。
+                    showPlaybackError(what, extra)
+                    true
                 }
             }
         } catch (e: Exception) {
@@ -593,6 +614,12 @@ class FloatingWindowService : Service() {
         override fun run() {
             val mp = mediaPlayer
             if (mp != null) {
+                // 用户正在拖动进度条时不要回写：否则每 500ms 的刷新会把
+                // 滑块拽回播放位置，等于拖不动。
+                if (isUserSeeking) {
+                    progressHandler.postDelayed(this, 500)
+                    return
+                }
                 // 不再用 isPlaying 直接 return：暂停态同样需要显示当前时间
                 val pos = try { mp.currentPosition } catch (_: Exception) { 0 }
                 val duration = try { mp.duration } catch (_: Exception) { -1 }
@@ -622,6 +649,39 @@ class FloatingWindowService : Service() {
             String.format("%02d:%02d:%02d", hours, minutes, seconds)
         else
             String.format("%02d:%02d", minutes, seconds)
+    }
+
+    /**
+     * 播放出错时给出可见反馈。
+     *
+     * MediaPlayer 的 what/extra 是标准错误码，用户看不懂数字，
+     * 但「无法播放，可能是文件损坏或不支持的编码」这种话是有用的；
+     * 同时停止进度轮询，避免时间一直停在某一刻而看起来像卡死。
+     */
+    private fun showPlaybackError(what: Int, extra: Int) {
+        android.util.Log.e("FloatingWindow", "播放出错: what=$what, extra=$extra")
+        try {
+            progressHandler.removeCallbacks(progressRunnable)
+        } catch (_: Exception) {
+        }
+
+        val reason = when (what) {
+            android.media.MediaPlayer.MEDIA_ERROR_UNSUPPORTED -> "格式不支持"
+            android.media.MediaPlayer.MEDIA_ERROR_TIMED_OUT -> "播放超时"
+            else -> "文件损坏或编码不支持"
+        }
+
+        try {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    timeText?.text = "播放失败：$reason"
+                    // 按钮切回「播放」，让用户能手动重试
+                    updatePlayButton(false)
+                } catch (_: Exception) {
+                }
+            }
+        } catch (_: Exception) {
+        }
     }
 
     // ====== 操作方法 =======
@@ -733,8 +793,11 @@ class FloatingWindowService : Service() {
                     it.start()
                     updatePlayButton(true)
                 }
-                setOnErrorListener { _, _, _ ->
-                    false
+                setOnErrorListener { _, what, extra ->
+                    // 以前固定返回 false 且什么都不做：源损坏/编码不支持时
+                    // 画面停在黑屏，用户以为卡死。现在给出可见提示。
+                    showPlaybackError(what, extra)
+                    true
                 }
             }
 
@@ -774,16 +837,40 @@ class FloatingWindowService : Service() {
         capturePlaybackPosition()
 
         releaseMediaPlayer()
-        try {
-            if (floatingView != null && floatingView?.windowToken != null) {
-                windowManager?.removeView(floatingView)
-            }
-        } catch (_: Exception) {}
+        removeFloatingView()
 
         floatingView = null
         surfaceView = null
         controlOverlay = null
         stopSelf()
+    }
+
+    /**
+     * 统一移除悬浮窗视图。
+     *
+     * 原先两处判断条件不一致（`windowToken != null` 与 `isAttachedToWindow`）：
+     * `windowToken` 在某些时序下会是 null，于是 removeView 被整段跳过，
+     * 视图残留在屏幕上、触摸事件被吞掉，也就是用户看到的「遮罩残留」。
+     * 这里以 isAttachedToWindow 为准，并额外兜一层 catch。
+     */
+    private fun removeFloatingView() {
+        // 先反注册 SurfaceHolder 回调，避免已移除的 View 仍持有 Service 引用
+        try {
+            val cb = surfaceCallback
+            if (cb != null) {
+                surfaceView?.holder?.removeCallback(cb)
+            }
+        } catch (_: Exception) {
+        }
+        surfaceCallback = null
+
+        val view = floatingView ?: return
+        try {
+            if (view.isAttachedToWindow) {
+                windowManager?.removeView(view)
+            }
+        } catch (_: Exception) {
+        }
     }
 
     private fun releaseMediaPlayer() {
@@ -811,11 +898,7 @@ class FloatingWindowService : Service() {
         capturePlaybackPosition()
 
         releaseMediaPlayer()
-        try {
-            if (floatingView != null && floatingView?.isAttachedToWindow == true) {
-                windowManager?.removeView(floatingView)
-            }
-        } catch (_: Exception) {}
+        removeFloatingView()
         floatingView = null
         instance = null
     }
@@ -839,12 +922,22 @@ class FloatingWindowService : Service() {
 
     // ====== 工具方法 ======
 
+    /**
+     * 屏幕可用宽度。
+     *
+     * 以前是 `widthPixels.coerceAtLeast(1080)` —— 小屏/分屏手机的真实宽度
+     * 可能只有 720 甚至更小，这个「最小值」会把尺寸抬到大于真实屏幕，
+     * 导致悬浮窗初始化/吸附到屏幕外，用户看不到窗口。
+     * 现在以真实尺寸为准，只兜一个 >0 的底。
+     */
     private fun getScreenWidth(): Int {
-        return resources.displayMetrics.widthPixels.coerceAtLeast(1080)
+        val w = resources.displayMetrics.widthPixels
+        return if (w > 0) w else 1080
     }
 
     private fun getScreenHeight(): Int {
-        return resources.displayMetrics.heightPixels.coerceAtLeast(1920)
+        val h = resources.displayMetrics.heightPixels
+        return if (h > 0) h else 1920
     }
 
     /**

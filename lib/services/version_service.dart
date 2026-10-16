@@ -29,6 +29,10 @@ class VersionInfo {
   /// Release 页面的原始 tag（如 v1.0.6.458），用于展示
   final String tagName;
 
+  /// 安装包字节数，来自 GitHub Release API 的 asset.size。
+  /// 为 null 表示未知（例如从 HTML 页面兜底解析时拿不到）。
+  final int? size;
+
   VersionInfo({
     required this.version,
     required this.buildNumber,
@@ -36,6 +40,7 @@ class VersionInfo {
     this.publishedAt = '',
     this.releaseNotes = const [],
     this.tagName = '',
+    this.size,
   });
 
   @override
@@ -126,9 +131,16 @@ class VersionService {
   ///
   /// 返回值语义：
   ///   - 非 null：成功获取到远端最新版本（需再用 [hasNewVersion] 判断是否更新）
-  ///   - null  ：检查失败，原因见 [lastError]
+  ///   - null  ：检查失败，原因见 [lastError]；若 [lastError] 也为 null，
+  ///             说明是「已有一次检查正在进行中」，不是失败。
   static Future<VersionInfo?> checkUpdate() async {
-    if (isCheckingUpdate) return null;
+    if (isCheckingUpdate) {
+      // 以前直接返回 null，调用方一律显示「检查更新失败：请检查网络连接」，
+      // 用户点两下按钮就会看到莫名其妙的网络错误。
+      lastError = '正在检查中，请稍候';
+      Logger().logSync('Version', '已有检查在进行中，忽略本次请求');
+      return null;
+    }
     isCheckingUpdate = true;
     lastError = null;
 
@@ -510,12 +522,20 @@ class VersionService {
       // 取不到时回退到 releases/latest 的固定链接。
       String downloadUrl =
           'https://github.com/$_owner/$_repo/releases/latest/download/app-release.apk';
+      int? assetSize;
       final assets = json['assets'];
       if (assets is List) {
         for (final asset in assets) {
           if (asset is Map && asset['name'] == 'app-release.apk') {
             final url = asset['browser_download_url']?.toString();
             if (url != null && url.isNotEmpty) downloadUrl = url;
+            // size 字段本来就在 API 响应里，顺手取来用于展示与下载后校验
+            final rawSize = asset['size'];
+            if (rawSize is int && rawSize > 0) {
+              assetSize = rawSize;
+            } else if (rawSize is String) {
+              assetSize = int.tryParse(rawSize);
+            }
             break;
           }
         }
@@ -528,6 +548,7 @@ class VersionService {
         publishedAt: publishedAt,
         releaseNotes: _parseReleaseNotes(body),
         tagName: tagName,
+        size: assetSize,
       );
     } catch (e) {
       lastError = '解析 Release 数据失败: $e';
@@ -604,12 +625,31 @@ class VersionService {
         onReceiveProgress: onProgress,
       );
 
-      // 基本完整性校验：APK 本质是 zip，合法文件至少有数百 KB。
-      // 避免网络中断时把残缺文件交给安装器。
+      // 完整性校验：APK 本质是 zip，合法文件至少有数百 KB。
+      // 另外检查文件头 magic number —— GitHub 在限流或 404 时可能返回一个
+      // HTML 错误页，体积也可能超过 100KB，光看长度会把网页当 APK 交给安装器。
       final length = await apkFile.length();
       if (length < 100 * 1024) {
         lastError = '安装包下载不完整（${(length / 1024).toStringAsFixed(0)} KB）';
         Logger().logSync('Version', lastError!);
+        await _safeDeleteDir(tempDir);
+        return false;
+      }
+
+      if (!await _looksLikeZip(apkFile)) {
+        lastError = '下载到的不是安装包（可能被网络拦截或限流），请稍后重试';
+        Logger().logSync('Version', lastError!);
+        await _safeDeleteDir(tempDir);
+        return false;
+      }
+
+      // 服务器给了 content-length 时，比对实际大小，防止静默截断
+      final expected = version.size;
+      if (expected != null && expected > 0 && length != expected) {
+        lastError = '安装包大小不符（期望 ${(expected / 1024 / 1024).toStringAsFixed(1)} MB，'
+            '实际 ${(length / 1024 / 1024).toStringAsFixed(1)} MB）';
+        Logger().logSync('Version', lastError!);
+        await _safeDeleteDir(tempDir);
         return false;
       }
 
@@ -621,6 +661,9 @@ class VersionService {
         Logger().logSync('Version', 'Open installer result: ${result.type} ${result.message}');
         return false;
       }
+      // 注意：这里**不删** tempDir —— 安装器是异步读取该文件的，
+      // 提前删掉会导致安装失败或「解析软件包时出现问题」。
+      // 残留由 _pruneOldUpdateDirs() 在下次启动时清理。
       return true;
     } on DioException catch (e) {
       // 取消是用户主动行为，不是错误，不要写 lastError
@@ -637,6 +680,67 @@ class VersionService {
       Logger().logSync('Version', 'downloadAndInstall error: $e');
       Logger().logSync('Version', '$stackTrace');
       return false;
+    }
+  }
+
+  /// 校验文件头是不是 zip（PK\x03\x04）。
+  ///
+  /// APK 就是 zip，头 4 字节固定是 50 4B 03 04。GitHub 限流时返回的
+  /// HTML 错误页体积可能过 100KB，只查长度会把网页塞给安装器。
+  static Future<bool> _looksLikeZip(File file) async {
+    RandomAccessFile? raf;
+    try {
+      if (await file.length() < 4) return false;
+      raf = await file.open();
+      final header = await raf.read(4);
+      return header.length == 4 &&
+          header[0] == 0x50 &&
+          header[1] == 0x4B &&
+          header[2] == 0x03 &&
+          header[3] == 0x04;
+    } catch (e) {
+      Logger().logSync('Version', '校验文件头失败: $e');
+      return false;
+    } finally {
+      try {
+        await raf?.close();
+      } catch (_) {}
+    }
+  }
+
+  /// 删除临时目录，失败只记日志（不能因为清理失败掩盖真正的错误）
+  static Future<void> _safeDeleteDir(Directory dir) async {
+    try {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    } catch (e) {
+      Logger().logSync('Version', '清理临时目录失败: $e');
+    }
+  }
+
+  /// 清理历史遗留的 update_* 临时目录
+  ///
+  /// 安装成功后临时目录必须保留给安装器读取，所以只能在下次启动时清。
+  /// 保留最近 1 小时内创建的目录，避免误删正在被安装器读取的那份。
+  static Future<void> pruneOldUpdateDirs() async {
+    try {
+      final tmp = Directory.systemTemp;
+      if (!await tmp.exists()) return;
+      final cutoff = DateTime.now().subtract(const Duration(hours: 1));
+      await for (final entity in tmp.list()) {
+        if (entity is! Directory) continue;
+        final name = entity.path.split(Platform.pathSeparator).last;
+        if (!name.startsWith('update_')) continue;
+        try {
+          final stat = await entity.stat();
+          if (stat.modified.isAfter(cutoff)) continue;
+          await entity.delete(recursive: true);
+          Logger().logSync('Version', '清理旧更新包目录: ${entity.path}');
+        } catch (e) {
+          Logger().logSync('Version', '清理 ${entity.path} 失败: $e');
+        }
+      }
+    } catch (e) {
+      Logger().logSync('Version', 'pruneOldUpdateDirs 失败: $e');
     }
   }
 }

@@ -284,9 +284,11 @@ class AppState extends ChangeNotifier {
     if (data['maxConcurrentSegments'] is int) {
       maxConcurrentSegments = data['maxConcurrentSegments'] as int;
     }
-    if (data['appLockEnabled'] is bool) {
-      appLockEnabled = data['appLockEnabled'] as bool;
-    }
+    // 故意不从备份恢复 appLockEnabled：
+    // 1. 旧版本备份里可能残留该字段，恢复它会让用户在没有 PIN 的情况下
+    //    处于「已上锁」状态，直接卡在解锁界面进不去；
+    // 2. 重装后本就应由用户主动重新启用应用锁。
+    // 即便 data['appLockEnabled'] 为 true 也一律忽略。
     if (data['privacyMode'] is bool) privacyMode = data['privacyMode'] as bool;
     if (data['nomediaEnabled'] is bool) nomediaEnabled = data['nomediaEnabled'] as bool;
 
@@ -316,7 +318,11 @@ class AppState extends ChangeNotifier {
         'useExternalPlayer': useExternalPlayer,
         'maxConcurrentTasks': maxConcurrentTasks,
         'maxConcurrentSegments': maxConcurrentSegments,
-        'appLockEnabled': appLockEnabled,
+        // 注意：这里**不写** appLockEnabled。
+        // 备份文件在外部存储（<下载目录>/.db/settings_backup.json），
+        // 任何 App 都能读。写上它就等于对外宣告「这个 App 有应用锁」，
+        // 反而给想翻看的人指了路。恢复时按未开启处理即可 ——
+        // 用户重装后如需上锁，重新设置一次 PIN 是合理代价。
         'privacyMode': privacyMode,
         'nomediaEnabled': nomediaEnabled,
         'backup_time': DateTime.now().toIso8601String(),
@@ -402,8 +408,25 @@ class AppState extends ChangeNotifier {
     return permissionGranted;
   }
 
+  /// 存储权限是否已被永久拒绝（用户勾了「不再询问」或在系统设置里关掉了）。
+  ///
+  /// 永久拒绝后 `Permission.request()` 会**立刻返回 denied 且不弹任何对话框**，
+  /// 表现为「点了授权按钮没反应」。这种情况只能引导用户去系统设置手动开启。
+  bool storagePermissionPermanentlyDenied = false;
+
+  /// 打开本应用的系统设置页，供永久拒绝权限后手动开启
+  Future<void> openAppSettingsPage() async {
+    try {
+      await openAppSettings();
+    } catch (e) {
+      Logger().logSync('AppState', '打开系统设置失败: $e');
+    }
+  }
+
   /// 根据 Android 版本请求存储权限
   Future<bool> _requestStoragePermission(int sdkInt) async {
+    storagePermissionPermanentlyDenied = false;
+
     if (sdkInt >= 34) {
       // Android 14+: 请求视频和图片权限
       final videoStatus = await Permission.videos.request();
@@ -413,7 +436,12 @@ class AppState extends ChangeNotifier {
       }
       // 如果细粒度权限被拒绝，尝试全盘访问
       final manageStatus = await Permission.manageExternalStorage.request();
-      return manageStatus.isGranted;
+      if (manageStatus.isGranted) return true;
+      storagePermissionPermanentlyDenied =
+          videoStatus.isPermanentlyDenied ||
+              imageStatus.isPermanentlyDenied ||
+              manageStatus.isPermanentlyDenied;
+      return false;
     } else if (sdkInt >= 33) {
       // Android 13: 使用 READ_MEDIA_* 权限
       final videoStatus = await Permission.videos.request();
@@ -422,11 +450,17 @@ class AppState extends ChangeNotifier {
       }
       // 如果权限被拒绝，尝试全盘访问
       final manageStatus = await Permission.manageExternalStorage.request();
-      return manageStatus.isGranted;
+      if (manageStatus.isGranted) return true;
+      storagePermissionPermanentlyDenied =
+          videoStatus.isPermanentlyDenied ||
+              manageStatus.isPermanentlyDenied;
+      return false;
     } else {
       // Android 12及以下: 使用传统存储权限
       final status = await Permission.storage.request();
-      return status.isGranted;
+      if (status.isGranted) return true;
+      storagePermissionPermanentlyDenied = status.isPermanentlyDenied;
+      return false;
     }
   }
 
@@ -763,24 +797,44 @@ class AppState extends ChangeNotifier {
   }
   
   // 切换 .nomedia（防止媒体扫描）
-  Future<void> toggleNomedia(bool enable) async {
-    nomediaEnabled = enable;
-    if (downloadDir.isNotEmpty) {
-      try {
-        final nomediaFile = File('$downloadDir/.nomedia');
-        if (enable) {
-          if (!await nomediaFile.exists()) {
-            await nomediaFile.create();
-          }
-        } else {
-          if (await nomediaFile.exists()) {
-            await nomediaFile.delete();
-          }
-        }
-      } catch (_) {}
+  //
+  // 返回是否真的改成功了。以前异常被 `catch (_) {}` 吞掉后照样翻转开关，
+  // 用户看到「已开启」，相册里却依然刷出下载的视频 —— 状态与事实不符。
+  Future<bool> toggleNomedia(bool enable) async {
+    if (downloadDir.isEmpty) {
+      // 没有下载目录就无从下手，别假装成功
+      return false;
     }
+
+    try {
+      final nomediaFile = File('$downloadDir/.nomedia');
+      if (enable) {
+        if (!await nomediaFile.exists()) {
+          await nomediaFile.create();
+        }
+      } else {
+        if (await nomediaFile.exists()) {
+          await nomediaFile.delete();
+        }
+      }
+      // 落盘后再确认一次，确认不了就当失败
+      final exists = await nomediaFile.exists();
+      if (exists != enable) {
+        Logger().logSync(
+          'AppState',
+          '.nomedia 状态校验失败: 期望 $enable，实际 $exists',
+        );
+        return false;
+      }
+    } catch (e) {
+      Logger().logSync('AppState', '切换 .nomedia 失败: $e');
+      return false;
+    }
+
+    nomediaEnabled = enable;
     await _saveSettings();
     notifyListeners();
+    return true;
   }
   
   // 设置已认证状态

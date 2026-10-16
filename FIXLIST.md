@@ -123,32 +123,32 @@
 - [x] **27. `dispose` 不关数据库** —— `download_manager.dart:780-783`。
 
 ### 悬浮窗
-- [ ] **28. `getScreenWidth/Height` 用 `coerceAtLeast` 硬编码最小值** —— `FloatingWindowService.kt:810-816`。小屏/分屏下返回尺寸**大于真实屏幕** → 悬浮窗初始化到屏幕外、吸附位置错误。
-- [ ] **29. View 移除判断不一致 → 遮罩残留根因之一** —— `:757` `windowToken != null` vs `:783` `isAttachedToWindow`；`windowToken` 为 null 时跳过 `removeView`。
-- [ ] **30. `SurfaceHolder.Callback` 注册后从不 `removeCallback`** —— `:266-274` → Service 泄漏。
-- [ ] **31. 双击关闭路径不重置 `lastTapTime`** —— `:359-377` → 残留时间戳导致后续单击误判；且单击/双击语义与播放器（双击=播放暂停）不一致。
-- [ ] **32. `onErrorListener` 返回 false 且无提示** —— `:563-565`/`:715-717` → 源损坏时保持黑屏，用户以为卡死。
-- [ ] **33. seekBar `max=100`，拖动时算出 `pos` 却丢弃** —— `:481-510` → 拖动全程无反馈；3 小时视频误差 108 秒。
+- [x] **28. `getScreenWidth/Height` 用 `coerceAtLeast` 硬编码最小值** —— `FloatingWindowService.kt:810-816`。小屏/分屏下返回尺寸**大于真实屏幕** → 悬浮窗初始化到屏幕外、吸附位置错误。
+- [x] **29. View 移除判断不一致 → 遮罩残留根因之一** —— `:757` `windowToken != null` vs `:783` `isAttachedToWindow`；`windowToken` 为 null 时跳过 `removeView`。
+- [x] **30. `SurfaceHolder.Callback` 注册后从不 `removeCallback`** —— `:266-274` → Service 泄漏。
+- [x] **31. 双击关闭路径不重置 `lastTapTime`** —— `:359-377` → 残留时间戳导致后续单击误判；且单击/双击语义与播放器（双击=播放暂停）不一致。
+- [x] **32. `onErrorListener` 返回 false 且无提示** —— `:563-565`/`:715-717` → 源损坏时保持黑屏，用户以为卡死。
+- [x] **33. seekBar `max=100`，拖动时算出 `pos` 却丢弃** —— `:481-510` → 拖动全程无反馈；3 小时视频误差 108 秒。
 
 ### 关注作者 / 更新
-- [ ] **34. `checkForUpdates` 遍历期间列表可能被修改** —— `followed_authors_service.dart:308-383` 串行 await 中 `unfollow()`（`:259`）会 `removeWhere` → `ConcurrentModificationError` 或跳过作者。修法：开头做快照。
-- [ ] **35. 关注作者所有写失败静默吞掉** —— `:437-459`/`:473-496`/`:119-123` → 内存已显示小红点，重启后全消失（用户以为没更新）。
-- [ ] **36. `_markAutoChecked()` 在检查开始前落盘** —— `:419-434`（`:423-424`）→ 一次断网即被节流 **6 小时内不再自动检查**。修法：仅在至少一个作者成功后再落盘。
-- [ ] **37. `checkUpdate()` 并发时静默返回 null** —— `version_service.dart:130-131` → `settings_page.dart:1177-1189` 把 null 显示成「检查更新失败：请检查网络连接」，连点两次即误报。
-- [ ] **38. 安装包校验过弱 + 临时目录永不清理** —— `version_service.dart:597`/`:610-611` 仅校验 `length < 100*1024`，`:641` 不删 tempDir → 截断 APK 直接交给安装器；`systemTemp` 累积 `update_*`。
+- [x] **34. `checkForUpdates` 遍历期间列表可能被修改** —— `followed_authors_service.dart:308-383` 串行 await 中 `unfollow()`（`:259`）会 `removeWhere` → `ConcurrentModificationError` 或跳过作者。修法：开头做快照。
+- [x] **35. 关注作者所有写失败静默吞掉** —— `:437-459`/`:473-496`/`:119-123` → 内存已显示小红点，重启后全消失（用户以为没更新）。
+- [x] **36. `_markAutoChecked()` 在检查开始前落盘** —— `:419-434`（`:423-424`）→ 一次断网即被节流 **6 小时内不再自动检查**。修法：仅在至少一个作者成功后再落盘。
+- [x] **37. `checkUpdate()` 并发时静默返回 null** —— `version_service.dart:130-131` → `settings_page.dart:1177-1189` 把 null 显示成「检查更新失败：请检查网络连接」，连点两次即误报。
+- [x] **38. 安装包校验过弱 + 临时目录永不清理** —— `version_service.dart:597`/`:610-611` 仅校验 `length < 100*1024`，`:641` 不删 tempDir → 截断 APK 直接交给安装器；`systemTemp` 累积 `update_*`。
 
 ### 应用锁
-- [ ] **39. 改 PIN 失败无任何提示** —— `settings_page.dart:954-979`（`:973` `if (saved && mounted)` 无 else）→ 用户以为改成功，下次解锁失败。
-- [ ] **40. 关闭应用锁失败时不 reset 开关** —— `:937` unmounted 时直接 return → 开关停在打开位置但实际未启用。
-- [ ] **41. PIN 强度与防爆破** —— `pin_service.dart:47-50` 固定盐 `'91download_salt'` + 单次 sha256；`:32` 非常量时间比较；无失败计数/锁定 → 4 位 PIN 离线空间仅 10⁴，真机可无限次尝试。
+- [x] **39. 改 PIN 失败无任何提示** —— `settings_page.dart:954-979`（`:973` `if (saved && mounted)` 无 else）→ 用户以为改成功，下次解锁失败。
+- [x] **40. 关闭应用锁失败时不 reset 开关** —— `:937` unmounted 时直接 return → 开关停在打开位置但实际未启用。
+- [x] **41. PIN 强度与防爆破** —— `pin_service.dart:47-50` 固定盐 `'91download_salt'` + 单次 sha256；`:32` 非常量时间比较；无失败计数/锁定 → 4 位 PIN 离线空间仅 10⁴，真机可无限次尝试。
 
 ### 其他
-- [ ] **42. 缓存清理口径不一致 + 清完不刷新** —— `cache_service.dart:28` `totalCount` 不计封面缓存、`:32` `totalBytes` 却计入；`cache_manager_page.dart:76` 用 `totalCount == 0` 提前 return → 只有封面缓存待清时点「清理选中项」**什么都不做**。
-- [ ] **43. `getVideoDetail` 吞掉所有异常且不留日志** —— `crawler_core.dart:1270-1272` 直接 `return null`，连 `onLog` 都不调 → 站点改版后表现为「列表空了/全部下载失败」，日志里什么都没有。
-- [ ] **44. 列表页性能：循环内反复全量小写化 HTML** —— `crawler_core.dart:578` `html.toLowerCase()` 写在 `while` 内；`:413-423` 每个容器都重跑 `allMatches(html)` → 列表页卡顿掉帧、低端机 ANR。
-- [ ] **45. 外部备份 JSON 含明文 `appLockEnabled`** —— `app_state.dart:213-214`/`:306`，位于 `/Download/91Download/.db/settings_backup.json`，**可被其它 App 读取/篡改**（置 false 即绕过应用锁）。
-- [ ] **46. `toggleNomedia` 失败但开关照翻** —— `app_state.dart:690-708` `catch (_) {}` → 用户以为已生效。
-- [ ] **47. 权限分组在 `permanentlyDenied` 时按钮无效** —— `app_state.dart:388-414` 不处理该状态 → 点「去授权」无反应，应引导 `openAppSettings()`。
+- [x] **42. 缓存清理口径不一致 + 清完不刷新** —— `cache_service.dart:28` `totalCount` 不计封面缓存、`:32` `totalBytes` 却计入；`cache_manager_page.dart:76` 用 `totalCount == 0` 提前 return → 只有封面缓存待清时点「清理选中项」**什么都不做**。
+- [x] **43. `getVideoDetail` 吞掉所有异常且不留日志** —— `crawler_core.dart:1270-1272` 直接 `return null`，连 `onLog` 都不调 → 站点改版后表现为「列表空了/全部下载失败」，日志里什么都没有。
+- [x] **44. 列表页性能：循环内反复全量小写化 HTML** —— `crawler_core.dart:578` `html.toLowerCase()` 写在 `while` 内；`:413-423` 每个容器都重跑 `allMatches(html)` → 列表页卡顿掉帧、低端机 ANR。
+- [x] **45. 外部备份 JSON 含明文 `appLockEnabled`** —— `app_state.dart:213-214`/`:306`，位于 `/Download/91Download/.db/settings_backup.json`，**可被其它 App 读取/篡改**（置 false 即绕过应用锁）。
+- [x] **46. `toggleNomedia` 失败但开关照翻** —— `app_state.dart:690-708` `catch (_) {}` → 用户以为已生效。
+- [x] **47. 权限分组在 `permanentlyDenied` 时按钮无效** —— `app_state.dart:388-414` 不处理该状态 → 点「去授权」无反应，应引导 `openAppSettings()`。
 
 ---
 

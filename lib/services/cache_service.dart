@@ -33,6 +33,11 @@ class CacheScanResult {
       tempDirs.fold<int>(0, (sum, e) => sum + e.sizeBytes) + coverCacheBytes;
 
   /// 是否没有任何可清理内容
+  ///
+  /// 注意 [totalCount] 只统计「按条目列出」的三类（临时目录/孤立记录/孤立任务），
+  /// 封面缓存是按整块统计的、没有逐条列表，所以判断「有没有东西可清」
+  /// 必须用 [isEmpty]（同时看字节数），不能用 `totalCount == 0` ——
+  /// 否则只剩封面缓存时会被误判成「没有可清理内容」，清空按钮也跟着禁用。
   bool get isEmpty => totalCount == 0 && coverCacheBytes == 0;
 
   static const empty = CacheScanResult();

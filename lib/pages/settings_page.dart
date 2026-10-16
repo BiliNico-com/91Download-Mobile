@@ -293,7 +293,23 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     title: Text('防媒体扫描', style: TextStyle(fontSize: 14)),
                     subtitle: Text('在下载目录创建 .nomedia，防止视频出现在相册', style: TextStyle(fontSize: 12, color: Colors.grey)),
                     value: appState.nomediaEnabled,
-                    onChanged: (v) => appState.toggleNomedia(v),
+                    onChanged: (v) async {
+                      final ok = await appState.toggleNomedia(v);
+                      if (!mounted) return;
+                      if (!ok) {
+                        // 失败时开关不会翻（appState 没改状态），
+                        // 这里明确告诉用户原因，别让人反复点。
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              appState.downloadDir.isEmpty
+                                  ? '请先设置下载目录'
+                                  : '设置失败，请检查下载目录是否可写',
+                            ),
+                          ),
+                        );
+                      }
+                    },
                   ),
                   Divider(height: 24),
                   // 缓存管理：清理临时残留与失效记录
@@ -1007,7 +1023,21 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         return;
       }
       
-      await _pinService.removePin();
+      // 删除 PIN 是关闭应用锁的前提。删失败还去关开关，
+      // 下次启动就没有 PIN 可校验，等于锁坏了打不开。
+      try {
+        await _pinService.removePin();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('清除PIN码失败，应用锁未关闭：$e')),
+          );
+          // 回滚开关显示，避免 UI 与真实状态不一致
+          await appState.toggleAppLock(true);
+        }
+        return;
+      }
+
       await appState.toggleAppLock(false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1036,11 +1066,22 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     if (newPin == null || !mounted) return;
     
     final saved = await _pinService.setPin(newPin);
-    if (saved && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('PIN码已修改')),
-      );
+    if (!mounted) return;
+    if (saved) {
+      // 再确认一次真的写进去了：写失败却提示「已修改」，
+      // 用户下次解锁会直接卡在旧 PIN 上，且再也回不来。
+      final stored = await _pinService.hasPin();
+      if (!mounted) return;
+      if (stored && await _pinService.verifyPin(newPin)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('PIN码已修改')),
+        );
+        return;
+      }
     }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('PIN码修改失败，请重试（原PIN码仍然有效）')),
+    );
   }
 
   /// 6. 权限状态展示区域
@@ -1066,11 +1107,32 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                       color: appState.permissionGranted ? Colors.green : Colors.red,
                     ),
                     title: Text('存储权限'),
-                    subtitle: Text(appState.permissionGranted ? '已授权' : '未授权'),
+                    subtitle: Text(
+                      appState.permissionGranted
+                          ? '已授权'
+                          : (appState.storagePermissionPermanentlyDenied
+                              ? '已被拒绝，请到系统设置中手动开启'
+                              : '未授权'),
+                    ),
                     trailing: !appState.permissionGranted
                       ? TextButton(
                           onPressed: () async {
-                            await appState.requestPermissions();
+                            final granted = await appState.requestPermissions();
+                            if (!mounted || granted) return;
+                            // 永久拒绝时 request() 不会弹窗，
+                            // 必须明确引导去系统设置，否则按钮看着像坏了
+                            if (appState.storagePermissionPermanentlyDenied) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('权限已被拒绝，请在系统设置中开启'),
+                                  action: SnackBarAction(
+                                    label: '去设置',
+                                    onPressed: () =>
+                                        appState.openAppSettingsPage(),
+                                  ),
+                                ),
+                              );
+                            }
                           },
                           child: Text('授权'),
                         )
@@ -1244,10 +1306,14 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     if (!mounted) return;
 
     if (remoteVersion == null) {
-      // 展示具体失败原因（超时/限流/未发布等），便于用户判断
-      final reason = VersionService.lastError ?? '请检查网络连接';
+      final reason = VersionService.lastError;
+      // 「正在检查中」不是失败，措辞要区别对待，否则用户看到
+      // 连点两下就冒出来的「网络错误」，会以为功能坏了。
+      final message = (reason == null || reason.isEmpty)
+          ? '检查更新失败：请检查网络连接'
+          : (reason.contains('正在检查') ? reason : '检查更新失败：$reason');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('检查更新失败：$reason')),
+        SnackBar(content: Text(message)),
       );
       return;
     }

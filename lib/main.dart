@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'pages/main_page.dart';
 import 'services/app_state.dart';
 import 'services/pin_service.dart';
+import 'services/version_service.dart';
 import 'routes/app_routes.dart';
 import 'theme/app_theme.dart';
 
@@ -69,6 +72,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
     } catch (_) {
       // init 失败也要放行，避免永久卡在加载遮罩
     }
+
+    // 清理上次安装更新遗留的 update_* 临时目录。
+    // 安装成功后不能立刻删（安装器是异步读的），只能在这里补清。
+    unawaited(VersionService.pruneOldUpdateDirs());
     
     if (!mounted) return;
     setState(() {

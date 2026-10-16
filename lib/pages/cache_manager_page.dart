@@ -75,7 +75,9 @@ class _CacheManagerPageState extends State<CacheManagerPage> {
 
   Future<void> _clean() async {
     final res = _result;
-    if (res == null || res.totalCount == 0 || _cleaning) return;
+    // 用 isEmpty 而不是 totalCount == 0：只剩封面缓存时 totalCount 也是 0，
+    // 那样「清理」按钮点了没反应，用户以为功能坏了。
+    if (res == null || res.isEmpty || _cleaning) return;
 
     setState(() => _cleaning = true);
 

@@ -702,11 +702,14 @@ class CrawlerCore {
       caseSensitive: false,
     );
     
+    // 小写副本只算一次。以前写在 for 循环体内，匹配到 N 个区块就把
+    // 整篇 HTML（几百 KB）重复小写化 N 次 —— 一次列表解析里这是最贵的开销。
+    final lowerHtml = html.toLowerCase();
+
     for (final openMatch in openPattern.allMatches(html)) {
       int start = openMatch.end;
       int depth = 1;
       int pos = start;
-      final lowerHtml = html.toLowerCase();
       
       while (pos < lowerHtml.length && depth > 0) {
         final nextOpen = lowerHtml.indexOf('<div', pos);
@@ -1399,9 +1402,18 @@ class CrawlerCore {
       
       return null;
     } catch (e, stack) {
+      // 以前这里直接 `return null`，异常和堆栈全丢。
+      // 结果是「解析失败」和「页面确实没有视频」在调用方看来完全一样，
+      // 用户只能看到一句模糊的失败提示，日志里也查不到任何线索。
+      lastDetailError = e.toString();
+      await logger.log('Error', '解析视频详情失败 (${video.id}): $e');
+      await logger.log('Error', '$stack');
       return null;
     }
   }
+
+  /// 最近一次 [getVideoDetail] 失败的原因，供 UI 展示更具体的提示。
+  String? lastDetailError;
 
   // ==================== 下载 ====================
 

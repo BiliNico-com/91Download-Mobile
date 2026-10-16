@@ -311,10 +311,19 @@ class FollowedAuthorsService extends ChangeNotifier {
   }) async {
     final now = DateTime.now();
     final updatedAuthors = <FollowedAuthor>[];
-    final total = _followedList.length;
+    // 先做快照：循环体里每轮都有 await，期间用户可能 unfollow()
+    // （内部 removeWhere 会改 _followedList），直接遍历原列表会抛
+    // ConcurrentModificationError，或静默漏掉后面的作者。
+    final snapshot = List<FollowedAuthor>.from(_followedList);
+    final total = snapshot.length;
+    var successCount = 0;
 
-    for (int i = 0; i < _followedList.length; i++) {
-      final author = _followedList[i];
+    for (int i = 0; i < snapshot.length; i++) {
+      final author = snapshot[i];
+      // 期间被取消关注的作者直接跳过，别再把结果写回去
+      if (!_followedList.any((a) => a.authorId == author.authorId)) {
+        continue;
+      }
       onProgress?.call(i + 1, total, author.authorName);
 
       try {
@@ -326,7 +335,10 @@ class FollowedAuthorsService extends ChangeNotifier {
           
           // 首次检查：记录最新视频ID，不算新内容
           if (author.lastVideoId == null) {
-            await _saveCheckResult(author.authorId, latestVideoId, now, 0);
+            if (!await _saveCheckResult(author.authorId, latestVideoId, now, 0)) {
+              continue;
+            }
+            successCount++;
             _updateAuthorInList(author.authorId, (a) => FollowedAuthor(
               authorId: a.authorId,
               authorName: a.authorName,
@@ -345,7 +357,11 @@ class FollowedAuthorsService extends ChangeNotifier {
             }
             if (newCount == 0) newCount = 1; // 至少1个新的
             
-            await _saveCheckResult(author.authorId, latestVideoId, now, newCount);
+            if (!await _saveCheckResult(
+                author.authorId, latestVideoId, now, newCount)) {
+              continue;
+            }
+            successCount++;
             _updateAuthorInList(author.authorId, (a) {
               final updated = FollowedAuthor(
                 authorId: a.authorId,
@@ -361,7 +377,11 @@ class FollowedAuthorsService extends ChangeNotifier {
             });
           } else {
             // 无更新（此时 lastVideoId 一定非 null，因为 null 分支已处理）
-            await _saveCheckResult(author.authorId, author.lastVideoId!, now, 0);
+            if (!await _saveCheckResult(
+                author.authorId, author.lastVideoId!, now, 0)) {
+              continue;
+            }
+            successCount++;
             _updateAuthorInList(author.authorId, (a) => FollowedAuthor(
               authorId: a.authorId,
               authorName: a.authorName,
@@ -378,9 +398,17 @@ class FollowedAuthorsService extends ChangeNotifier {
       }
     }
 
+    // 记下本次有多少作者真的检查成功，供自动检查决定是否推进时间戳
+    lastCheckSuccessCount = successCount;
     notifyListeners();
     return updatedAuthors;
   }
+
+  /// 最近一次 [checkForUpdates] 中成功取到数据的作者数。
+  ///
+  /// 自动检查用它判断「这次到底有没有干活」：如果全部因为断网失败，
+  /// 就不该把节流时间戳推进 6 小时。
+  int lastCheckSuccessCount = 0;
 
   /// 最近一次自动检查的时间（持久化，用于节流）
   static const String _prefLastAutoCheck = 'followed_last_auto_check';
@@ -447,11 +475,16 @@ class FollowedAuthorsService extends ChangeNotifier {
     if (_followedList.isEmpty) return 0;
     if (!await shouldAutoCheck()) return 0;
 
-    // 先落盘时间戳：即使这次检查中途失败，也不会反复重试打扰用户
-    await _markAutoChecked();
-
     try {
       final updated = await checkForUpdates(crawler);
+      // 只有至少一个作者真的检查成功，才推进时间戳。
+      // 以前是无条件在检查前落盘 —— 一次断网/站点抽风就会被节流
+      // 整整 6 小时不再自动检查，用户以为「自动提醒坏了」。
+      if (lastCheckSuccessCount > 0) {
+        await _markAutoChecked();
+      } else {
+        debugPrint('[FollowedAuthors] 本次自动检查无成功项，不推进时间戳');
+      }
       debugPrint('[FollowedAuthors] 自动检查完成，${updated.length} 位作者有更新');
       return updated.length;
     } catch (e) {
@@ -461,16 +494,22 @@ class FollowedAuthorsService extends ChangeNotifier {
   }
 
   /// 保存检查结果到数据库
-  Future<void> _saveCheckResult(
+  ///
+  /// 返回是否写入成功。失败时调用方**不应**更新内存列表 ——
+  /// 否则界面显示小红点、重启后记录却不在（用户以为更新提醒失灵）。
+  Future<bool> _saveCheckResult(
     String authorId,
     String lastVideoId,
     DateTime checkedAt,
     int newCount,
   ) async {
     final db = await _getDb();
-    if (db == null) return;
+    if (db == null) {
+      debugPrint('[FollowedAuthors] 数据库不可用，放弃保存检查结果');
+      return false;
+    }
     try {
-      await db.update(
+      final rows = await db.update(
         'followed_authors',
         {
           'last_video_id': lastVideoId,
@@ -480,8 +519,14 @@ class FollowedAuthorsService extends ChangeNotifier {
         where: 'author_id = ?',
         whereArgs: [authorId],
       );
+      if (rows == 0) {
+        debugPrint('[FollowedAuthors] 保存检查结果影响 0 行（作者 $authorId 可能已被删除）');
+        return false;
+      }
+      return true;
     } catch (e) {
       debugPrint('[FollowedAuthors] 保存检查结果失败: $e');
+      return false;
     }
   }
 
