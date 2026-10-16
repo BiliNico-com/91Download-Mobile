@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:ui' show FontFeature;
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -1254,11 +1256,23 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
   
   /// 下载更新
+  ///
+  /// 进度弹窗展示：百分比大字 + 已下载/总大小 + 实时速度。
+  /// 总大小未知（total == 0）时退化为不限量滚动动画，避免卡在 0%。
   Future<void> _downloadUpdate(VersionInfo version) async {
-    double progress = 0;
+    // 下载状态（由 StatefulBuilder 驱动重绘）
+    int received = 0;
+    int total = 0;
+    double speed = 0; // 字节/秒
+
+    // 速度用滑动平均，避免每 200ms 一次回调造成数字乱跳
+    int lastBytes = 0;
+    DateTime lastTick = DateTime.now();
+
     StateSetter? setDialogState;
-    
-    // 显示下载进度对话框
+    final cancelToken = CancelToken();
+    var userCancelled = false;
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1266,43 +1280,176 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         builder: (context, setState) {
           setDialogState = setState;
           return AlertDialog(
-            title: Text('正在下载更新'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                LinearProgressIndicator(value: progress),
-                SizedBox(height: 8),
-                Text('${(progress * 100).toStringAsFixed(0)}%'),
-              ],
+            title: const Text('正在下载更新'),
+            content: _buildDownloadProgressContent(
+              received: received,
+              total: total,
+              speed: speed,
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: Text('取消'),
+                onPressed: () {
+                  userCancelled = true;
+                  // 真正中断网络传输，而不只是关掉弹窗
+                  if (!cancelToken.isCancelled) cancelToken.cancel('user cancelled');
+                  Navigator.pop(dialogContext);
+                },
+                child: const Text('取消下载'),
               ),
             ],
           );
         },
       ),
     );
-    
-    final success = await VersionService.downloadAndInstall(version, (p) {
-      progress = p;
-      // 刷新对话框UI
-      if (setDialogState != null) {
-        setDialogState!(() {});
-      }
-    });
-    
-    if (mounted) {
-      Navigator.pop(context); // 关闭进度对话框
-      
-      if (!success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('下载更新失败')),
-        );
-      }
+
+    final success = await VersionService.downloadAndInstall(
+      version,
+      (rec, tot) {
+        final now = DateTime.now();
+        final elapsed = now.difference(lastTick).inMilliseconds;
+        // 累积到 500ms 再算一次速度，短间隔采样噪声大
+        if (elapsed >= 500) {
+          final deltaBytes = rec - lastBytes;
+          if (deltaBytes > 0) {
+            speed = deltaBytes / (elapsed / 1000.0);
+          }
+          lastBytes = rec;
+          lastTick = now;
+        }
+        received = rec;
+        total = tot;
+        setDialogState?.call(() {});
+      },
+      cancelToken: cancelToken,
+    );
+
+    if (!mounted) return;
+    Navigator.pop(context); // 关闭进度对话框
+
+    // 用户主动取消：静默处理，不弹「下载更新失败」
+    if (userCancelled || VersionService.wasCancelled) return;
+
+    if (!success) {
+      // 展示真实失败原因（版本不完整 / 连接超时 / 无法启动安装器等）
+      final reason = VersionService.lastError ?? '下载更新失败';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(reason)),
+      );
     }
+  }
+
+  /// 构建下载进度弹窗内容（方案 A：信息只出现一次）
+  Widget _buildDownloadProgressContent({
+    required int received,
+    required int total,
+    required double speed,
+  }) {
+    final bool unknownTotal = total <= 0;
+    final double progress =
+        unknownTotal ? 0 : (received / total).clamp(0.0, 1.0);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '请保持网络连接，勿退出应用',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 16),
+
+        // 标题行：百分比大字 + 大小。总大小未知时不显示假的 0%
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (!unknownTotal) ...[
+              Text(
+                '${(progress * 100).toStringAsFixed(0)}',
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w600,
+                  height: 1,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+              const Text(
+                '%',
+                style: TextStyle(fontSize: 15, color: Colors.grey, height: 1),
+              ),
+              const SizedBox(width: 10),
+            ] else
+              const Text(
+                '正在获取文件信息…',
+                style: TextStyle(fontSize: 14, color: Colors.grey, height: 1),
+              ),
+            const Spacer(),
+            Text(
+              unknownTotal
+                  ? _formatBytes(received)
+                  : '${_formatBytes(received)} / ${_formatBytes(total)}',
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+
+        // 进度条：已知总量用确定值，未知用不限量滚动动画
+        ClipRRect(
+          borderRadius: BorderRadius.circular(5),
+          child: unknownTotal
+              ? const LinearProgressIndicator(minHeight: 8)
+              : TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0, end: progress),
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOut,
+                  builder: (context, value, _) => LinearProgressIndicator(
+                    value: value,
+                    minHeight: 8,
+                  ),
+                ),
+        ),
+        const SizedBox(height: 10),
+
+        // 底部：已下载量 + 实时速度
+        Row(
+          children: [
+            Text(
+              '已下载 ${_formatBytes(received)}',
+              style: const TextStyle(
+                fontSize: 11.5,
+                color: Colors.grey,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+            const Spacer(),
+            if (speed > 0)
+              Text(
+                '↓ ${_formatBytes(speed.round())}/s',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  color: Colors.green,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 字节数格式化（B / KB / MB / GB）
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
   
   Future<void> _exportLog() async {

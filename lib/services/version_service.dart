@@ -568,9 +568,26 @@ class VersionService {
     return result;
   }
 
+  /// 下载进度快照
+  ///
+  /// [total] 为 0 表示服务器未返回 content-length，此时无法计算百分比，
+  /// UI 应退化为「不限量滚动 + 已下载字节」而不是停在 0%。
+  static bool wasCancelled = false;
+
   /// 下载并安装更新
+  ///
+  /// [onProgress] 每次回调给出 (已接收字节, 总字节)；总字节为 0 表示未知。
+  /// [cancelToken] 用于真正中断下载 —— 仅关闭弹窗不会停止网络传输。
+  ///
+  /// 返回值语义：true 成功；false 失败或取消（取消时 [wasCancelled] 为 true，
+  /// 调用方据此区分「用户主动取消」与「真的出错」，避免误报失败）。
   static Future<bool> downloadAndInstall(
-      VersionInfo version, void Function(double) onProgress) async {
+    VersionInfo version,
+    void Function(int received, int total) onProgress, {
+    CancelToken? cancelToken,
+  }) async {
+    wasCancelled = false;
+    lastError = null;
     try {
       final dio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 15),
@@ -583,9 +600,8 @@ class VersionService {
       await dio.download(
         version.downloadUrl,
         apkFile.path,
-        onReceiveProgress: (received, total) {
-          if (total > 0) onProgress(received / total);
-        },
+        cancelToken: cancelToken,
+        onReceiveProgress: onProgress,
       );
 
       // 基本完整性校验：APK 本质是 zip，合法文件至少有数百 KB。
@@ -607,6 +623,12 @@ class VersionService {
       }
       return true;
     } on DioException catch (e) {
+      // 取消是用户主动行为，不是错误，不要写 lastError
+      if (e.type == DioExceptionType.cancel) {
+        wasCancelled = true;
+        Logger().logSync('Version', 'download cancelled by user');
+        return false;
+      }
       lastError = _describeDioError(e);
       Logger().logSync('Version', 'download error (${e.type}): ${e.message}');
       return false;
