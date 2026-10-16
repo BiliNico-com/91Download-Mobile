@@ -388,9 +388,36 @@ class FollowedAuthorsService extends ChangeNotifier {
   /// 自动检查的最小间隔：6 小时
   static const Duration autoCheckInterval = Duration(hours: 6);
 
-  /// 是否应该执行自动检查（距上次自动检查超过 [autoCheckInterval]）
+  /// 用户是否开启了自动检查（默认开启）
+  ///
+  /// 间隔与开关此前都是硬编码：移动数据用户无法关掉这 6 小时一次的后台爬取。
+  static const String _prefAutoCheckEnabled = 'followed_auto_check_enabled';
+
+  Future<bool> isAutoCheckEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_prefAutoCheckEnabled) ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<void> setAutoCheckEnabled(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefAutoCheckEnabled, enabled);
+      // 关闭时顺手清掉时间戳：下次重新打开能立刻检查一次，
+      // 而不是等满 6 小时。
+      if (!enabled) {
+        await prefs.remove(_prefLastAutoCheck);
+      }
+    } catch (_) {}
+  }
+
+  /// 是否应该执行自动检查（开关打开 且 距上次自动检查超过 [autoCheckInterval]）
   Future<bool> shouldAutoCheck() async {
     if (_followedList.isEmpty) return false;
+    if (!await isAutoCheckEnabled()) return false;
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_prefLastAutoCheck);

@@ -167,7 +167,15 @@ class AppState extends ChangeNotifier {
   }
 
   // 初始化 - 请求权限并设置默认下载目录
+  //
+  // settings_page 每次挂载都会调它（`Future.microtask(() => init())`），
+  // 而路由来回 push/pop 会重新挂载。没有守卫时每次都会重新弹一遍权限框、
+  // 从外部备份再覆盖一次内存设置、并重复恢复已完成任务。
+  bool _initStarted = false;
+
   Future<void> init() async {
+    if (_initStarted) return;
+    _initStarted = true;
     await _loadSettings();  // 先加载保存的设置
     await UiStyle.load();   // 恢复界面风格（毛玻璃开关）
     await searchHistory.load();  // 恢复搜索历史
@@ -176,6 +184,8 @@ class AppState extends ChangeNotifier {
     await initDownloadDir();
     // 下载目录确定后，尝试从外部备份恢复设置（覆盖卸载重装导致的丢失）
     await _restoreSettingsFromExternal();
+    // 备份文件可能覆盖了下载目录本身，重新落盘一次保证一致
+    await _saveSettings();
     // 设置外部数据库路径
     _downloadManager.externalDbPath = downloadDir.isNotEmpty ? downloadDir : null;
     // 设置关注作者服务的外部数据库路径
@@ -339,6 +349,12 @@ class AppState extends ChangeNotifier {
     appLockEnabled = prefs.getBool('appLockEnabled') ?? false;
     privacyMode = prefs.getBool('privacyMode') ?? false;
     nomediaEnabled = prefs.getBool('nomediaEnabled') ?? false;
+    // 恢复用户选择的下载目录；为空时由 initDownloadDir() 走平台默认路径。
+    // 之前这里没有读取，导致每次启动都当成"未设置"而回退。
+    final savedDir = prefs.getString('downloadDir');
+    if (savedDir != null && savedDir.isNotEmpty) {
+      downloadDir = savedDir;
+    }
     
     notifyListeners();
   }
@@ -362,7 +378,9 @@ class AppState extends ChangeNotifier {
       prefs.setBool('appLockEnabled', appLockEnabled),
       prefs.setBool('privacyMode', privacyMode),
       prefs.setBool('nomediaEnabled', nomediaEnabled),
-      prefs.setStringList('customSites', customSites),
+      // 下载目录必须持久化：此前它不在键列表里，
+      // 用户改完目录一重启就回退到默认路径，下载继续写旧目录。
+      prefs.setString('downloadDir', downloadDir),
     ]);
 
     // 同步一份到下载目录，卸载重装后可恢复（SharedPreferences 会随卸载清空）
@@ -581,9 +599,67 @@ class AppState extends ChangeNotifier {
   }
 
   // 设置下载目录
-  void setDownloadDir(String dir) {
+  //
+  // 此前既不落盘也不失效缓存：重启后路径回退到默认目录，
+  // 且 _crawler 仍指向旧目录下的数据库，表现为「.db 里的下载历史与
+  // 关注作者整个消失」，用户会以为记录全丢。
+  Future<void> setDownloadDir(String dir) async {
+    if (dir.isEmpty || dir == downloadDir) return;
+    final oldDir = downloadDir;
     downloadDir = dir;
+
+    // 1. 持久化，否则重启即回退
+    await _saveSettings();
+
+    // 2. 让懒建的爬虫与下载管理器重新指向新目录下的数据库
+    _crawler = null;
+    _downloadManager.resetForNewDirectory(
+      externalDbPath: dir.isNotEmpty ? dir : null,
+    );
+    followedAuthorsService.setExternalDbPath(dir.isNotEmpty ? dir : null);
+
+    // 3. 新目录下重新准备 .nomedia 与目录本身
+    await initDownloadDir();
+    await _saveSettings();
+
+    // 4. 重新加载新目录里的关注列表与历史
+    await followedAuthorsService.refresh();
+
+    // 5. 尽力把旧目录的数据库搬过去，避免用户的记录看起来"消失"
+    await _migrateOldDirectoryData(oldDir, dir);
+
     notifyListeners();
+  }
+
+  /// 把旧下载目录 `.db` 下的数据库复制到新目录（不覆盖已有文件）。
+  ///
+  /// 直接删旧文件风险太高（用户可能只是临时换目录看看），
+  /// 因此只做复制；旧目录数据保留，用户可自行清理。
+  Future<void> _migrateOldDirectoryData(String oldDir, String newDir) async {
+    if (oldDir.isEmpty || newDir.isEmpty || oldDir == newDir) return;
+    try {
+      final oldDbDir = Directory('$oldDir/.db');
+      if (!await oldDbDir.exists()) return;
+      final newDbDir = Directory('$newDir/.db');
+      if (!await newDbDir.exists()) await newDbDir.create(recursive: true);
+
+      for (final name in const [
+        'download_tasks.db',
+        'download_history.db',
+        'followed_authors.db',
+        'settings_backup.json',
+      ]) {
+        final src = File('${oldDbDir.path}/$name');
+        if (!await src.exists()) continue;
+        final dst = File('${newDbDir.path}/$name');
+        // 已存在就不动，避免覆盖用户在新目录里已有的记录
+        if (await dst.exists()) continue;
+        await src.copy(dst.path);
+        Logger().logSync('AppState', '已迁移 $name 到新下载目录');
+      }
+    } catch (e) {
+      Logger().logSync('AppState', '迁移旧目录数据失败: $e');
+    }
   }
 
   // 切换Debug模式

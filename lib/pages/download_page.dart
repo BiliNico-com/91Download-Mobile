@@ -1340,7 +1340,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
   double _currentBrightness = 0.5;
   double _currentVolume = 0.5;
   bool _showVerticalIndicator = false;
-  double _savedBrightness = 0.5;
   
   // ====== 长按倍速播放 ======
   bool _isLongPressing = false;
@@ -1570,8 +1569,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
       await _videoPlayerController.initialize();
       
       try {
-        _savedBrightness = await BrightnessService.getBrightness();
-        _currentBrightness = _savedBrightness;
+        _currentBrightness = await BrightnessService.getBrightness();
         await BrightnessService.saveBrightness();
       } catch (_) {}
       
@@ -1763,7 +1761,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     setState(() {
       if (_verticalDragType == 'brightness') {
         _currentBrightness = newValue;
-        try { BrightnessService.setBrightness(newValue); } catch (_) {}
+        // 失败时由 BrightnessService 内部打印日志，不再静默吞掉
+        BrightnessService.setBrightness(newValue);
       } else {
         _currentVolume = newValue;
         VolumeController().setVolume(newValue, showSystemUI: false);
@@ -1874,7 +1873,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> with WidgetsBindingOb
     _hideControlsTimer?.cancel();
     _floatingCheckTimer?.cancel();
     _overlaySubscription?.cancel();
-    try { BrightnessService.restoreBrightness(); } catch (_) {}
+    // volume_controller 是单例且只保留一个订阅：这里不解除，
+    // 每次进出播放页都会泄漏一个 EventChannel 订阅 + 原生监听器
+    VolumeController().removeListener();
+    BrightnessService.restoreBrightness();
     _videoPlayerController.dispose();
     super.dispose();
   }

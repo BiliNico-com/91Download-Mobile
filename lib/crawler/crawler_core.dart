@@ -13,13 +13,80 @@ import 'config.dart';
 import '../models/video_info.dart';
 import '../utils/logger.dart';
 
+/// 单个下载任务的控制句柄与进度回调容器。
+///
+/// 每个 downloadVideo 调用持有独立实例，避免并发任务之间互相串扰：
+/// - [pause]/[resume]/[stop] 只影响自己的下载循环
+/// - [onProgress]/[onOverallProgress] 只把进度推给自己的任务
+class DownloadControl {
+  bool _stopFlag = false;
+  bool _pauseFlag = false;
+
+  /// 回调
+  Function(String msg, String level)? onLog;
+  Function(double progress, String msg)? onProgress;
+  Function(int downloaded, int total)? onOverallProgress;
+
+  /// 本次下载已接收的字节总数（用于速度显示）
+  int receivedBytes = 0;
+
+  /// 失败原因。
+  ///
+  /// downloadVideo 只用 bool 返回成败，具体原因（加密流不支持、
+  /// 地址解析失败……）此前只进日志，界面上一律显示笼统的「下载失败」。
+  /// 把原因挂在这里，让 DownloadManager 能写进任务的 error 字段展示给用户。
+  String? failureReason;
+
+  bool get isStopped => _stopFlag;
+  bool get isPaused => _pauseFlag;
+
+  /// 暂停等待器：pause 挂起时在这里等 resume/stop 叫醒
+  Completer<void>? _pauseWaiter;
+
+  void stop() {
+    _stopFlag = true;
+    // 唤醒可能在暂停中挂起的下载循环，否则 stop 会一直等待
+    _pauseFlag = false;
+    _wakePause();
+  }
+
+  void pause() {
+    _pauseFlag = true;
+  }
+
+  void resume() {
+    _pauseFlag = false;
+    _wakePause();
+  }
+
+  void reset() {
+    _stopFlag = false;
+    _pauseFlag = false;
+    _wakePause();
+  }
+
+  void _wakePause() {
+    final waiter = _pauseWaiter;
+    _pauseWaiter = null;
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+  }
+
+  /// 若处于暂停状态则挂起，直到 resume()/stop() 被调用。
+  /// 返回 true 表示应该终止下载（被 stop 打断），false 表示可以继续。
+  Future<bool> awaitIfPaused() async {
+    while (_pauseFlag && !_stopFlag) {
+      final waiter = _pauseWaiter ??= Completer<void>();
+      await waiter.future;
+    }
+    return _stopFlag;
+  }
+}
+
 class CrawlerCore {
   final Dio _dio;
   String baseUrl;
   String? imgBaseUrl;
   String _siteType = "original";  // 默认 original，会自动检测
-  bool _stopFlag = false;
-  bool _pauseFlag = false;
   
   /// TS切片并发下载数（可由 DownloadManager 动态设置）
   int _maxConcurrentDownloads = 32;
@@ -32,16 +99,63 @@ class CrawlerCore {
   // Debug开关：是否保存HTML到文件
   bool saveDebugHtml = false;
   
-  // 回调
+  /// 全局日志回调（各任务共用，只承载日志不承载进度）
   Function(String msg, String level)? onLog;
-  Function(double progress, String msg)? onProgress;
-  Function(int downloaded, int total)? onOverallProgress;
-
-  /// 本次下载已接收的字节总数（用于速度显示）
-  int _receivedBytes = 0;
   
   // 外部数据库路径（用于持久化保存，卸载后不丢失）
   String? externalDbPath;
+
+  /// 每个下载任务一份的独立控制句柄。
+  ///
+  /// 此前 pause/stop 与进度回调都是 CrawlerCore 上的全局单槽字段，
+  /// 而 maxConcurrentTasks 默认就是 2、可上调到 5，多个任务共用同一个
+  /// CrawlerCore 实例时：暂停 A 会连带暂停 B，A 的进度会写进 B 的界面，
+  /// 任务结束还会把回调置 null 让仍在跑的任务停止更新。
+  ///
+  /// 这里用 Zone 把句柄与「发起下载的那条异步链」绑定：
+  /// `runZoned` 期间在该 Zone 内创建的所有 Future/async 函数
+  /// 都能通过 [control] 拿到同一份句柄，且各并发下载互不干扰。
+  DownloadControl? _zoneControl;
+
+  /// 创建一份绑定到当前异步链的控制句柄。
+  ///
+  /// 用法（见 downloadVideoAt）：
+  /// ```dart
+  /// final ctrl = createControl();
+  /// await runZoned(() => downloadVideo(...), zoneValues: {_zoneKey: ctrl});
+  /// ```
+  DownloadControl createControl() => DownloadControl();
+
+  static final Object _zoneKey = Object();
+
+  /// 当前下载的控制句柄。
+  ///
+  /// 优先取 Zone 绑定那一份；若调用方没有用 runZoned 包裹
+  /// （例如老的同步入口），退回一个全局兜底句柄，
+  /// 保证任何调用路径都不会拿到 null。
+  DownloadControl get control {
+    final scoped = Zone.current[_zoneKey];
+    if (scoped is DownloadControl) return scoped;
+    return _zoneControl ??= DownloadControl();
+  }
+
+  /// 开启一次受控下载：返回该任务独占的控制句柄，
+  /// 并把它绑定到当前 Zone，让下载链路上的 [control] 都取到同一份。
+  DownloadControl beginDownload() {
+    return DownloadControl();
+  }
+
+  /// 在绑定好 [ctrl] 的 Zone 中执行下载。
+  ///
+  /// 下载流程里所有 `control` 读取（暂停检查、进度上报）
+  /// 都会命中这份句柄；两个并发任务各自在不同的 Zone 中运行，
+  /// 因此互不可见、互不干扰。
+  Future<T> runWithControl<T>(
+    DownloadControl ctrl,
+    Future<T> Function() body,
+  ) {
+    return runZoned(body, zoneValues: {_zoneKey: ctrl});
+  }
 
   CrawlerCore({
     required this.baseUrl,
@@ -247,13 +361,30 @@ class CrawlerCore {
               title TEXT,
               url TEXT,
               file_path TEXT,
+              cover TEXT,
+              author TEXT,
+              duration TEXT,
               upload_date TEXT,
               download_time TEXT,
               file_exists INTEGER DEFAULT 1
             )
           ''');
         },
-        version: 1,
+        onUpgrade: (db, oldVersion, newVersion) async {
+          // 历史表原先只存 id/标题/url/路径，恢复已完成任务时
+          // 界面却要渲染封面与作者，于是重启后一片灰块、作者空白。
+          // v2 把封面/作者/时长一并落盘。
+          if (oldVersion < 2) {
+            final existing = await db.rawQuery('PRAGMA table_info(download_history)');
+            final names = existing.map((r) => r['name']).toSet();
+            for (final col in ['cover', 'author', 'duration']) {
+              if (!names.contains(col)) {
+                await db.execute('ALTER TABLE download_history ADD COLUMN $col TEXT');
+              }
+            }
+          }
+        },
+        version: 2,
       );
       _dbInitialized = true;
     } catch (e) {
@@ -1276,11 +1407,20 @@ class CrawlerCore {
 
   /// 下载视频
   Future<bool> downloadVideo(VideoInfo video, String savePath) async {
+    // 本次下载独占的控制句柄：暂停/停止/进度回调都挂在它上面，
+    // 避免与并发的其它任务互相干扰。
+    final ctrl = beginDownload();
+    return runWithControl(ctrl, () => _downloadVideoInner(video, savePath, ctrl));
+  }
+
+  Future<bool> _downloadVideoInner(
+      VideoInfo video, String savePath, DownloadControl ctrl) async {
     if (video.m3u8Url == null) {
       // 先获取 m3u8 地址
       final detail = await getVideoDetail(video);
       if (detail == null || detail.m3u8Url == null) {
-        onLog?.call('获取视频地址失败', 'error');
+        ctrl.onLog?.call('获取视频地址失败', 'error');
+        ctrl.failureReason = '获取视频地址失败，可能是站点改版或该视频已下架';
         return false;
       }
       video = detail;
@@ -1293,13 +1433,11 @@ class CrawlerCore {
     
     if (isDirectMp4) {
       // 直接下载 MP4 文件
-      return await _downloadDirectMp4(video, videoUrl, savePath);
+      return await _downloadDirectMp4(video, videoUrl, savePath, ctrl);
     }
     
-    onLog?.call('开始下载: ${video.title}', 'info');
+    ctrl.onLog?.call('开始下载: ${video.title}', 'info');
     
-    // 重置本次下载的字节统计（速度显示用）
-    _receivedBytes = 0;
     
     try {
       // 下载 m3u8 文件（禁用缓存）
@@ -1307,13 +1445,22 @@ class CrawlerCore {
       final m3u8Content = m3u8Resp.data.toString();
       
       // 解析 TS 切片列表
+      // 加密流必须在动手下载前拦住：不做解密的拼接结果一定是坏文件，
+      // 而失败要趁早，不能让用户等下载完才发现播不了。
+      if (_isEncryptedM3u8(m3u8Content)) {
+        ctrl.onLog?.call('该视频受加密保护（AES-128），暂不支持下载', 'error');
+        ctrl.failureReason = '该视频受加密保护，暂不支持下载';
+        return false;
+      }
+
       final tsUrls = _parseM3u8(m3u8Content, videoUrl);
       if (tsUrls.isEmpty) {
-        onLog?.call('解析 TS 列表失败', 'error');
+        ctrl.onLog?.call('解析 TS 列表失败', 'error');
+        ctrl.failureReason = '解析视频地址失败，可能是站点改版';
         return false;
       }
       
-      onLog?.call('共 ${tsUrls.length} 个切片', 'info');
+      ctrl.onLog?.call('共 ${tsUrls.length} 个切片', 'info');
       
       // 创建临时目录
       final tempDir = Directory('${savePath}_temp');
@@ -1342,7 +1489,7 @@ class CrawlerCore {
         if (!force && !due) return;
         lastReported = value > lastReported ? value : lastReported;
         lastProgressUpdate = now;
-        onProgress?.call(lastReported, msg);
+        ctrl.onProgress?.call(lastReported, msg);
       }
 
       // ─── 断点续传：统计已缓存的切片 ───
@@ -1360,7 +1507,7 @@ class CrawlerCore {
         cachedSegments = 0;
       }
       if (cachedSegments > 0) {
-        onLog?.call('检测到 $cachedSegments/$total 个已下载切片，将续传',
+        ctrl.onLog?.call('检测到 $cachedSegments/$total 个已下载切片，将续传',
             'info');
       }
 
@@ -1397,7 +1544,7 @@ class CrawlerCore {
       Future<void> runOne(int i) async {
         final tsUrl = tsUrls[i];
         final tsPath = '${tempDir.path}/seg_${i.toString().padLeft(5, '0')}.ts';
-        final ok = await _downloadTs(tsUrl, tsPath);
+        final ok = await _downloadTs(tsUrl, tsPath, ctrl);
         downloaded[i] = ok;        finished++;
         reportProgress('下载中 $finished/$total');
         signalDone();
@@ -1405,6 +1552,7 @@ class CrawlerCore {
 
       var nextIndex = 0;
       var inFlight = 0;
+      var paused = false;
 
       // 初始填满窗口
       while (inFlight < _maxConcurrentDownloads && nextIndex < total) {
@@ -1415,10 +1563,15 @@ class CrawlerCore {
 
       // 每完成一个就补发下一个，始终保持窗口满载
       while (inFlight > 0) {
-        if (_stopFlag) break;
+        if (ctrl.isStopped) break;
         await waitAny();
         inFlight--;
-        if (_stopFlag) break;
+        if (ctrl.isStopped) break;
+        // 暂停时不再派发新切片，等在途切片收尾后挂起
+        if (await ctrl.awaitIfPaused()) {
+          paused = true;
+          break;
+        }
         if (nextIndex < total) {
           unawaited(runOne(nextIndex));
           nextIndex++;
@@ -1426,17 +1579,26 @@ class CrawlerCore {
         }
       }
 
-      // 收尾：等在途任务全部结束
+      // 收尾：等在途任务全部结束（暂停/停止时同样要收尾，避免半截写入）
       while (inFlight > 0) {
         await waitAny();
         inFlight--;
       }
 
       // ✅ 下载完成后强制上报一次最终进度
-      reportProgress('下载中 $finished/$total', force: true);
+      reportProgress(
+        paused ? '已暂停 $finished/$total' : '下载中 $finished/$total',
+        force: true,
+      );
+
+      if (paused) {
+        final doneCount = downloaded.where((d) => d).length;
+        ctrl.onLog?.call('已暂停，保留 $doneCount 个已下载切片，恢复后可续传', 'info');
+        return false;
+      }
       
-      if (_stopFlag) {
-        onLog?.call('下载已停止', 'warn');
+      if (ctrl.isStopped) {
+        ctrl.onLog?.call('下载已停止', 'warn');
         return false;
       }
       
@@ -1449,7 +1611,7 @@ class CrawlerCore {
       }
       
       for (var retryRound = 1; retryRound <= 3 && failedIndices.isNotEmpty; retryRound++) {
-        onLog?.call('重试第 $retryRound 轮，${failedIndices.length} 个切片失败', 'warn');
+        ctrl.onLog?.call('重试第 $retryRound 轮，${failedIndices.length} 个切片失败', 'warn');
         
         final stillFailed = <int>[];
         // 重试同样使用滑动窗口（同上，用未消费计数避免丢信号）
@@ -1477,7 +1639,7 @@ class CrawlerCore {
         Future<void> runRetry(int idx) async {
           final tsUrl = tsUrls[idx];
           final tsPath = '${tempDir.path}/seg_${idx.toString().padLeft(5, '0')}.ts';
-          final ok = await _downloadTs(tsUrl, tsPath);
+          final ok = await _downloadTs(tsUrl, tsPath, ctrl);
           if (ok) {
             downloaded[idx] = true;
             // 重试成功也计入进度；reportProgress 内部保证不后退
@@ -1500,10 +1662,15 @@ class CrawlerCore {
         }
 
         while (retryInFlight > 0) {
-          if (_stopFlag) break;
+          if (ctrl.isStopped) break;
           await waitRetryAny();
           retryInFlight--;
-          if (_stopFlag) break;
+          if (ctrl.isStopped) break;
+          // 暂停时停止派发重试切片
+          if (await ctrl.awaitIfPaused()) {
+            paused = true;
+            break;
+          }
           if (retryCursor < failedIndices.length) {
             unawaited(runRetry(failedIndices[retryCursor]));
             retryCursor++;
@@ -1519,8 +1686,14 @@ class CrawlerCore {
 
         failedIndices = stillFailed;
         
-        if (_stopFlag) {
-          onLog?.call('下载已停止', 'warn');
+        if (paused) {
+          final doneCount = downloaded.where((d) => d).length;
+          ctrl.onLog?.call('已暂停，保留 $doneCount 个已下载切片，恢复后可续传', 'info');
+          return false;
+        }
+
+        if (ctrl.isStopped) {
+          ctrl.onLog?.call('下载已停止', 'warn');
           return false;
         }
       }
@@ -1534,18 +1707,20 @@ class CrawlerCore {
         final failedSummary = failedIndices.length <= 10 
             ? failedSegNums 
             : '$failedSegNums ... 共${failedIndices.length}个';
-        onLog?.call('下载失败：${failedIndices.length} 个切片无法下载（$successCount/${tsUrls.length}），失败切片: $failedSummary', 'error');
+        ctrl.onLog?.call('下载失败：${failedIndices.length} 个切片无法下载（$successCount/${tsUrls.length}），失败切片: $failedSummary', 'error');
+        ctrl.failureReason = '${failedIndices.length} 个切片下载失败（已成功 $successCount/${tsUrls.length}），可重试续传';
         // 断点续传：保留临时目录，下次下载会跳过已成功的切片
-        onLog?.call('已保留 $successCount 个已下载切片，重试时可续传', 'info');
+        ctrl.onLog?.call('已保留 $successCount 个已下载切片，重试时可续传', 'info');
         return false;
       }
       
       // 合并 TS 文件（带完整性校验）
-      onLog?.call('合并文件...', 'info');
-      final mergeOk = await _mergeTsFiles(tempDir.path, savePath, downloaded);
+      ctrl.onLog?.call('合并文件...', 'info');
+      final mergeOk = await _mergeTsFiles(tempDir.path, savePath, downloaded, ctrl);
       if (!mergeOk) {
-        onLog?.call('合并失败：没有有效的切片文件', 'error');
+        ctrl.onLog?.call('合并失败：没有有效的切片文件', 'error');
         await tempDir.delete(recursive: true);
+        ctrl.failureReason = '合并失败：没有有效的切片文件';
         return false;
       }
       
@@ -1555,16 +1730,40 @@ class CrawlerCore {
       // 保存到数据库
       await _saveToHistory(video, savePath);
       
-      onLog?.call('下载完成: ${video.title}', 'info');
+      ctrl.onLog?.call('下载完成: ${video.title}', 'info');
       return true;
       
     } catch (e) {
-      onLog?.call('下载失败: $e', 'error');
+      ctrl.onLog?.call('下载失败: $e', 'error');
+      ctrl.failureReason = '下载失败: $e';
       // 断点续传：异常时同样保留已下载的切片，便于重试续传。
       // 仅在明确不再重试（用户删除任务）时才清理，见 _cleanupTempDir。
-      onLog?.call('已保留临时文件，重试时可续传', 'info');
+      ctrl.onLog?.call('已保留临时文件，重试时可续传', 'info');
       return false;
     }
+  }
+
+  /// 检测 M3U8 是否声明了加密（`#EXT-X-KEY`）。
+  ///
+  /// 本 App 不做分片解密，而 `_parseM3u8` 会跳过所有 `#` 开头的行，
+  /// 于是加密流会被当成明文下载：分片按密文落盘、直接拼接，
+  /// 结果进度 100%、界面显示「下载完成」，点开却是黑屏/花屏。
+  /// 静默产出垃圾文件是最坏的一种失败，因此这里必须在开始下载前拦住。
+  ///
+  /// `METHOD=NONE` 表示未加密，不算。
+  static bool _isEncryptedM3u8(String content) {
+    for (final rawLine in content.split('\n')) {
+      final line = rawLine.trim();
+      if (!line.startsWith('#EXT-X-KEY')) continue;
+      final upper = line.toUpperCase();
+      if (upper.contains('METHOD=NONE')) continue;
+      if (upper.contains('METHOD=AES-128') ||
+          upper.contains('METHOD=SAMPLE-AES') ||
+          upper.contains('METHOD=')) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// 解析 M3U8
@@ -1592,7 +1791,7 @@ class CrawlerCore {
   ///
   /// 断点续传：如果目标文件已存在且通过校验，直接复用，不再重新下载。
   /// 切片按索引命名（seg_00042.ts），因此重试时能精确对应到同一切片。
-  Future<bool> _downloadTs(String url, String savePath) async {
+  Future<bool> _downloadTs(String url, String savePath, DownloadControl ctrl) async {
     // ── 续传检查：已存在且合法的切片直接复用 ──
     try {
       final existing = File(savePath);
@@ -1604,7 +1803,7 @@ class CrawlerCore {
           final head = await raf.readByte();
           await raf.close();
           if (head == 0x47) {
-            _receivedBytes += len;
+            ctrl.receivedBytes += len;
             return true;
           }
         }
@@ -1630,10 +1829,6 @@ class CrawlerCore {
         
         final bytes = resp.data as List<int>;
 
-        // 累加已接收字节，并上报总体字节进度（用于显示速度）
-        _receivedBytes += bytes.length;
-        onOverallProgress?.call(_receivedBytes, 0);
-        
         // ✅ 完整性校验1：检查数据是否为空
         if (bytes.isEmpty) {
           Logger().logSync('Download', '切片数据为空: $url');
@@ -1653,6 +1848,11 @@ class CrawlerCore {
           continue;
         }
         
+        // 校验通过后才计入字节统计：此前在验证之前累加，
+        // 导致坏切片/重试的字节也被算进速度，显示值虚高
+        ctrl.receivedBytes += bytes.length;
+        ctrl.onOverallProgress?.call(ctrl.receivedBytes, 0);
+        
         final file = File(savePath);
         await file.writeAsBytes(bytes);
         return true;
@@ -1667,14 +1867,15 @@ class CrawlerCore {
   }
 
   /// 直接下载 MP4 文件（用于 porn91 等提供直链的站点）
-  Future<bool> _downloadDirectMp4(VideoInfo video, String mp4Url, String savePath) async {
-    onLog?.call('开始下载 MP4: ${video.title}', 'info');
-    onLog?.call('MP4 URL: $mp4Url', 'debug');
+  Future<bool> _downloadDirectMp4(
+      VideoInfo video, String mp4Url, String savePath,
+      DownloadControl ctrl) async {
+    ctrl.onLog?.call('开始下载 MP4: ${video.title}', 'info');
+    ctrl.onLog?.call('MP4 URL: $mp4Url', 'debug');
 
     // 直链下载同样需要把字节数上报给 onOverallProgress，
     // 否则 DownloadTask 拿不到速度（downloadSpeed 恒为 0 → 界面不显示速度）。
     // TS 切片路径在收到每个切片时上报，这里在 onReceiveProgress 里上报。
-    _receivedBytes = 0;
     DateTime? lastSpeedReport;
     const speedReportIntervalMs = 300;  // 节流，避免高频刷新界面
 
@@ -1684,105 +1885,182 @@ class CrawlerCore {
           now.difference(lastSpeedReport!).inMilliseconds >= speedReportIntervalMs;
       if (!due) return;
       lastSpeedReport = now;
-      _receivedBytes = received;
-      onOverallProgress?.call(received, total);
+      ctrl.receivedBytes = received;
+      ctrl.onOverallProgress?.call(received, total);
     }
 
+    final partFile = File('$savePath.part');
     try {
       // 获取文件大小
       final headResp = await _dio.head(mp4Url);
       final contentLength = int.tryParse(headResp.headers.value('content-length') ?? '0') ?? 0;
       
       if (contentLength > 0) {
-        onLog?.call('文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB', 'info');
+        ctrl.onLog?.call('文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB', 'info');
       }
-      
-      // 下载文件
+
+      // ── 断点续传 ──
+      // 直链此前用 _dio.download 一次拉完，无 Range 头、失败也不清半成品：
+      // 大文件重试要从 0 开始白下，目录里还会留下看似正常、实际播到一半就断的 mp4。
+      // 改为先下到 .part，带上 Range 头续传，成功后原子改名到最终路径。
+      int alreadyBytes = 0;
+      if (await partFile.exists()) {
+        final len = await partFile.length();
+        if (contentLength > 0 && len >= contentLength) {
+          // 上次其实已经下完，只是没改名
+          await partFile.rename(savePath);
+          await _saveToHistory(video, savePath);
+          ctrl.onLog?.call('检测到已完成的临时文件，直接使用', 'info');
+          return true;
+        }
+        if (contentLength <= 0 || len < contentLength) {
+          alreadyBytes = len;
+          if (alreadyBytes > 0) {
+            ctrl.onLog?.call(
+                '断点续传：已下载 ${(alreadyBytes / 1024 / 1024).toStringAsFixed(1)} MB',
+                'info');
+          }
+        }
+      }
+
+      final totalBytes = contentLength > 0 ? contentLength : 0;
+
       await _dio.download(
         mp4Url,
-        savePath,
+        partFile.path,
+        options: Options(
+          headers: alreadyBytes > 0 ? {'Range': 'bytes=$alreadyBytes-'} : null,
+        ),
+        deleteOnError: false,
         onReceiveProgress: (received, total) {
-          // 上报字节数，让上层算出下载速度
-          reportBytes(received, total > 0 ? total : contentLength);
+          // 续传时 received 是本次的字节数，加上已存部分才是整体进度
+          final overall = alreadyBytes + received;
+          reportBytes(overall, totalBytes > 0 ? totalBytes : total);
 
-          if (total > 0) {
-            final progress = received / total;
-            final downloadedMB = (received / 1024 / 1024).toStringAsFixed(1);
-            final totalMB = (total / 1024 / 1024).toStringAsFixed(1);
-            onProgress?.call(progress, '$downloadedMB/$totalMB MB');
-          } else if (contentLength > 0) {
-            final progress = received / contentLength;
-            final downloadedMB = (received / 1024 / 1024).toStringAsFixed(1);
-            final totalMB = (contentLength / 1024 / 1024).toStringAsFixed(1);
-            onProgress?.call(progress, '$downloadedMB/$totalMB MB');
+          final denom = totalBytes > 0 ? totalBytes : (total > 0 ? total : 0);
+          if (denom > 0) {
+            final progress = (overall / denom).clamp(0.0, 1.0);
+            final downloadedMB = (overall / 1024 / 1024).toStringAsFixed(1);
+            final totalMB = (denom / 1024 / 1024).toStringAsFixed(1);
+            ctrl.onProgress?.call(progress, '$downloadedMB/$totalMB MB');
           }
         },
       );
+
+      // 下载完成：原子改名到最终路径
+      if (await partFile.exists()) {
+        await partFile.rename(savePath);
+      }
       
       // 保存到历史记录
       await _saveToHistory(video, savePath);
       
-      onLog?.call('下载完成: ${video.title}', 'info');
+      ctrl.onLog?.call('下载完成: ${video.title}', 'info');
       return true;
       
     } catch (e) {
-      onLog?.call('下载失败: $e', 'error');
+      // 保留 .part 供下次续传；只有明确被停止时才清掉
+      if (ctrl.isStopped && await partFile.exists()) {
+        try {
+          await partFile.delete();
+        } catch (_) {}
+      }
+      ctrl.onLog?.call('下载失败: $e', 'error');
+      ctrl.failureReason = '下载失败: $e';
       return false;
     }
   }
 
   /// 合并 TS 文件（带完整性校验）
   /// [downloaded] 下载状态列表，用于跳过失败的切片
-  Future<bool> _mergeTsFiles(String tempDir, String outputPath, List<bool>? downloaded) async {
+  Future<bool> _mergeTsFiles(String tempDir, String outputPath,
+      List<bool>? downloaded, [DownloadControl? ctrl]) async {
     final dir = Directory(tempDir);
     final files = await dir.list().toList();
-    
-    // 按文件名排序
-    files.sort((a, b) => a.path.compareTo(b.path));
-    
-    final outputFile = File(outputPath);
-    final sink = outputFile.openWrite();
-    
-    int validCount = 0;
-    int skippedCount = 0;
-    
-    for (var i = 0; i < files.length; i++) {
-      final file = files[i];
-      // 如果有下载状态记录，跳过失败的切片
-      if (downloaded != null && i < downloaded.length && !downloaded[i]) {
-        Logger().logSync('Merge', '跳过缺失切片 ${i + 1}');
-        skippedCount++;
+
+    // ── 关键：按下标定位切片，而不是按目录列表位置 ──
+    // 旧实现用 dir.list() 的下标去查 downloaded[i]，只要 _temp 里
+    // 存在任何非 seg_<n>.ts 的残留文件或分片缺口，后面每个下标都会错位，
+    // 于是把失败切片的标记套到错误的文件上，合并出内容错乱却在界面上
+    // 显示「下载完成」的视频。
+    final segPattern = RegExp(r'seg_(\d+)\.ts$');
+    final indexed = <MapEntry<int, File>>[];
+    for (final f in files) {
+      if (f is! File) continue;
+      final m = segPattern.firstMatch(f.path);
+      if (m == null) {
+        Logger().logSync('Merge', '跳过非切片文件: ${f.path}');
         continue;
       }
-      if (file is File) {
+      final n = int.tryParse(m.group(1)!);
+      if (n == null) continue;
+      indexed.add(MapEntry(n, f));
+    }
+    indexed.sort((a, b) => a.key.compareTo(b.key));
+
+    final outputFile = File(outputPath);
+    // 用 try/finally 保证异常路径下 sink 也会关闭，避免半截文件与句柄泄漏
+    final sink = outputFile.openWrite();
+    int validCount = 0;
+    int skippedCount = 0;
+
+    try {
+      for (final entry in indexed) {
+        final segIndex = entry.key;
+        final file = entry.value;
+
+        // 按切片序号查下载状态
+        if (downloaded != null) {
+          if (segIndex >= downloaded.length) {
+            Logger().logSync('Merge', '跳过越界切片 seg_$segIndex');
+            skippedCount++;
+            continue;
+          }
+          if (!downloaded[segIndex]) {
+            Logger().logSync('Merge', '跳过缺失切片 ${segIndex + 1}');
+            skippedCount++;
+            continue;
+          }
+        }
+
         try {
-          final bytes = await file.readAsBytes();
-          
-          // ✅ 合并前再次校验文件完整性
-          if (bytes.isEmpty) {
+          // ── 流式拷贝 ──
+          // 旧实现对每个切片 readAsBytes() 全量读入再 sink.add，
+          // 一个 1GB 的片子会产生同等量级的内存峰值，合并阶段被 OOM 杀掉，
+          // 而分片其实都已经下完了。改为边读边写，内存占用与文件大小无关。
+          int written = 0;
+          int firstByte = -1;
+          await for (final chunk in file.openRead()) {
+            if (firstByte < 0) firstByte = chunk.isEmpty ? -1 : chunk[0];
+            if (written == 0 && chunk.isEmpty) continue;
+            sink.add(chunk);
+            written += chunk.length;
+          }
+
+          if (written == 0) {
             Logger().logSync('Merge', '跳过空文件: ${file.path}');
             skippedCount++;
             continue;
           }
-          if (bytes[0] != 0x47) {
+          // 合并前再校验一次 TS 同步字节（0x47）
+          if (firstByte != 0x47) {
             Logger().logSync('Merge', '跳过无效TS文件(魔数错误): ${file.path}');
             skippedCount++;
             continue;
           }
-          
-          sink.add(bytes);
+
           validCount++;
         } catch (e) {
           Logger().logSync('Merge', '读取文件失败: ${file.path}, $e');
           skippedCount++;
         }
       }
+    } finally {
+      await sink.close();
     }
-    
-    await sink.close();
-    
+
     // ✅ 返回合并结果
-    onLog?.call('合并完成: $validCount 个有效切片, 跳过 $skippedCount 个', 'info');
+    ctrl?.onLog?.call('合并完成: $validCount 个有效切片, 跳过 $skippedCount 个', 'info');
     return validCount > 0;
   }
 
@@ -1800,6 +2078,12 @@ class CrawlerCore {
         'title': video.title,
         'url': video.url,
         'file_path': filePath,
+        // 封面/作者/时长必须一并落盘，否则重启后
+        // 从历史恢复出来的「已下载」项没有封面和作者。
+        'cover': video.cover,
+        'author': video.author,
+        'duration': video.duration,
+        'upload_date': video.uploadDate,
         'download_time': DateTime.now().toIso8601String(),
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
@@ -1869,23 +2153,18 @@ class CrawlerCore {
   }
 
   // ==================== 控制方法 ====================
+  // 这些方法作用于「当前正在跑的下载」。并发多任务时请改用
+  // DownloadManager 持有的每任务 DownloadControl 句柄。
 
-  void stop() {
-    _stopFlag = true;
-  }
+  void stop() => control.stop();
 
-  void pause() {
-    _pauseFlag = true;
-  }
+  /// 暂停：不再派发新切片，等在途切片收尾后挂起。
+  /// 已下载的切片保留在临时目录，恢复后据此续传。
+  void pause() => control.pause();
 
-  void resume() {
-    _pauseFlag = false;
-  }
+  void resume() => control.resume();
 
-  void reset() {
-    _stopFlag = false;
-    _pauseFlag = false;
-  }
+  void reset() => control.reset();
 
   /// 更换站点
   void changeSite(String newBaseUrl) {

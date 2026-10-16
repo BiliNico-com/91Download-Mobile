@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' show FontFeature;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
@@ -14,6 +15,7 @@ import '../utils/open_directory.dart';
 import '../theme/ui_style.dart';
 import 'pin_input_dialog.dart';
 import 'cache_manager_page.dart';
+import 'search_history_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -24,6 +26,9 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClientMixin {
   final PinService _pinService = PinService();
+
+  /// 作者更新自动检查开关（默认开）
+  bool _followedAutoCheck = true;
   
   @override
   bool get wantKeepAlive => true;  // 保持状态
@@ -31,8 +36,11 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   @override
   void initState() {
     super.initState();
-    Future.microtask(() {
-      context.read<AppState>().init();
+    Future.microtask(() async {
+      final appState = context.read<AppState>();
+      await appState.init();
+      final enabled = await appState.followedAuthorsService.isAutoCheckEnabled();
+      if (mounted) setState(() => _followedAutoCheck = enabled);
     });
   }
   
@@ -318,6 +326,24 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       ),
     );
   }
+
+  /// 打开搜索历史管理页
+  ///
+  /// 这里不直接驱动搜索：设置页与搜索页是两个独立 tab，
+  /// 强行跨页触发搜索会带来焦点/滚动位置等副作用。
+  /// 用户在历史页点某条记录时，仅把关键词复制过去供其粘贴。
+  Future<void> _openSearchHistory(AppState appState) async {
+    final picked = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => const SearchHistoryPage()),
+    );
+    if (!mounted || picked == null || picked.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: picked));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已复制「$picked」，可到搜索页粘贴')),
+    );
+  }
   
   void _setDownloadDirectory(String path) async {
     final appState = context.read<AppState>();
@@ -326,7 +352,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       if (!await dir.exists()) {
         await dir.create(recursive: true);
       }
-      appState.setDownloadDir(path);
+      // await：切换目录要落盘、重开数据库、迁移旧目录的 .db，
+      // 提前弹提示会让用户以为已完成、随后又被覆盖。
+      await appState.setDownloadDir(path);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('已设置下载目录: $path')),
@@ -635,6 +663,21 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   ),
                   Divider(),
                   
+                  // 搜索历史管理
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.history, size: 20),
+                    title: Text('搜索历史'),
+                    subtitle: Text(
+                      appState.searchHistory.isEmpty
+                          ? '暂无记录'
+                          : '已保存 ${appState.searchHistory.entries.length} 条',
+                    ),
+                    trailing: Icon(Icons.chevron_right, size: 20),
+                    onTap: () => _openSearchHistory(appState),
+                  ),
+                  Divider(),
+                  
                   // 在线播放（实验性功能）
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
@@ -883,6 +926,29 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 onTap: () => _showChangePinDialog(),
               ),
             ],
+            Divider(),
+            // 隐私模式：列表封面加模糊，避免公共场合被看到内容
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('隐私模式'),
+              subtitle: Text('列表封面加模糊，需要长按才能看清'),
+              value: appState.privacyMode,
+              onChanged: (v) async {
+                await appState.togglePrivacyMode();
+              },
+            ),
+            Divider(),
+            // 作者更新自动检查开关
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('自动检查作者更新'),
+              subtitle: Text('每 6 小时在后台检查一次已关注作者的新视频'),
+              value: _followedAutoCheck,
+              onChanged: (v) async {
+                await appState.followedAuthorsService.setAutoCheckEnabled(v);
+                if (mounted) setState(() => _followedAutoCheck = v);
+              },
+            ),
           ],
         ),
       ),

@@ -196,6 +196,8 @@ class FloatingWindowService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // 先停轮询再释放播放器，避免 Runnable 在释放后仍访问 mediaPlayer
+        progressHandler.removeCallbacksAndMessages(null)
         cleanup()
         instance = null
     }
@@ -570,23 +572,42 @@ class FloatingWindowService : Service() {
     }
 
     /**
-     * 定时更新进度条
+     * 定时刷新进度条与时间显示。
+     *
+     * 此前 handler 是局部变量、Runnable 在 `!isPlaying` 时直接 return 不再
+     * 重新 post，导致两个问题：
+     *   1. 暂停后时间与进度条永久定格，恢复播放也不会自动续上；
+     *   2. 每次 setOnPreparedListener（切视频/重新 prepare）都会再起一条
+     *      循环，切 N 次就有 N 个 Runnable 同时在跑。
+     * 改为成员字段 + 幂等启动 + onDestroy 统一清理。
      */
     private fun startProgressUpdate() {
-        val handler = android.os.Handler(mainLooper)
-        object : Runnable {
-            override fun run() {
-                if (mediaPlayer == null || !mediaPlayer!!.isPlaying) return
-                val pos = mediaPlayer!!.currentPosition
-                val duration = mediaPlayer!!.duration
+        progressHandler.removeCallbacks(progressRunnable)
+        // 暂停时也要刷新：seek 后、暂停中拖动进度条都需要真实位置
+        progressHandler.post(progressRunnable)
+    }
+
+    private val progressHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private val progressRunnable = object : Runnable {
+        override fun run() {
+            val mp = mediaPlayer
+            if (mp != null) {
+                // 不再用 isPlaying 直接 return：暂停态同样需要显示当前时间
+                val pos = try { mp.currentPosition } catch (_: Exception) { 0 }
+                val duration = try { mp.duration } catch (_: Exception) { -1 }
                 if (duration > 0) {
                     seekBar?.progress = (pos * 100 / duration)
-                    // 更新时间显示
                     timeText?.text = "${formatTime(pos)} / ${formatTime(duration)}"
+                } else {
+                    timeText?.text = formatTime(pos)
                 }
-                handler.postDelayed(this, 500)
+            } else {
+                // 播放器已释放，停止轮询避免空转
+                return
             }
-        }.run()
+            progressHandler.postDelayed(this, 500)
+        }
     }
 
     /**
@@ -766,11 +787,22 @@ class FloatingWindowService : Service() {
     }
 
     private fun releaseMediaPlayer() {
-        try {
-            mediaPlayer?.stop()
-            mediaPlayer?.release()
-        } catch (_: Exception) {}
+        val mp = mediaPlayer
         mediaPlayer = null
+        if (mp == null) return
+        // stop() 对未 prepare / 已 error 的 MediaPlayer 会抛 IllegalStateException。
+        // 以前两者共用一个 try，异常直接把 release() 跳过 —— 解码器与音频轨道
+        // 不再释放，反复开关悬浮窗后会出现「有画面无声音」「媒体资源耗尽」。
+        // release() 必须无条件执行，因此单独兜底。
+        try {
+            mp.stop()
+        } catch (_: Exception) {
+            // 忽略：未 prepare 或已处于错误态时 stop 非法，不影响释放
+        }
+        try {
+            mp.release()
+        } catch (_: Exception) {
+        }
     }
 
     private fun cleanup() {

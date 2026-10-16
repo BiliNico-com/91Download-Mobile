@@ -175,11 +175,30 @@ class DownloadManager extends ChangeNotifier {
               status INTEGER,
               file_path TEXT,
               error TEXT,
-              download_time TEXT
+              download_time TEXT,
+              start_time TEXT,
+              end_time TEXT
             )
           ''');
         },
-        version: 1,
+        onUpgrade: (db, oldVersion, newVersion) async {
+          // 旧库只有一列 download_time，既当创建时间又当完成时间，
+          // 于是「已完成」排序用的是创建时刻，与用户感知的「下载于…」不符。
+          // v2 拆成 start_time / end_time：老数据无从区分，统一回填到两列，
+          // 至少保证升级后不再丢时间信息。
+          if (oldVersion < 2) {
+            for (final col in ['start_time', 'end_time']) {
+              if (!await _hasColumn(db, 'download_tasks', col)) {
+                await db.execute('ALTER TABLE download_tasks ADD COLUMN $col TEXT');
+              }
+            }
+            await db.execute(
+                'UPDATE download_tasks SET start_time = download_time WHERE start_time IS NULL');
+            await db.execute(
+                'UPDATE download_tasks SET end_time = download_time WHERE end_time IS NULL');
+          }
+        },
+        version: 2,
       );
       _dbInitialized = true;
     } catch (e) {
@@ -187,6 +206,44 @@ class DownloadManager extends ChangeNotifier {
     }
   }
   
+  /// 判断表中是否已有某列（SQLite 没有 IF NOT EXISTS 形式的 ADD COLUMN）
+  Future<bool> _hasColumn(Database db, String table, String column) async {
+    final rows = await db.rawQuery('PRAGMA table_info($table)');
+    return rows.any((r) => r['name'] == column);
+  }
+
+  /// 把库里存的整数安全地还原成 [DownloadStatus]。
+  ///
+  /// 原来直接 `DownloadStatus.values[idx]`，而 DB 版本固定 1、没有 onUpgrade，
+  /// 一旦枚举增删成员，旧库里的整数就会越界抛 RangeError，
+  /// 升级后首次打开下载页直接崩溃，用户只能清数据自救。
+  static DownloadStatus _decodeStatus(Object? raw, {String? filePath}) {
+    if (raw is int && raw >= 0 && raw < DownloadStatus.values.length) {
+      return DownloadStatus.values[raw];
+    }
+    Logger().log('Download', '未知的任务状态 $raw，按已有文件推断');
+    // 有文件路径就当作已完成，否则让用户重新下载，避免误报"已完成"
+    return (filePath != null && filePath.isNotEmpty)
+        ? DownloadStatus.completed
+        : DownloadStatus.failed;
+  }
+
+  /// 切换下载目录后重置数据库连接。
+  ///
+  /// 数据库文件存放在下载目录的 `.db` 下，切换目录后必须重新打开，
+  /// 否则新目录的下载记录永远读不到、旧目录的改动还在写。
+  void resetForNewDirectory({String? externalDbPath}) {
+    try {
+      _db?.close();
+    } catch (_) {}
+    _db = null;
+    _dbInitialized = false;
+    this.externalDbPath = externalDbPath;
+    if (externalDbPath != null && externalDbPath.isNotEmpty) {
+      _downloadDir = externalDbPath;
+    }
+  }
+
   /// 设置爬虫和下载目录
   void setup(CrawlerCore crawler, String downloadDir) {
     _crawler = crawler;
@@ -442,7 +499,10 @@ class DownloadManager extends ChangeNotifier {
       final author = task.video.author ?? task.video.authorId;
       if (author != null && author.isNotEmpty) {
         final safeAuthor = author.replaceAll(_invalidFileNameChars, '_');
-        fileName = '${safeTitle}_$safeAuthor.mp4';
+        // 带上唯一 ID：同一作者上传两个同标题的视频时，
+        // 仅靠「标题_作者」会得到同一路径，后下的会静默覆盖先下的，
+        // 且「已完成」里出现两条记录指向同一文件，删任一条会连带删掉另一条
+        fileName = '${safeTitle}_${safeAuthor}_${task.video.id}.mp4';
       } else {
         fileName = '${safeTitle}_${task.video.id}.mp4';
       }
@@ -450,11 +510,17 @@ class DownloadManager extends ChangeNotifier {
       
       await logger.log('Download', '保存路径: $savePath');
       
-      // 设置进度回调
-      // ── 进度唯一来源是爬虫的「已完成切片数」 ──
+      // ── 进度回调挂在本次任务独占的控制句柄上 ──
+      // 此前用的是 CrawlerCore 上的全局单槽字段，而并发数默认就是 2，
+      // 两个任务会互相覆盖：A 的进度显示成 B 的、任务结束把回调置 null
+      // 让仍在跑的任务卡在某个百分比。
+      final ctrl = _crawler!.control;
+      ctrl.onLog = (msg, level) => logger.log('Download', msg);
+      
+      // 进度唯一来源是爬虫的「已完成切片数」。
       // progressText 只承载切片进度（如「下载中 13/120」）；
       // 速度由 speedText 单独提供，UI 右侧胶囊展示，避免同一信息重复出现。
-      _crawler!.onProgress = (progress, msg) {
+      ctrl.onProgress = (progress, msg) {
         // 单调递增：任何情况下都不允许进度回退
         if (progress > task.progress) {
           task.progress = progress;
@@ -465,8 +531,8 @@ class DownloadManager extends ChangeNotifier {
         notifyListeners();
       };
       
-      // 设置总体进度回调：只更新速度与字节数统计，不改 progress 也不改 progressText
-      _crawler!.onOverallProgress = (downloaded, total) {
+      // 总体进度回调：只更新速度与字节数统计，不改 progress 也不改 progressText
+      ctrl.onOverallProgress = (downloaded, total) {
         task.updateProgressWithSpeed(downloaded, total);
         notifyListeners();
       };
@@ -482,12 +548,24 @@ class DownloadManager extends ChangeNotifier {
         task.downloadSpeed = 0.0;
         task.endTime = DateTime.now();  // ✅ 设置结束时间
         _saveTaskToDb(task);  // 更新数据库
+      } else if (ctrl.isPaused || task.status == DownloadStatus.paused) {
+        // 暂停：downloadVideo 会在保留已下载切片后返回 false，
+        // 这里不能当成失败，否则用户一暂停任务就变成「失败」
+        await logger.log('Download', '已暂停: ${task.video.title}');
+        task.status = DownloadStatus.paused;
+        task.progressText = '已暂停';
+        task.downloadSpeed = 0.0;
+        task.lastUpdateTime = DateTime.now();
+        _saveTaskToDb(task);
       } else {
         await logger.log('Download', '下载失败: ${task.video.title}');
         task.status = DownloadStatus.failed;
-        task.error = '下载失败';
+        // 用爬虫给出的具体原因，而不是笼统的「下载失败」：
+        // 加密流不支持、站点改版、切片批量失败……这些用户能据此决定是重试还是放弃
+        task.error = ctrl.failureReason ?? '下载失败';
         task.downloadSpeed = 0.0;
         task.endTime = DateTime.now();  // ✅ 设置结束时间
+        _saveTaskToDb(task);
       }
       
     } catch (e) {
@@ -497,11 +575,16 @@ class DownloadManager extends ChangeNotifier {
       task.downloadSpeed = 0.0;
       task.endTime = DateTime.now();
     } finally {
-      // ✅ 清理回调，避免引用泄漏
-      _crawler!.onProgress = null;
-      _crawler!.onOverallProgress = null;
-      // ✅ 下载完成后重置 stopFlag
-      _crawler!.reset();
+      // ✅ 清理回调，避免引用泄漏（只清自己这一份，不影响并发任务）
+      final ctrl = _crawler!.control;
+      ctrl.onProgress = null;
+      ctrl.onOverallProgress = null;
+      ctrl.onLog = null;
+      // 只重置停止标记；不能 reset 暂停标记，
+      // 否则刚被暂停的任务会被立刻「解除暂停」而失去意义
+      if (task.status != DownloadStatus.paused) {
+        ctrl.reset();
+      }
       // 无论成功或失败，释放并发槽位并启动下一个等待任务
       _activeDownloads--;
       _activeTaskIds.remove(task.id);
@@ -565,13 +648,16 @@ class DownloadManager extends ChangeNotifier {
   }
   
   /// 暂停任务
+  ///
+  /// 通过该任务独占的 DownloadControl 通知爬虫：不再派发新切片，
+  /// 等在途切片收尾后挂起，已下载的切片保留在临时目录供续传。
   void pauseTask(String taskId) {
     final task = _taskMap[taskId];
     if (task != null && task.status == DownloadStatus.downloading) {
       task.status = DownloadStatus.paused;
+      task.progressText = '已暂停';
       task.downloadSpeed = 0.0;
-      // ✅ 通知爬虫暂停
-      _crawler?.pause();
+      _crawler?.control.pause();
       notifyListeners();
     }
   }
@@ -582,8 +668,9 @@ class DownloadManager extends ChangeNotifier {
     if (task != null && task.status == DownloadStatus.paused) {
       task.lastUpdateTime = DateTime.now();
       task.lastDownloadedBytes = task.downloadedBytes;
-      // ✅ 通知爬虫恢复
-      _crawler?.resume();
+      task.status = DownloadStatus.pending;
+      task.progressText = '等待中';
+      notifyListeners();
       _tryStartNext(task);
     }
   }
@@ -738,7 +825,8 @@ class DownloadManager extends ChangeNotifier {
     if (_db == null) return;
     
     try {
-      // 已完成任务优先用 endTime，否则用 startTime
+      // 已完成任务优先用 endTime，否则用 startTime。
+      // download_time 保留写「排序用的那个时刻」，兼容未升级的旧读取路径。
       final timeToSave = (task.status == DownloadStatus.completed && task.endTime != null)
           ? task.endTime!
           : task.startTime;
@@ -755,6 +843,10 @@ class DownloadManager extends ChangeNotifier {
           'file_path': task.filePath,
           'error': task.error,
           'download_time': timeToSave.toIso8601String(),
+          // 分别落盘：以前只存一列 download_time，
+          // 重启后「下载于…」显示的是创建时间而不是完成时间，倒序也随之错位。
+          'start_time': task.startTime.toIso8601String(),
+          'end_time': task.endTime?.toIso8601String(),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -794,26 +886,40 @@ class DownloadManager extends ChangeNotifier {
       );
       
       for (final map in maps) {
+        // 旧库里可能被清空或为 NULL 的必填字段不能直接透传给 VideoInfo，
+        // 否则列表渲染时拿到 null 标题会抛异常，整页下载记录都打不开。
+        final id = map['id'] as String?;
+        if (id == null || id.isEmpty) {
+          Logger().log('Download', '跳过 id 缺失的任务记录');
+          continue;
+        }
         final video = VideoInfo(
-          id: map['id'],
-          url: map['url'],
-          title: map['title'],
-          cover: map['cover'],
-          author: map['author'],
-          duration: map['duration'],
+          id: id,
+          url: (map['url'] as String?) ?? '',
+          title: (map['title'] as String?) ?? '未知视频',
+          cover: map['cover'] as String?,
+          author: map['author'] as String?,
+          duration: map['duration'] as String?,
         );
         
         if (!_taskMap.containsKey(video.id)) {
           final task = DownloadTask(id: video.id, video: video);
-          task.status = DownloadStatus.values[map['status'] as int];
-          task.filePath = map['file_path'];
-          task.error = map['error'];
-          if (map['download_time'] != null) {
-            task.startTime = DateTime.parse(map['download_time']);
-            // 如果是已完成任务，同时设置结束时间
-            if (task.status == DownloadStatus.completed) {
-              task.endTime = task.startTime;
-            }
+          task.status = _decodeStatus(map['status'], filePath: map['file_path'] as String?);
+          task.filePath = map['file_path'] as String?;
+          task.error = map['error'] as String?;
+          // 优先用拆分后的 start_time / end_time；老库只有 download_time，
+          // 此时退化为「两者相同」，与原行为一致但不丢时间。
+          final startRaw = map['start_time'] ?? map['download_time'];
+          final endRaw = map['end_time'];
+          if (startRaw is String && startRaw.isNotEmpty) {
+            task.startTime = DateTime.tryParse(startRaw) ?? DateTime.now();
+          }
+          if (endRaw is String && endRaw.isNotEmpty) {
+            task.endTime = DateTime.tryParse(endRaw);
+          } else if (task.status == DownloadStatus.completed) {
+            // 已完成却没有结束时间（老数据）：用开始时间兜底，
+            // 让「下载于…」至少有值，而不是显示成当前时间。
+            task.endTime = task.startTime;
           }
           _tasks.add(task);
           _taskMap[video.id] = task;
@@ -870,16 +976,26 @@ class DownloadManager extends ChangeNotifier {
         
         final video = VideoInfo(
           id: videoId,
-          url: record['url'] ?? '',
-          title: record['title'] ?? '',
+          url: (record['url'] as String?) ?? '',
+          title: (record['title'] as String?) ?? '未知视频',
+          // 恢复时把封面/作者/时长一并还原，否则「已下载」列表里
+          // 这些字段全为空白，用户看不出下的是谁的作品。
+          cover: record['cover'] as String?,
+          author: record['author'] as String?,
+          duration: record['duration'] as String?,
+          uploadDate: record['upload_date'] as String?,
         );
         
         final task = DownloadTask(id: video.id, video: video);
         task.status = DownloadStatus.completed;
         task.filePath = filePath;
-        if (record['download_time'] != null) {
-          task.startTime = DateTime.parse(record['download_time']);
-          task.endTime = task.startTime;  // 同时设置结束时间
+        final timeRaw = record['download_time'];
+        if (timeRaw is String && timeRaw.isNotEmpty) {
+          final t = DateTime.tryParse(timeRaw);
+          if (t != null) {
+            task.startTime = t;
+            task.endTime = t;  // 历史记录只有完成时刻，两者取同一值
+          }
         }
         
         _tasks.add(task);

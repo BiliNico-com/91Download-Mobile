@@ -63,9 +63,14 @@ class SearchHistoryService extends ChangeNotifier {
   }
 
   /// 删除单条
+  ///
+  /// 与 [add] 一样忽略大小写与首尾空格：add 用 `toLowerCase` 去重，
+  /// remove 却用精确匹配，导致历史里有 "Abc" 时删 "abc" 删不掉。
   Future<void> remove(String keyword) async {
+    final k = keyword.trim().toLowerCase();
+    if (k.isEmpty) return;
     final before = _entries.length;
-    _entries.removeWhere((e) => e == keyword);
+    _entries.removeWhere((e) => e.toLowerCase() == k);
     if (_entries.length != before) {
       notifyListeners();
       await _persist();

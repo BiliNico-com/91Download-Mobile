@@ -12,12 +12,53 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val FLOATING_CHANNEL = "com.bilinico.download_91/floating_video"
     private val OPEN_DIR_CHANNEL = "com.bilinico.download_91/open_directory"
+    private val BRIGHTNESS_CHANNEL = "com.example.download_91/brightness"
+
+    /** 进入播放页前的窗口亮度（-1f = 跟随系统），用于退出时还原 */
+    private var savedWindowBrightness: Float = -1f
+    private var hasSavedWindowBrightness = false
     
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         
         // 注册 PiP 插件
         PipPlugin.registerWith(flutterEngine.dartExecutor.binaryMessenger, this)
+        
+        // 注册播放器亮度通道（仅调整本 App 窗口亮度，不改系统设置）
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BRIGHTNESS_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getBrightness" -> {
+                    result.success(currentWindowBrightness())
+                }
+                "setBrightness" -> {
+                    val value = (call.argument<Double>("brightness") ?: 0.5).toFloat()
+                    setWindowBrightness(value)
+                    result.success(true)
+                }
+                "saveBrightness" -> {
+                    // 仅在首次进入时记录，避免同一会话内反复覆盖
+                    if (!hasSavedWindowBrightness) {
+                        savedWindowBrightness = window?.attributes?.screenBrightness ?: -1f
+                        hasSavedWindowBrightness = true
+                    }
+                    result.success(true)
+                }
+                "restoreBrightness" -> {
+                    if (hasSavedWindowBrightness) {
+                        setWindowBrightnessRaw(savedWindowBrightness)
+                        result.success(true)
+                    } else {
+                        result.success(false)
+                    }
+                }
+                "resetBrightness" -> {
+                    setWindowBrightnessRaw(-1f)
+                    hasSavedWindowBrightness = false
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
         
         // 注册"打开下载目录"通道
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OPEN_DIR_CHANNEL).setMethodCallHandler { call, result ->
@@ -80,7 +121,7 @@ class MainActivity : FlutterActivity() {
                         action = FloatingWindowService.ACTION_SEEK
                         putExtra(FloatingWindowService.EXTRA_SEEK_POS, pos)
                     }
-                    startService(intent)
+                    startFloatingService(intent)
                     result.success(true)
                 }
                 "switchVideo" -> {
@@ -115,6 +156,18 @@ class MainActivity : FlutterActivity() {
             putExtra(FloatingWindowService.EXTRA_HEIGHT, height)
             putExtra(FloatingWindowService.EXTRA_INITIAL_POS, initialPositionMs)
         }
+        startFloatingService(intent)
+    }
+
+    /**
+     * 启动悬浮窗服务（统一入口）
+     *
+     * FloatingWindowService 在 onCreate 里调用 startForeground，
+     * Android 8+ 必须走 startForegroundService，否则前台服务无法提权；
+     * Android 12+ 在 App 处于后台时用 startService 会直接抛
+     * ForegroundServiceStartNotAllowedException 导致闪退。
+     */
+    private fun startFloatingService(intent: Intent) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {
@@ -130,7 +183,7 @@ class MainActivity : FlutterActivity() {
         val intent = Intent(this, FloatingWindowService::class.java).apply {
             action = FloatingWindowService.ACTION_STOP
         }
-        startService(intent)
+        startFloatingService(intent)
     }
 
     /**
@@ -142,7 +195,7 @@ class MainActivity : FlutterActivity() {
             putExtra(FloatingWindowService.EXTRA_VIDEO_PATH, path)
             putExtra(FloatingWindowService.EXTRA_TITLE, title)
         }
-        startService(intent)
+        startFloatingService(intent)
     }
 
     /**
@@ -152,9 +205,41 @@ class MainActivity : FlutterActivity() {
         val intent = Intent(this, FloatingWindowService::class.java).apply {
             this.action = action
         }
-        startService(intent)
+        startFloatingService(intent)
     }
     
+    /**
+     * 读取当前窗口亮度；-1 表示跟随系统，此时回退到系统亮度值。
+     */
+    private fun currentWindowBrightness(): Double {
+        val attr = window?.attributes ?: return 0.5
+        if (attr.screenBrightness >= 0f) return attr.screenBrightness.toDouble()
+        // screenBrightness 为 -1 时跟随系统，读取系统设置用于初始化滑块位置
+        val system = try {
+            Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+        } catch (e: Exception) {
+            -1
+        }
+        return if (system in 0..255) system / 255.0 else 0.5
+    }
+
+    /**
+     * 设置窗口亮度，入参 0.0 - 1.0。
+     * 仅作用于本 App 的窗口，不需要 WRITE_SETTINGS 权限，
+     * 退出 App 后系统自动还原，不会污染用户的系统亮度设置。
+     */
+    private fun setWindowBrightness(value: Float) {
+        setWindowBrightnessRaw(value.coerceIn(0.02f, 1f))
+    }
+
+    private fun setWindowBrightnessRaw(value: Float) {
+        runOnUiThread {
+            val attr = window?.attributes ?: return@runOnUiThread
+            attr.screenBrightness = value
+            window?.attributes = attr
+        }
+    }
+
     /**
      * 检查是否有悬浮窗权限
      */
