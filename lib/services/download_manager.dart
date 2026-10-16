@@ -177,7 +177,9 @@ class DownloadManager extends ChangeNotifier {
               error TEXT,
               download_time TEXT,
               start_time TEXT,
-              end_time TEXT
+              end_time TEXT,
+              progress REAL,
+              progress_text TEXT
             )
           ''');
         },
@@ -197,8 +199,19 @@ class DownloadManager extends ChangeNotifier {
             await db.execute(
                 'UPDATE download_tasks SET end_time = download_time WHERE end_time IS NULL');
           }
+          // v3 记录分片进度：此前进度只存在内存里，进程被系统杀掉后
+          // 重启只能显示 0%，用户以为要从头下（分片文件其实还在）。
+          if (oldVersion < 3) {
+            for (final col in ['progress', 'progress_text']) {
+              if (!await _hasColumn(db, 'download_tasks', col)) {
+                final type = col == 'progress' ? 'REAL' : 'TEXT';
+                await db.execute(
+                    'ALTER TABLE download_tasks ADD COLUMN $col $type');
+              }
+            }
+          }
         },
-        version: 2,
+        version: 3,
       );
       _dbInitialized = true;
     } catch (e) {
@@ -520,6 +533,10 @@ class DownloadManager extends ChangeNotifier {
       // 进度唯一来源是爬虫的「已完成切片数」。
       // progressText 只承载切片进度（如「下载中 13/120」）；
       // 速度由 speedText 单独提供，UI 右侧胶囊展示，避免同一信息重复出现。
+      //
+      // 节流落盘：每个切片都写库会造成 SQLite 写放大（120 片 = 120 次事务），
+      // 因此最多每 5 秒记一次，外加状态切换时（完成/暂停/失败）无条件记一次。
+      var lastPersistAt = DateTime.fromMillisecondsSinceEpoch(0);
       ctrl.onProgress = (progress, msg) {
         // 单调递增：任何情况下都不允许进度回退
         if (progress > task.progress) {
@@ -527,6 +544,11 @@ class DownloadManager extends ChangeNotifier {
         }
         if (msg.isNotEmpty) {
           task.progressText = msg;
+        }
+        final now = DateTime.now();
+        if (now.difference(lastPersistAt).inSeconds >= 5) {
+          lastPersistAt = now;
+          _saveTaskToDb(task);
         }
         notifyListeners();
       };
@@ -700,7 +722,17 @@ class DownloadManager extends ChangeNotifier {
   ///
   /// [deleteFile] 为 true 时一并删除磁盘文件，避免只删记录导致
   /// 文件残留在下载目录（下次扫描或恢复时又被发现）。
-  Future<void> cancelTask(String taskId, {bool deleteFile = false}) async {
+  ///
+  /// [isCompleted] 决定是否连带删除 `*_temp` 分片目录：
+  /// 已完成任务的 `_temp` 只是合并后的残留，可以清；
+  /// 但进行中/已暂停/失败任务的 `_temp` 里是**已下好的分片**，
+  /// 清掉就等于把断点续传的成果一起扔掉，用户想重下只能从第 0 片开始。
+  /// 因此仅在明确是已完成任务时才清临时目录。
+  Future<void> cancelTask(
+    String taskId, {
+    bool deleteFile = false,
+    bool isCompleted = false,
+  }) async {
     Logger().logSync('Download', 'cancelTask 被调用, taskId: $taskId');
     Logger().logSync('Download', '_taskMap.keys: ${_taskMap.keys.toList()}');
     Logger().logSync('Download', '_tasks ids: ${_tasks.map((t) => t.id).toList()}');
@@ -723,9 +755,12 @@ class DownloadManager extends ChangeNotifier {
       // 删除数据库记录（必须 await，否则可能未完成就退出，记录残留导致"复活"）
       await _deleteTaskFromDb(taskId);
       
-      // 删除磁盘文件与临时目录
+      // 删除磁盘文件；临时目录按任务状态决定是否保留
       if (deleteFile) {
-        await deleteFilesForTask(task);
+        await deleteFilesForTask(task, deleteTempDir: isCompleted);
+      } else if (isCompleted) {
+        // 不删视频文件，但已完成任务的残留分片目录没有保留价值
+        await deleteTempDirFor(task.filePath ?? '');
       }
       
       // 通知 UI 更新
@@ -741,7 +776,9 @@ class DownloadManager extends ChangeNotifier {
         _taskMap.remove(taskId);
         await _deleteTaskFromDb(taskId);
         if (deleteFile) {
-          await deleteFilesForTask(taskInList);
+          await deleteFilesForTask(taskInList, deleteTempDir: isCompleted);
+        } else if (isCompleted) {
+          await deleteTempDirFor(taskInList.filePath ?? '');
         }
         notifyListeners();
         Logger().logSync('Download', '直接删除成功，剩余任务数: ${_tasks.length}');
@@ -770,8 +807,14 @@ class DownloadManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 删除某个任务对应的视频文件与临时目录
-  Future<void> deleteFilesForTask(DownloadTask task) async {
+  /// 删除某个任务对应的视频文件
+  ///
+  /// [deleteTempDir] 默认 true。对于进行中/失败的取消操作应传 false，
+  /// 保留 `*_temp` 里已下好的分片，否则断点续传的成果会被一起删掉。
+  Future<void> deleteFilesForTask(
+    DownloadTask task, {
+    bool deleteTempDir = true,
+  }) async {
     final path = task.filePath;
     if (path == null || path.isEmpty) return;
     
@@ -787,7 +830,9 @@ class DownloadManager extends ChangeNotifier {
     }
     
     // 删除可能残留的临时切片目录
-    await deleteTempDirFor(path);
+    if (deleteTempDir) {
+      await deleteTempDirFor(path);
+    }
   }
   
   /// 删除某个视频路径对应的 *_temp 临时目录
@@ -847,6 +892,10 @@ class DownloadManager extends ChangeNotifier {
           // 重启后「下载于…」显示的是创建时间而不是完成时间，倒序也随之错位。
           'start_time': task.startTime.toIso8601String(),
           'end_time': task.endTime?.toIso8601String(),
+          // 分片进度落盘：进程被系统杀掉后，重启才能显示真实进度，
+          // 而不是看着 0% 以为要从头再下一遍（分片文件其实都还在）。
+          'progress': task.progress,
+          'progress_text': task.progressText,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -871,6 +920,14 @@ class DownloadManager extends ChangeNotifier {
   @override
   void dispose() {
     _crawler?.reset();
+    // 关闭数据库连接。不关的话每次 dispose 都泄漏一个 SQLite 句柄，
+    // 且句柄未落盘的数据可能丢失（SQLite 是延迟写入）。
+    try {
+      _db?.close();
+    } catch (e) {
+      Logger().log('Download', '关闭数据库失败: $e');
+    }
+    _db = null;
     super.dispose();
   }
   
@@ -907,6 +964,15 @@ class DownloadManager extends ChangeNotifier {
           task.status = _decodeStatus(map['status'], filePath: map['file_path'] as String?);
           task.filePath = map['file_path'] as String?;
           task.error = map['error'] as String?;
+          // 恢复上一次落盘的分片进度，让用户看到「接着下」而不是 0%
+          final savedProgress = map['progress'];
+          if (savedProgress is num && savedProgress > 0 && savedProgress <= 1) {
+            task.progress = savedProgress.toDouble();
+          }
+          final savedText = map['progress_text'];
+          if (savedText is String && savedText.isNotEmpty) {
+            task.progressText = savedText;
+          }
           // 优先用拆分后的 start_time / end_time；老库只有 download_time，
           // 此时退化为「两者相同」，与原行为一致但不丢时间。
           final startRaw = map['start_time'] ?? map['download_time'];

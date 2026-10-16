@@ -262,21 +262,31 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     );
   }
   
-  void _batchStart(AppState appState) async {
+  void _batchStart(AppState appState) {
+    // 用 getTask 而不是 firstWhere + orElse 抛异常：
+    // 选中项可能在批量操作前正好被后台清掉（完成/失败转移），
+    // 抛异常会让整个批量开始中断在半路。
+    int started = 0;
     for (final id in _selectedIds.toList()) {
-      final task = appState.downloadManager.downloadingTasks.firstWhere(
-        (t) => t.id == id,
-        orElse: () => throw Exception('Task not found'),
-      );
+      final task = appState.downloadManager.getTask(id);
+      if (task == null) continue;
       if (task.status == DownloadStatus.paused) {
         appState.downloadManager.resumeTask(id);
-      } else if (task.status == DownloadStatus.pending || task.status == DownloadStatus.failed) {
+        started++;
+      } else if (task.status == DownloadStatus.pending ||
+          task.status == DownloadStatus.failed) {
         appState.downloadManager.startTask(id);
+        started++;
       }
     }
     setState(() {
       _selectedIds.clear();
     });
+    if (mounted && started == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('选中的任务当前无法开始')),
+      );
+    }
   }
   
   void _batchPause(AppState appState) async {
@@ -532,15 +542,14 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
       final shouldDeleteFile = result['deleteFile']!;
       final idsToDelete = _selectedIds.toList();
       int deletedCount = 0;
-      
-      print('准备删除 ${idsToDelete.length} 个任务');
-      print('待删除的 ID 列表: $idsToDelete');
-      
+      // 分别统计：文件删除与记录删除是两件事，
+      // 之前统一提示「已删除 N 个记录」，勾了删文件也这么说，用户无法确认磁盘是否释放。
+      int fileDeletedCount = 0;
+      int fileFailedCount = 0;
+
       for (final id in idsToDelete) {
-        print('正在处理任务 ID: $id');
         final task = appState.downloadManager.getTask(id);
-        print('getTask 返回: ${task != null ? "存在" : "不存在"}');
-        
+
         // 删除本地文件
         if (shouldDeleteFile) {
           // 优先从任务获取 filePath，否则从历史数据库获取
@@ -550,21 +559,21 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
               final history = await appState.crawler!.getDownloadHistory(limit: 1000);
               final record = history.firstWhere((h) => h['video_id'] == id, orElse: () => <String, dynamic>{});
               filePath = record['file_path'] as String?;
-              print('从历史记录获取文件路径: $filePath');
             } catch (e) {
-              print('获取历史记录失败: $e');
+              debugPrint('获取历史记录失败: $e');
             }
           }
-          
+
           if (filePath != null && filePath.isNotEmpty) {
             try {
               final file = File(filePath);
               if (await file.exists()) {
                 await file.delete();
-                print('已删除文件: $filePath');
+                fileDeletedCount++;
               }
             } catch (e) {
-              print('删除文件失败: $e');
+              fileFailedCount++;
+              debugPrint('删除文件失败: $filePath - $e');
             }
           }
         }
@@ -573,16 +582,19 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
         if (appState.crawler != null) {
           try {
             await appState.crawler!.deleteDownloadHistory(id);
-            print('已从 download_history.db 删除: $id');
           } catch (e) {
-            print('删除历史记录失败: $e');
+            debugPrint('删除历史记录失败: $e');
           }
         }
-        
-        // 从 download_tasks.db 删除任务，并一并清理临时目录
-        // 注意：文件已在上面按需删除，这里补删可能残留的 *_temp 目录
-        await appState.downloadManager.cancelTask(id);
-        print('cancelTask 已完成');
+
+        // 从 download_tasks.db 删除任务。
+        // 传 isCompleted: true —— 已完成任务的 *_temp 是合并后的残留，
+        // 可以清；而进行中/失败任务的 *_temp 里是已下好的分片，
+        // 删掉会让「断点续传」失效、下次从第 0 片重下（见第 22 项）。
+        await appState.downloadManager.cancelTask(
+          id,
+          isCompleted: task?.status == DownloadStatus.completed,
+        );
         deletedCount++;
       }
       
@@ -594,8 +606,15 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
       
       // 显示删除成功提示
       if (mounted) {
+        final buffer = StringBuffer('已删除 $deletedCount 个记录');
+        if (shouldDeleteFile) {
+          buffer.write('，清理 $fileDeletedCount 个文件');
+          if (fileFailedCount > 0) {
+            buffer.write('（$fileFailedCount 个文件删除失败）');
+          }
+        }
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已删除 $deletedCount 个记录')),
+          SnackBar(content: Text(buffer.toString())),
         );
       }
     }
@@ -862,7 +881,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
   
   /// 单个任务删除（带确认对话框）
-  void _deleteTaskWithConfirm(DownloadTask task, AppState appState) async {
+  Future<void> _deleteTaskWithConfirm(DownloadTask task, AppState appState) async {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -882,8 +901,29 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     );
     
     if (result == true) {
-      appState.downloadManager.cancelTask(task.id);
+      await _deleteTaskDirect(task, appState);
     }
+  }
+
+  /// 直接删除任务（不再二次确认）
+  ///
+  /// [Dismissible] 的 confirmDismiss 已经问过一次，onDismissed 里若再调
+  /// [_deleteTaskWithConfirm] 就会弹第二个确认框；取消时列表项已被划走、
+  /// 确认后也无任何反馈。这里统一走一次「删除 + 提示」。
+  Future<void> _deleteTaskDirect(DownloadTask task, AppState appState) async {
+    final isCompleted = task.status == DownloadStatus.completed;
+    await appState.downloadManager.cancelTask(
+      task.id,
+      isCompleted: isCompleted,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已删除「${_formatTitle(task.video)}」'
+            '${isCompleted ? '（记录已删除，视频文件保留）' : ''}'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
   
   Widget _buildCompletedTaskItem(DownloadTask task, bool selected, AppState appState) {
@@ -902,9 +942,21 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             context: context,
             builder: (context) => AlertDialog(
               title: const Text('确认删除'),
-              content: Text(task.status == DownloadStatus.failed
-                  ? '确定要删除这个失败的下载任务吗？'
-                  : '确定要删除已下载的视频吗？'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(task.status == DownloadStatus.failed
+                      ? '确定要删除这个失败的下载任务吗？'
+                      : '确定要删除这个下载记录吗？'),
+                  const SizedBox(height: 12),
+                  const Text(
+                    '记录会被移除；若还想删除磁盘上的视频文件，'
+                    '请长按进入多选后批量删除。',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
               actions: [
                 TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
                 TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('删除', style: TextStyle(color: Colors.red))),
@@ -912,7 +964,10 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             ),
           );
         },
-        onDismissed: (_) => _deleteTaskWithConfirm(task, appState),
+        // 注意：confirmDismiss 里已经问过一次，onDismissed 不能再调
+        // _deleteTaskWithConfirm —— 那会弹第二个确认框，且用户确认后无任何反馈。
+        // 这里直接执行删除。
+        onDismissed: (_) => _deleteTaskDirect(task, appState),
         child: GestureDetector(
           onLongPress: () {
             setState(() {

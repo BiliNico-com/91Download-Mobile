@@ -111,16 +111,16 @@
 单条影响小于上面，但累计起来是「这 App 有点糙」的观感来源。多数是低成本修复。
 
 ### 删除语义（投诉高发）
-- [ ] **20. 「删除已完成视频」从不删文件** —— `download_page.dart:885` `cancelTask(task.id)` 没传 `deleteFile`，但对话框 `:907` 文案写着「确定要删除已下载的视频吗？」→ **记录消失、文件仍在**，磁盘不释放。
-- [ ] **21. 滑动删除已完成项弹两次确认框** —— `:900-914` `confirmDismiss` + `:915` `onDismissed` 再弹一次；第二个确认后无任何反馈。
-- [ ] **22. 取消任务会连续传数据一起删** —— `download_manager.dart:616-663` → `deleteFilesForTask`（`:687-704`）→ `deleteTempDirFor`（`:707-718`）；`download_page.dart:584` 调 `cancelTask` 不传 `deleteFile`，但 `<filePath>_temp` 仍被删 → 想重下只能从第 0 个分片开始。
-- [ ] **23. 批量删除结果不分文件与记录** —— `download_page.dart:597` 永远说「已删除 N 个记录」。
+- [x] **20. 「删除已完成视频」从不删文件** —— `download_page.dart:885` `cancelTask(task.id)` 没传 `deleteFile`，但对话框 `:907` 文案写着「确定要删除已下载的视频吗？」→ **记录消失、文件仍在**，磁盘不释放。
+- [x] **21. 滑动删除已完成项弹两次确认框** —— `:900-914` `confirmDismiss` + `:915` `onDismissed` 再弹一次；第二个确认后无任何反馈。
+- [x] **22. 取消任务会连续传数据一起删** —— `download_manager.dart:616-663` → `deleteFilesForTask`（`:687-704`）→ `deleteTempDirFor`（`:707-718`）；`download_page.dart:584` 调 `cancelTask` 不传 `deleteFile`，但 `<filePath>_temp` 仍被删 → 想重下只能从第 0 个分片开始。
+- [x] **23. 批量删除结果不分文件与记录** —— `download_page.dart:597` 永远说「已删除 N 个记录」。
 
 ### 进度与状态
-- [ ] **24. `_receivedBytes` 在验证前累加** —— `crawler_core.dart:1634`（校验在 `:1638-1650`）→ 显示速度虚高于实际；重试不删坏文件。
-- [ ] **25. 分片进度不落盘，杀进程后从 0 重爬** —— `download_manager.dart:145-188` 表里无 progress/bytes 列，`_saveTaskToDb`（`:736-764`）从不写进度。
-- [ ] **26. `_batchStart` 用 `firstWhere` 可能抛 `StateError`** —— `download_page.dart:267-274`。
-- [ ] **27. `dispose` 不关数据库** —— `download_manager.dart:780-783`。
+- [x] **24. `_receivedBytes` 在验证前累加** —— `crawler_core.dart:1634`（校验在 `:1638-1650`）→ 显示速度虚高于实际；重试不删坏文件。
+- [x] **25. 分片进度不落盘，杀进程后从 0 重爬** —— `download_manager.dart:145-188` 表里无 progress/bytes 列，`_saveTaskToDb`（`:736-764`）从不写进度。
+- [x] **26. `_batchStart` 用 `firstWhere` 可能抛 `StateError`** —— `download_page.dart:267-274`。
+- [x] **27. `dispose` 不关数据库** —— `download_manager.dart:780-783`。
 
 ### 悬浮窗
 - [ ] **28. `getScreenWidth/Height` 用 `coerceAtLeast` 硬编码最小值** —— `FloatingWindowService.kt:810-816`。小屏/分屏下返回尺寸**大于真实屏幕** → 悬浮窗初始化到屏幕外、吸附位置错误。
