@@ -13,6 +13,7 @@ import '../services/pin_service.dart';
 import '../utils/logger.dart';
 import '../utils/open_directory.dart';
 import '../theme/ui_style.dart';
+import '../theme/app_theme.dart';
 import 'pin_input_dialog.dart';
 import 'cache_manager_page.dart';
 import 'search_history_page.dart';
@@ -1330,60 +1331,264 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     _showUpdateDialog(remoteVersion);
   }
   
-  /// 显示更新对话框
+  /// 显示更新对话框（信息分层：版本对照 → 更新内容 → 操作）
   void _showUpdateDialog(VersionInfo version) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color cardColor = isDark ? const Color(0xFF242424) : Colors.white;
+    final Color subColor =
+        isDark ? const Color(0xFFB0B0B0) : const Color(0xFF757575);
+
     showDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.system_update, color: Colors.green),
-            SizedBox(width: 8),
-            Text('发现新版本'),
-          ],
+      builder: (dialogContext) => Dialog(
+        backgroundColor: cardColor,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusXl),
         ),
-        content: Column(
+        clipBehavior: Clip.antiAlias,
+        child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('最新版本: ${version.fullVersion}'),
-            SizedBox(height: 4),
-            Text('当前版本: ${VersionService.fullVersion}'),
-            if (version.publishedAt.isNotEmpty) ...[
-              SizedBox(height: 4),
-              Text('发布日期: ${version.publishedAt.split('T').first}',
-                  style: TextStyle(color: Colors.grey)),
-            ],
-            if (version.releaseNotes.isNotEmpty) ...[
-              SizedBox(height: 12),
-              Text('更新内容:', style: TextStyle(fontWeight: FontWeight.bold)),
-              SizedBox(height: 4),
-              Container(
-                padding: EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.grey.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(version.releaseNotes.join('\n'), style: TextStyle(fontSize: 13)),
+            // ── 头部：图标 + 标题 + 版本对照 ──
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              color: AppTheme.primaryColor.withOpacity(isDark ? 0.14 : 0.07),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryColor.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                        ),
+                        child: const Icon(
+                          Icons.system_update,
+                          color: AppTheme.primaryColor,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Text(
+                        '发现新版本',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  // 版本对照：旧 → 新，一眼看出跨度
+                  Row(
+                    children: [
+                      _buildVersionChip(
+                        VersionService.fullVersion,
+                        subColor,
+                        isDark,
+                        strikethrough: true,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Icon(
+                          Icons.arrow_forward,
+                          size: 14,
+                          color: subColor,
+                        ),
+                      ),
+                      _buildVersionChip(
+                        version.fullVersion,
+                        AppTheme.primaryColor,
+                        isDark,
+                        bold: true,
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            ],
+            ),
+
+            // ── 内容：大小/日期 + 更新列表 ──
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 元信息（安装包大小 / 发布日期）—— 有才显示
+                    if ((version.size ?? 0) > 0 || version.publishedAt.isNotEmpty)
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 4,
+                        children: [
+                          if ((version.size ?? 0) > 0)
+                            _buildMetaRow(
+                              Icons.save_alt,
+                              '安装包 ${_formatBytes(version.size!)}',
+                              subColor,
+                            ),
+                          if (version.publishedAt.isNotEmpty)
+                            _buildMetaRow(
+                              Icons.event,
+                              version.publishedAt.split('T').first,
+                              subColor,
+                            ),
+                        ],
+                      ),
+
+                    if (version.releaseNotes.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        '更新内容',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: subColor,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      // 逐条圆点列表，比一整块文本好扫读
+                      ...version.releaseNotes.map(
+                        (note) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                margin: const EdgeInsets.only(top: 6),
+                                width: 5,
+                                height: 5,
+                                decoration: const BoxDecoration(
+                                  color: AppTheme.primaryColor,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  note,
+                                  style: const TextStyle(
+                                    fontSize: 13.5,
+                                    height: 1.45,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+
+            // ── 操作：等宽大按钮 ──
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 46,
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: subColor,
+                          side: BorderSide(
+                            color: isDark
+                                ? const Color(0xFF3A3A3A)
+                                : const Color(0xFFDDDDDD),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusMd),
+                          ),
+                        ),
+                        child: const Text('稍后更新'),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: SizedBox(
+                      height: 46,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(dialogContext);
+                          _downloadUpdate(version);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primaryColor,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusMd),
+                          ),
+                        ),
+                        icon: const Icon(Icons.download, size: 18),
+                        label: const Text(
+                          '立即更新',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text('稍后更新'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              _downloadUpdate(version);
-            },
-            icon: Icon(Icons.download, size: 18),
-            label: Text('立即更新'),
-          ),
-        ],
       ),
+    );
+  }
+
+  /// 版本胶囊（旧版本加删除线，新版本高亮）
+  Widget _buildVersionChip(
+    String label,
+    Color color,
+    bool isDark, {
+    bool bold = false,
+    bool strikethrough = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bold
+            ? color.withOpacity(0.16)
+            : (isDark ? const Color(0xFF2E2E2E) : const Color(0xFFF0F0F0)),
+        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12.5,
+          color: color,
+          fontWeight: bold ? FontWeight.w600 : FontWeight.normal,
+          decoration: strikethrough ? TextDecoration.lineThrough : null,
+          decorationColor: color,
+        ),
+      ),
+    );
+  }
+
+  /// 图标 + 文字的次要元信息
+  Widget _buildMetaRow(IconData icon, String text, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 4),
+        Text(text, style: TextStyle(fontSize: 12, color: color)),
+      ],
     );
   }
   
