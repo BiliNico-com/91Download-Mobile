@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import '../theme/ui_style.dart';
 
 /// 播放器可选倍速档位
 ///
@@ -80,35 +81,53 @@ class GlassSurface extends StatelessWidget {
   Widget build(BuildContext context) {
     final brightness = Theme.of(context).brightness;
 
-    Widget content = Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        color: darker
-            ? Colors.black.withOpacity(0.45)
-            : PlayerGlassTokens.glassFill(brightness),
-        borderRadius: borderRadius,
-        border: Border.all(
-          color: PlayerGlassTokens.glassStroke(brightness),
-          width: 0.8,
-        ),
-      ),
-      child: child,
-    );
+    // 受「毛玻璃效果」开关控制：关掉后改用更实的底色并去掉 BackdropFilter，
+    // 否则播放器控件会成为唯一还模糊着的地方，和全局风格打架。
+    return ValueListenableBuilder<bool>(
+      valueListenable: UiStyle.glassEnabled,
+      builder: (context, glass, _) {
+        final fill = !glass
+            ? (darker
+                ? Colors.black.withOpacity(0.72)
+                : (brightness == Brightness.dark
+                    ? Colors.black.withOpacity(0.62)
+                    : Colors.black.withOpacity(0.45)))
+            : (darker
+                ? Colors.black.withOpacity(0.45)
+                : PlayerGlassTokens.glassFill(brightness));
 
-    if (constraints != null) {
-      content = ConstrainedBox(constraints: constraints!, child: content);
-    }
+        Widget content = Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: borderRadius,
+            border: Border.all(
+              color: PlayerGlassTokens.glassStroke(brightness),
+              width: 0.8,
+            ),
+          ),
+          child: child,
+        );
 
-    // 背景模糊：让控件与画面产生"透光"关系，而不是贴一块纯色板
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: PlayerGlassTokens.blurSigma,
-          sigmaY: PlayerGlassTokens.blurSigma,
-        ),
-        child: content,
-      ),
+        if (constraints != null) {
+          content = ConstrainedBox(constraints: constraints!, child: content);
+        }
+
+        // 玻璃关闭 → 直接返回实心底，省掉一次全屏模糊采样
+        if (!glass) return content;
+
+        // 背景模糊：让控件与画面产生"透光"关系，而不是贴一块纯色板
+        return ClipRRect(
+          borderRadius: borderRadius,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(
+              sigmaX: PlayerGlassTokens.blurSigma,
+              sigmaY: PlayerGlassTokens.blurSigma,
+            ),
+            child: content,
+          ),
+        );
+      },
     );
   }
 }

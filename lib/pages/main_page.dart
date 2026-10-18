@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'dart:ui';
 import 'batch_page.dart';
 import 'search_page.dart';
 import 'download_page.dart';
 import 'settings_page.dart';
 import 'followed_page.dart';
 import '../services/app_state.dart';
+import '../theme/ui_style.dart';
 import '../utils/logger.dart';
 
 class MainPage extends StatefulWidget {
@@ -109,10 +111,6 @@ class _MainPageState extends State<MainPage> {
 
   @override
   Widget build(BuildContext context) {
-    final appState = context.watch<AppState>();
-    // 已关注页签的红点角标：有作者更新时提示
-    final newCount = appState.followedAuthorsService.newContentCount;
-
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) {
@@ -131,48 +129,101 @@ class _MainPageState extends State<MainPage> {
           },
           children: _pages,
         ),
-        bottomNavigationBar: NavigationBar(
+        bottomNavigationBar: _buildGlassNavBar(),
+        extendBody: true,
+      ),
+    );
+  }
+
+  /// 底部导航栏：跟随「毛玻璃效果」开关切换观感
+  ///
+  /// NavigationBar 自身的背景由 Scaffold 绘制，做不了背景模糊，
+  /// 所以这里用 ClipRect + BackdropFilter 包住它并把背景设成透明，
+  /// 让下方页面内容透上来形成玻璃质感。
+  /// 关闭开关时退回主题默认的实心 NavigationBar，零额外开销。
+  Widget _buildGlassNavBar() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: UiStyle.glassEnabled,
+      builder: (context, glass, _) {
+        final theme = Theme.of(context);
+        final isDark = theme.brightness == Brightness.dark;
+
+        final bar = NavigationBar(
           selectedIndex: _currentIndex,
           onDestinationSelected: (index) {
             goToPage(index);
           },
-          destinations: [
-            const NavigationDestination(
-              icon: Icon(Icons.download_rounded),
-              selectedIcon: Icon(Icons.download),
-              label: '批量',
-            ),
-            const NavigationDestination(
-              icon: Icon(Icons.search_rounded),
-              selectedIcon: Icon(Icons.search),
-              label: '搜索',
-            ),
-            NavigationDestination(
-              icon: Badge(
-                isLabelVisible: newCount > 0,
-                label: Text(newCount > 99 ? '99+' : '$newCount'),
-                child: const Icon(Icons.favorite_border_rounded),
+          backgroundColor: glass
+              ? Colors.transparent
+              : theme.navigationBarTheme.backgroundColor ??
+                  theme.colorScheme.surface,
+          destinations: _navDestinations(),
+        );
+
+        if (!glass) return bar;
+
+        return ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: isDark
+                    ? Colors.black.withOpacity(0.55)
+                    : Colors.white.withOpacity(0.72),
+                border: Border(
+                  top: BorderSide(
+                    color: isDark
+                        ? Colors.white.withOpacity(0.08)
+                        : Colors.black.withOpacity(0.06),
+                    width: 0.8,
+                  ),
+                ),
               ),
-              selectedIcon: Badge(
-                isLabelVisible: newCount > 0,
-                label: Text(newCount > 99 ? '99+' : '$newCount'),
-                child: const Icon(Icons.favorite),
-              ),
-              label: '已关注',
+              child: bar,
             ),
-            const NavigationDestination(
-              icon: Icon(Icons.history_rounded),
-              selectedIcon: Icon(Icons.history),
-              label: '已下载',
-            ),
-            const NavigationDestination(
-              icon: Icon(Icons.settings_rounded),
-              selectedIcon: Icon(Icons.settings),
-              label: '设置',
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
+  }
+
+  List<NavigationDestination> _navDestinations() {
+    final appState = context.watch<AppState>();
+    final newCount = appState.followedAuthorsService.newContentCount;
+    return [
+      const NavigationDestination(
+        icon: Icon(Icons.download_rounded),
+        selectedIcon: Icon(Icons.download),
+        label: '批量',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.search_rounded),
+        selectedIcon: Icon(Icons.search),
+        label: '搜索',
+      ),
+      NavigationDestination(
+        icon: Badge(
+          isLabelVisible: newCount > 0,
+          label: Text(newCount > 99 ? '99+' : '$newCount'),
+          child: const Icon(Icons.favorite_border_rounded),
+        ),
+        selectedIcon: Badge(
+          isLabelVisible: newCount > 0,
+          label: Text(newCount > 99 ? '99+' : '$newCount'),
+          child: const Icon(Icons.favorite),
+        ),
+        label: '已关注',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.history_rounded),
+        selectedIcon: Icon(Icons.history),
+        label: '已下载',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.settings_rounded),
+        selectedIcon: Icon(Icons.settings),
+        label: '设置',
+      ),
+    ];
   }
 }
