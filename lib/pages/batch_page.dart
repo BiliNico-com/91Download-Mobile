@@ -758,8 +758,16 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     // 「跟随系统」时它与 MaterialApp 真正生效的主题可能不一致，
     // 会导致浅色页面上出现深色控件）
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // 底栏被遮住的原因：main_page 的 Scaffold 用了 extendBody: true
+    // （底栏做毛玻璃需要内容透上来），body 的坐标系会延伸到屏幕底部，
+    // 页码胶囊停在 bottom: 16 就被 80 高的 NavigationBar 压住了。
+    //
+    // extendBody 为 true 时，body 内的 MediaQuery.padding.bottom 恰好等于
+    // 底栏总高（实测：无安全区 80、有安全区 80+34=114），
+    // 直接拿它当偏移量即可，不用硬编码 80 也不用自己加安全区。
+    final navBarHeight = MediaQuery.of(context).padding.bottom;
     return Positioned(
-      bottom: 16,
+      bottom: navBarHeight + 16,
       left: 0,
       right: 0,
       child: Center(
