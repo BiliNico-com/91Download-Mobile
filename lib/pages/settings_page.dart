@@ -894,48 +894,59 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                       ],
                     ),
                   ),
+                  const Divider(height: 24),
+                  _buildGlassStyleBlock(),
                 ],
               ),
-            ),
-            const Divider(height: 24),
-            // ── 界面风格：玻璃拟态开关 ──
-            // 可在两种观感间即时切换，觉得毛玻璃卡顿或不好看可直接关掉，
-            // 无需回滚代码。
-            //
-            // 字号跟随同一张卡片里的「跟随系统」「选择主题」用 ListTile 默认值，
-            // 不要显式指定 14/12——那样会比上下两项小两号，看起来像另一套排版。
-            ValueListenableBuilder<bool>(
-              valueListenable: UiStyle.glassEnabled,
-              builder: (context, glass, _) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text('毛玻璃效果'),
-                      subtitle: Text(
-                        glass ? '已开启，控件半透明模糊' : '已关闭，控件为实心色',
-                      ),
-                      value: glass,
-                      onChanged: (v) => UiStyle.setGlassEnabled(v),
-                    ),
-                    // 浓度滑块：只在毛玻璃开启时出现，
-                    // 关闭后被 AnimatedSize 收掉，不留空档。
-                    AnimatedSize(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOut,
-                      alignment: Alignment.topCenter,
-                      child: glass
-                          ? _buildGlassOpacitySlider()
-                          : const SizedBox(width: double.infinity),
-                    ),
-                  ],
-                );
-              },
             ),
           ],
         ),
       ),
+    );
+  }
+
+  /// 界面风格：玻璃拟态开关 + 浓度滑块
+  ///
+  /// 单独提出来是因为它要放在 ExpansionTile 的 Padding 里面——
+  /// 之前直接挂在 children 顶层，少了那 16px 左边距，
+  /// 导致「毛玻璃效果」比上面几项整体左移，看起来没对齐。
+  Widget _buildGlassStyleBlock() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 可在两种观感间即时切换，觉得毛玻璃卡顿或不好看可直接关掉，
+        // 无需回滚代码。字号跟随同卡片的「跟随系统」「选择主题」，
+        // 不显式指定，否则会比上下两项小两号。
+        ValueListenableBuilder<bool>(
+          valueListenable: UiStyle.glassEnabled,
+          builder: (context, glass, _) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('毛玻璃效果'),
+                  subtitle: Text(
+                    glass ? '已开启，控件半透明模糊' : '已关闭，控件为实心色',
+                  ),
+                  value: glass,
+                  onChanged: (v) => UiStyle.setGlassEnabled(v),
+                ),
+                // 浓度滑块：只在毛玻璃开启时出现，
+                // 关闭后被 AnimatedSize 收掉，不留空档。
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOut,
+                  alignment: Alignment.topCenter,
+                  child: glass
+                      ? _buildGlassOpacitySlider()
+                      : const SizedBox(width: double.infinity),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
     );
   }
 
