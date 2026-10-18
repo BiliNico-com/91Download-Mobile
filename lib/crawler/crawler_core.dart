@@ -37,6 +37,13 @@ class DownloadControl {
   /// 把原因挂在这里，让 DownloadManager 能写进任务的 error 字段展示给用户。
   String? failureReason;
 
+  /// 这次失败是否值得重试。
+  ///
+  /// 默认 true（网络抖动、切片失败等重试通常有效）。
+  /// Cloudflare 人机验证这类确定性拒绝会置 false —— 立即重试只会
+  /// 加重风控、且必然再次失败。
+  bool retryable = true;
+
   bool get isStopped => _stopFlag;
   bool get isPaused => _pauseFlag;
 
@@ -1127,6 +1134,9 @@ class CrawlerCore {
   /// 获取视频详情（m3u8地址等）
   Future<VideoInfo?> getVideoDetail(VideoInfo video) async {
     try {
+      // 每次请求前复位，避免上一次的失败标记残留到这一次
+      lastDetailError = null;
+      lastDetailBlockedByChallenge = false;
       // ✅ 修复：使用更轻量的参数格式
       final ts = DateTime.now().millisecondsSinceEpoch;
       // original 站点对 _t 参数敏感（首页/搜索带 _t 会 404），仅 porn91 保留 _t 防缓存
@@ -1405,8 +1415,20 @@ class CrawlerCore {
       // 以前这里直接 `return null`，异常和堆栈全丢。
       // 结果是「解析失败」和「页面确实没有视频」在调用方看来完全一样，
       // 用户只能看到一句模糊的失败提示，日志里也查不到任何线索。
-      lastDetailError = e.toString();
+      //
+      // 特别处理 Cloudflare 人机验证：站点对 /video-*.htm 单独开了
+      // 浏览器完整性检查时会返回 403 + "Just a moment..."，
+      // 这不是「视频下架」也不是「站点改版」，报错必须说清楚，
+      // 否则用户会一直重试、完全无从下手。
+      lastDetailError = _describeDetailError(e);
+      lastDetailBlockedByChallenge = _isCloudflareChallenge(e);
       await logger.log('Error', '解析视频详情失败 (${video.id}): $e');
+      if (lastDetailBlockedByChallenge) {
+        await logger.log(
+            'Error',
+            '站点返回 Cloudflare 人机验证页（HTTP 403 / "Just a moment..."）。'
+            '这不是视频下架或站点改版，纯 HTTP 请求无法通过该验证。');
+      }
       await logger.log('Error', '$stack');
       return null;
     }
@@ -1414,6 +1436,53 @@ class CrawlerCore {
 
   /// 最近一次 [getVideoDetail] 失败的原因，供 UI 展示更具体的提示。
   String? lastDetailError;
+
+  /// 上次详情页请求是否被 Cloudflare 人机验证拦下。
+  ///
+  /// 调用方据此避免无意义的重试，并给用户可操作的提示。
+  bool lastDetailBlockedByChallenge = false;
+
+  /// 判断异常是否为 Cloudflare 的浏览器完整性检查。
+  ///
+  /// 只按「状态码 403/503 + 响应体特征」判断，不去伪造 cf_clearance
+  /// 或接入打码服务——那是对抗站点防护，既不可靠也不应该做。
+  bool _isCloudflareChallenge(Object e) {
+    if (e is! DioException) return false;
+    final code = e.response?.statusCode ?? 0;
+    if (code != 403 && code != 503) return false;
+    final body = e.response?.data?.toString() ?? '';
+    return body.contains('Just a moment') ||
+        body.contains('cf-challenge') ||
+        body.contains('challenge-platform') ||
+        body.contains('cf-error-details');
+  }
+
+  /// 把详情页请求异常翻译成用户能看懂、能照做的提示。
+  String _describeDetailError(Object e) {
+    if (_isCloudflareChallenge(e)) {
+      return '站点开启了人机验证（Cloudflare），无法自动解析该视频。'
+          '这是站点的防护策略，不是 App 故障，请稍后重试或更换站点。';
+    }
+    if (e is DioException) {
+      final code = e.response?.statusCode;
+      if (code != null) {
+        if (code == 404) return '视频页面不存在（HTTP 404），可能已被删除';
+        if (code == 429) return '请求过于频繁（HTTP 429），请稍后再试';
+        if (code >= 500) return '站点服务器异常（HTTP $code），请稍后再试';
+        return '站点拒绝了请求（HTTP $code）';
+      }
+      final t = e.type;
+      if (t == DioExceptionType.connectionTimeout ||
+          t == DioExceptionType.receiveTimeout ||
+          t == DioExceptionType.sendTimeout) {
+        return '请求超时，请检查网络后重试';
+      }
+      if (t == DioExceptionType.connectionError) {
+        return '网络连接失败，请检查网络或代理设置';
+      }
+    }
+    return '获取视频地址失败，可能是站点改版或该视频已下架';
+  }
 
   // ==================== 下载 ====================
 
@@ -1432,7 +1501,19 @@ class CrawlerCore {
       final detail = await getVideoDetail(video);
       if (detail == null || detail.m3u8Url == null) {
         ctrl.onLog?.call('获取视频地址失败', 'error');
-        ctrl.failureReason = '获取视频地址失败，可能是站点改版或该视频已下架';
+        // 优先用解析阶段记录的真实原因（Cloudflare 验证 / 404 / 超时…），
+        // 而不是一律甩给用户一句「站点改版或已下架」。
+        final reason = lastDetailError;
+        String message;
+        if (lastDetailBlockedByChallenge) {
+          message = '站点要求人机验证，暂时无法解析该视频（稍后重试或更换站点）';
+        } else if (reason != null && reason.isNotEmpty) {
+          message = reason;
+        } else {
+          message = '获取视频地址失败，可能是站点改版或该视频已下架';
+        }
+        ctrl.failureReason = message;
+        ctrl.retryable = !lastDetailBlockedByChallenge;
         return false;
       }
       video = detail;

@@ -92,7 +92,15 @@ class _StreamingPageState extends State<StreamingPage> {
 
       final detail = await crawler.getVideoDetail(widget.video);
       if (detail == null || detail.m3u8Url == null) {
-        setState(() { _error = '无法获取视频播放地址'; _isLoading = false; });
+        // 用爬虫记录的真实原因，不要把「被站点人机验证拦下」
+        // 也说成笼统的「无法获取播放地址」——两者用户该做的事完全不同
+        final reason = crawler.lastDetailError;
+        setState(() {
+          _error = (reason != null && reason.isNotEmpty)
+              ? reason
+              : '无法获取视频播放地址';
+          _isLoading = false;
+        });
         return;
       }
 
