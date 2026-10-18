@@ -902,10 +902,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
             // 可在两种观感间即时切换，觉得毛玻璃卡顿或不好看可直接关掉，
             // 无需回滚代码。
             //
-            // 文案与字号要和上方「跟随系统」保持一致：实测该行可用宽度约
-            // 220dp，原副标题「已开启：控件半透明模糊，观感更现代（低端机
-            // 可能略耗性能）」会折成两行、行高比相邻开关高出一截，看起来
-            // 就像没对齐。改成单行短句后两者视觉节奏一致。
+            // 字号跟随同一张卡片里的「跟随系统」「选择主题」用 ListTile 默认值，
+            // 不要显式指定 14/12——那样会比上下两项小两号，看起来像另一套排版。
             ValueListenableBuilder<bool>(
               valueListenable: UiStyle.glassEnabled,
               builder: (context, glass, _) {
@@ -914,13 +912,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   children: [
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        '毛玻璃效果',
-                        style: TextStyle(fontSize: 14),
-                      ),
+                      title: Text('毛玻璃效果'),
                       subtitle: Text(
                         glass ? '已开启，控件半透明模糊' : '已关闭，控件为实心色',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                       value: glass,
                       onChanged: (v) => UiStyle.setGlassEnabled(v),
