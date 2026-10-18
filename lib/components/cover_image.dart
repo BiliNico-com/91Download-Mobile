@@ -241,6 +241,11 @@ class _CoverImageState extends State<CoverImage> {
   bool _loading = false;
   bool _failed = false;
 
+  /// 隐私模式下长按临时解除模糊。
+  /// 用组件内部状态而非回调，是为了让所有用到 CoverImage 的页面
+  /// 自动获得「长按看清」能力，不必每处各写一套手势。
+  bool _revealed = false;
+
   @override
   void initState() {
     super.initState();
@@ -254,6 +259,10 @@ class _CoverImageState extends State<CoverImage> {
       _file = null;
       _failed = false;
       _resolve();
+    }
+    // 隐私模式被关掉时，清掉临时的长按状态
+    if (oldWidget.blur && !widget.blur) {
+      _revealed = false;
     }
   }
 
@@ -269,6 +278,11 @@ class _CoverImageState extends State<CoverImage> {
       _loading = false;
       _failed = f == null;
     });
+  }
+
+  void _setRevealed(bool v) {
+    if (!widget.blur || _revealed == v) return;
+    setState(() => _revealed = v);
   }
 
   @override
@@ -295,12 +309,12 @@ class _CoverImageState extends State<CoverImage> {
       content = _placeholder(isError: _failed);
     }
 
-    if (widget.blur) {
+    // 隐私模式：默认模糊，长按期间解除模糊，松手恢复
+    if (widget.blur && !_revealed) {
       content = Stack(
         fit: StackFit.passthrough,
         children: [
           content,
-          // 隐私模式：模糊预览，点开才看清
           Positioned.fill(
             child: ClipRRect(
               borderRadius: radius,
@@ -314,13 +328,28 @@ class _CoverImageState extends State<CoverImage> {
       );
     }
 
+    Widget result;
     if (widget.borderRadius == null) {
-      return SizedBox(width: widget.width, height: widget.height, child: content);
+      result = SizedBox(
+          width: widget.width, height: widget.height, child: content);
+    } else {
+      result = ClipRRect(
+        borderRadius: radius,
+        child: SizedBox(
+            width: widget.width, height: widget.height, child: content),
+      );
     }
 
-    return ClipRRect(
-      borderRadius: radius,
-      child: SizedBox(width: widget.width, height: widget.height, child: content),
+    // 只有隐私模式才接管长按；否则完全不插手手势，
+    // 避免和上层的点击播放/选中逻辑抢事件
+    if (!widget.blur) return result;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPressStart: (_) => _setRevealed(true),
+      onLongPressEnd: (_) => _setRevealed(false),
+      onLongPressCancel: () => _setRevealed(false),
+      child: result,
     );
   }
 

@@ -8,7 +8,6 @@ import '../models/video_info.dart';
 import '../utils/logger.dart';
 import '../components/video_card.dart';
 import '../components/empty_state.dart';
-import '../components/cover_image.dart';
 import '../components/video_list_items.dart';
 import '../components/skeleton_card.dart';
 import '../utils/debouncer.dart';

@@ -755,6 +755,32 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                       appState.setExternalPlayer(v);
                     },
                   ),
+                  Divider(),
+
+                  // 隐私模式：列表封面加模糊，避免公共场合被看到内容
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('隐私模式'),
+                    subtitle: Text('列表封面加模糊，长按封面可临时看清'),
+                    value: appState.privacyMode,
+                    onChanged: (v) async {
+                      await appState.togglePrivacyMode();
+                    },
+                  ),
+                  Divider(),
+
+                  // 作者更新自动检查开关
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('自动检查作者更新'),
+                    subtitle: Text('每 6 小时在后台检查一次已关注作者的新视频'),
+                    value: _followedAutoCheck,
+                    onChanged: (v) async {
+                      await appState.followedAuthorsService
+                          .setAutoCheckEnabled(v);
+                      if (mounted) setState(() => _followedAutoCheck = v);
+                    },
+                  ),
                 ],
               ),
             ),
@@ -880,12 +906,11 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               builder: (context, glass, _) {
                 return SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('毛玻璃效果', style: TextStyle(fontSize: 14)),
+                  title: Text('毛玻璃效果'),
                   subtitle: Text(
                     glass
                         ? '已开启：控件半透明模糊，观感更现代（低端机可能略耗性能）'
                         : '已关闭：控件为实心色，性能更好',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                   value: glass,
                   onChanged: (v) => UiStyle.setGlassEnabled(v),
@@ -943,29 +968,6 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 onTap: () => _showChangePinDialog(),
               ),
             ],
-            Divider(),
-            // 隐私模式：列表封面加模糊，避免公共场合被看到内容
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text('隐私模式'),
-              subtitle: Text('列表封面加模糊，需要长按才能看清'),
-              value: appState.privacyMode,
-              onChanged: (v) async {
-                await appState.togglePrivacyMode();
-              },
-            ),
-            Divider(),
-            // 作者更新自动检查开关
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text('自动检查作者更新'),
-              subtitle: Text('每 6 小时在后台检查一次已关注作者的新视频'),
-              value: _followedAutoCheck,
-              onChanged: (v) async {
-                await appState.followedAuthorsService.setAutoCheckEnabled(v);
-                if (mounted) setState(() => _followedAutoCheck = v);
-              },
-            ),
           ],
         ),
       ),
