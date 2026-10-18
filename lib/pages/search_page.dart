@@ -394,12 +394,16 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
 
         return Scaffold(
             extendBodyBehindAppBar: true,
+            // 与批量页一致：跟随主题而非写死白色。
+            // 列表区只有卡片的 Card.margin 露底，写死白会在
+            // 顶栏下沿和首张卡片之间留下一条突兀的白带。
+            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
             body: Stack(
               children: [
                 RefreshIndicator(
                   onRefresh: _onRefresh,
                   color: Colors.blue,
-                  backgroundColor: Colors.white,
+                  backgroundColor: Theme.of(context).cardColor,
                   displacement: 40,
                   child: CustomScrollView(
                   controller: _scrollController,

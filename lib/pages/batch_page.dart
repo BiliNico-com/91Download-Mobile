@@ -342,6 +342,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   Widget build(BuildContext context) {
     super.build(context);
     final statusBarH = MediaQuery.of(context).padding.top;
+    final theme = Theme.of(context);
     return Consumer<AppState>(
       builder: (context, appState, _) {
         if (!appState.isSiteSelected) {
@@ -415,12 +416,17 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           },
           child: Scaffold(
             extendBodyBehindAppBar: true,
+            // 跟随主题，别写死白色：
+            // 列表区只有卡片的 Card.margin 露底，写死白色时
+            // 顶栏玻璃边界到首张卡片之间会是一条突兀的白带，
+            // 深色模式下更明显（卡片深灰、四周纯白）。
+            backgroundColor: theme.scaffoldBackgroundColor,
             body: Stack(
               children: [
                 RefreshIndicator(
                   onRefresh: _onRefresh,
                   color: Colors.blue,
-                  backgroundColor: Colors.white,
+                  backgroundColor: theme.cardColor,
                   displacement: 40,
                   child: CustomScrollView(
                   controller: _scrollController,
