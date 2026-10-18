@@ -537,6 +537,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   /// 覆盖层：翻页控件 + 浮动按钮
   List<Widget> _buildOverlays(AppState appState) {
     return [
+      // 搜索历史下拉：必须是 Stack 里的独立一层。
+      // 早前它挂在 SliverAppBar.flexibleSpace 内部，而 expandedHeight
+      // 只算到「标题区 56 + 搜索框 56」，下拉撑开的部分落在 sliver 的
+      // ClipRect 之外 —— 那块区域不属于任何控件，点击会直接穿到下层
+      // 视频卡片上。移到 Stack 里作为独立层后命中测试才正确。
+      if (_showHistory && appState.searchHistory.isNotEmpty && !_isAuthorPageMode)
+        _buildHistoryOverlay(appState),
       // 页码跳转悬浮胶囊（仅视频搜索模式显示，作者主页模式隐藏）
       if (!_isAuthorMode && !_isAuthorPageMode) _buildBottomPageNavigation(appState),
       // 回顶部按钮
@@ -564,6 +571,40 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           ),
         ),
     ];
+  }
+
+  /// 搜索历史覆盖层
+  ///
+  /// 用 GestureDetector(behavior: opaque) 铺满全屏来截住所有落在列表上的点击，
+  /// 点空白处收起历史，点条目则应用关键词 —— 不再穿透到下层视频卡片。
+  Widget _buildHistoryOverlay(AppState appState) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final statusBarHeight = MediaQuery.of(context).padding.top;
+    // 搜索栏下沿：状态栏 + 标题区(56) + 搜索框(56)
+    final double top = statusBarHeight + 112;
+
+    return Positioned.fill(
+      child: GestureDetector(
+        // 拦截整层命中，避免点到下方列表
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _showHistory = false),
+        child: Stack(
+          children: [
+            Positioned(
+              top: top,
+              left: 0,
+              right: 0,
+              child: GestureDetector(
+                // 下拉本体自己消费点击，不让它冒泡到收起逻辑
+                behavior: HitTestBehavior.opaque,
+                onTap: () {},
+                child: _buildSearchHistoryDropdown(appState, isDark),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// 构建关注按钮
@@ -749,16 +790,22 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       mainAxisSize: MainAxisSize.min,
       children: [
         _buildSearchBarRow(isDark, showSort),
-        // 搜索历史下拉（跟随搜索栏下沿展开，吸顶时一起吸附）
-        if (_showHistory && appState.searchHistory.isNotEmpty)
-          _buildSearchHistoryDropdown(appState, isDark),
       ],
     );
   }
 
   /// 搜索栏本体（胶囊输入框 + 分段控件 + 搜索按钮）
   Widget _buildSearchBarRow(bool isDark, bool showSort) {
-    return Container(
+    // Container(color:) 只负责绘制，不参与命中测试。
+    // 包一层 opaque 的 GestureDetector，让搜索栏自己吃掉点击，
+    // 避免落在栏空白处的点击穿透到下面的视频列表。
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        // 点搜索栏空白处：收起历史下拉
+        if (_showHistory) setState(() => _showHistory = false);
+      },
+      child: Container(
       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       color: Theme.of(context).scaffoldBackgroundColor,
       child: Container(
@@ -876,6 +923,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
             ),
           ],
         ),
+      ),
       ),
     );
   }
