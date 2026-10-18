@@ -1063,26 +1063,50 @@ class _BatchHeader extends StatelessWidget {
   @override
   Widget build(BuildContext ctx) {
     final isDark = Theme.of(ctx).brightness == Brightness.dark;
-    // 作者模式下显示作者名称
-    final displayTitle = isAuthorPageMode ? '作者: $authorName' : '批量爬取';
     // 主题适配颜色
-    final textColor = isDark ? Colors.white : Colors.black87;
     final subTextColor = isDark ? Colors.grey : Colors.black54;
 
     // 顶部栏背后是滚动的视频列表 —— 这里最能体现毛玻璃开关的差异：
     //   开启 → 半透明，内容从栏下穿过时可见模糊
     //   关闭 → 完全不透明，内容被挡住
+    //
+    // 底色统一由 UiStyle 计算，与搜索页顶栏、底部导航栏共用同一套公式，
+    // 这样两侧不会出现深浅不一的情况；同时监听浓度滑块。
     return ValueListenableBuilder<bool>(
       valueListenable: UiStyle.glassEnabled,
       builder: (context, glass, _) {
-        final bgColor = glass
-            ? (isDark
-                ? Colors.black.withOpacity(0.55)
-                : Colors.white.withOpacity(0.72))
-            : (isDark
-                ? (Theme.of(ctx).cardColor)
-                : Colors.white);
+        return ValueListenableBuilder<double>(
+          valueListenable: UiStyle.glassOpacity,
+          builder: (context, _, __) {
+            final bgColor = glass
+                ? UiStyle.headerGlassFill(isDark, collapseRatio)
+                : (isDark ? (Theme.of(ctx).cardColor) : Colors.white);
 
+            return _buildHeaderContent(
+              ctx: ctx,
+              bgColor: bgColor,
+              glass: glass,
+              isDark: isDark,
+              subTextColor: subTextColor,
+              collapseRatio: collapseRatio,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildHeaderContent({
+    required BuildContext ctx,
+    required Color bgColor,
+    required bool glass,
+    required bool isDark,
+    required Color subTextColor,
+    required double collapseRatio,
+  }) {
+    // 作者模式下显示作者名称
+    final displayTitle = isAuthorPageMode ? '作者: $authorName' : '批量爬取';
+    final textColor = isDark ? Colors.white : Colors.black87;
         final header = Container(
           color: bgColor,
           // flexibleSpace 拿到的是 appbar 的固定高度（含状态栏）。
@@ -1273,8 +1297,6 @@ class _BatchHeader extends StatelessWidget {
             child: header,
           ),
         );
-      },
-    );
   }
   
   // 右侧按钮组

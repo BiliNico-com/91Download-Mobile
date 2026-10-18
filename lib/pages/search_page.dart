@@ -428,15 +428,20 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
 
                           // 关闭玻璃 → 完全不透明，内容被挡住；
                           // 开启 → 半透明，列表从栏下穿过时可见模糊。
+                          //
+                          // 底色统一由 UiStyle 计算，与批量页顶栏、底部导航栏
+                          // 共用一套公式，避免以前深色下 0.45/0.65 与
+                          // 底栏 0.72 各写各的导致上下颜色不一致。
+                          //
+                          // 注意 expandRatio 是「1=完全展开」，而
+                          // UiStyle.headerGlassFill 要的是「1=完全收起」，
+                          // 所以这里传 1 - expandRatio。
                           final barColor = !glass
-                              ? (isDark ? const Color(0xFF242424) : Colors.white)
-                              : (isExpanded
-                                  ? (isDark
-                                      ? Colors.black.withOpacity(0.45)
-                                      : Colors.white.withOpacity(0.72))
-                                  : (isDark
-                                      ? Colors.black.withOpacity(0.65)
-                                      : Colors.white.withOpacity(0.88)));
+                              ? (isDark
+                                  ? Theme.of(context).colorScheme.surface
+                                  : Colors.white)
+                              : UiStyle.headerGlassFill(
+                                  isDark, 1.0 - expandRatio);
 
                           final bar = Container(
                             color: barColor,

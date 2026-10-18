@@ -14,6 +14,13 @@ class UiStyle {
   UiStyle._();
 
   static const String _prefKey = 'glassEffectEnabled';
+  static const String _opacityPrefKey = 'glassOpacity';
+
+  /// 玻璃默认不透明度（0~1 的「浓度」上限）。
+  ///
+  /// 顶栏与底栏共用这一个值，保证两侧观感统一；
+  /// 用户在设置页拖动滑块时改的是这个上限。
+  static const double defaultGlassOpacity = 0.72;
 
   /// 是否启用玻璃拟态。
   ///
@@ -21,7 +28,51 @@ class UiStyle {
   /// 不必重启 App。
   static final ValueNotifier<bool> glassEnabled = ValueNotifier<bool>(true);
 
+  /// 玻璃不透明度（0.2 ~ 1.0）。
+  ///
+  /// 同样用 ValueNotifier，拖动滑块时所有毛玻璃表面实时跟随。
+  static final ValueNotifier<double> glassOpacity =
+      ValueNotifier<double>(defaultGlassOpacity);
+
   static bool get isGlassEnabled => glassEnabled.value;
+
+  /// 把「不透明度」换算成某主题下可用的叠加色。
+  ///
+  /// 深色主题用黑色叠加、浅色用白色叠加——「浓度」语义一致，
+  /// 都是指挡住所透背景的程度，只是叠加色随主题取反。
+  static Color glassFill(bool isDark, double opacity, {double scale = 1.0}) {
+    final value = (opacity * scale).clamp(0.0, 1.0);
+    return isDark
+        ? Colors.black.withOpacity(value)
+        : Colors.white.withOpacity(value);
+  }
+
+  /// 顶栏（AppBar / 折叠头）的玻璃底色。
+  ///
+  /// [collapseRatio] 0 = 完全展开，1 = 完全收起。
+  /// 收起后稍微更实一点，避免列表内容从标题后面透出来。
+  /// 浅色最多再加 16% 浓度，深色收到 0.85 封顶。
+  static Color headerGlassFill(bool isDark, double collapseRatio) {
+    final base = glassOpacity.value;
+    final t = collapseRatio.clamp(0.0, 1.0);
+    final extra = isDark ? 0.13 : 0.16;
+    return glassFill(isDark, base, scale: 1.0 + extra * t);
+  }
+
+  /// 底栏（NavigationBar）的玻璃底色。
+  ///
+  /// 与顶栏同用 [glassOpacity]；底栏不随滚动变化，
+  /// 取展开态浓度，这样静止时上下两侧颜色一致。
+  static Color navBarGlassFill(bool isDark) {
+    return glassFill(isDark, glassOpacity.value);
+  }
+
+  /// 玻璃表面描边色（顶栏/底栏通用）
+  static Color glassBorderColor(bool isDark) {
+    return isDark
+        ? Colors.white.withOpacity(0.08)
+        : Colors.black.withOpacity(0.06);
+  }
 
   /// 切换并持久化，重启后保持用户选择
   static Future<void> setGlassEnabled(bool v) async {
@@ -34,11 +85,25 @@ class UiStyle {
     }
   }
 
+  /// 设置玻璃不透明度并持久化（0.2 ~ 1.0）
+  static Future<void> setGlassOpacity(double v) async {
+    final clamped = v.clamp(0.2, 1.0).toDouble();
+    glassOpacity.value = clamped;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_opacityPrefKey, clamped);
+    } catch (_) {}
+  }
+
   /// 启动时读取上次的选择
   static Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       glassEnabled.value = prefs.getBool(_prefKey) ?? true;
+      final saved = prefs.getDouble(_opacityPrefKey);
+      if (saved != null) {
+        glassOpacity.value = saved.clamp(0.2, 1.0).toDouble();
+      }
     } catch (_) {}
   }
 }

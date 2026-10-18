@@ -909,24 +909,91 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
             ValueListenableBuilder<bool>(
               valueListenable: UiStyle.glassEnabled,
               builder: (context, glass, _) {
-                return SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    '毛玻璃效果',
-                    style: TextStyle(fontSize: 14),
-                  ),
-                  subtitle: Text(
-                    glass ? '已开启，控件半透明模糊' : '已关闭，控件为实心色',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  value: glass,
-                  onChanged: (v) => UiStyle.setGlassEnabled(v),
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        '毛玻璃效果',
+                        style: TextStyle(fontSize: 14),
+                      ),
+                      subtitle: Text(
+                        glass ? '已开启，控件半透明模糊' : '已关闭，控件为实心色',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      value: glass,
+                      onChanged: (v) => UiStyle.setGlassEnabled(v),
+                    ),
+                    // 浓度滑块：只在毛玻璃开启时出现，
+                    // 关闭后被 AnimatedSize 收掉，不留空档。
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOut,
+                      alignment: Alignment.topCenter,
+                      child: glass
+                          ? _buildGlassOpacitySlider()
+                          : const SizedBox(width: double.infinity),
+                    ),
+                  ],
                 );
               },
             ),
           ],
         ),
       ),
+    );
+  }
+
+  /// 玻璃浓度滑块（仅毛玻璃开启时显示）
+  ///
+  /// 浓度越高，顶栏/底栏的叠加色越实、透出的背景越少。
+  /// 上下两侧共用 [UiStyle.glassOpacity]，拖动后立即同步生效。
+  Widget _buildGlassOpacitySlider() {
+    return ValueListenableBuilder<double>(
+      valueListenable: UiStyle.glassOpacity,
+      builder: (context, value, _) {
+        final percent = (value * 100).round();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    '不透明度',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '$percent%',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Theme.of(context).colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              Slider(
+                value: value,
+                min: 0.2,
+                max: 1.0,
+                // 5% 一档，避免手指微动就抖动
+                divisions: 16,
+                label: '$percent%',
+                onChanged: (v) {
+                  // 只更新内存值让界面实时跟随，
+                  // 松手时才写盘（见 onChangeEnd），避免频繁 IO。
+                  UiStyle.glassOpacity.value = v;
+                },
+                onChangeEnd: (v) => UiStyle.setGlassOpacity(v),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

@@ -142,46 +142,51 @@ class _MainPageState extends State<MainPage> {
   /// 让下方页面内容透上来形成玻璃质感。
   /// 关闭开关时退回主题默认的实心 NavigationBar，零额外开销。
   Widget _buildGlassNavBar() {
+    // 同时监听「是否开启」与「浓度」两个开关，
+    // 拖动透明度滑块时底栏实时跟随。
     return ValueListenableBuilder<bool>(
       valueListenable: UiStyle.glassEnabled,
       builder: (context, glass, _) {
-        final theme = Theme.of(context);
-        final isDark = theme.brightness == Brightness.dark;
+        return ValueListenableBuilder<double>(
+          valueListenable: UiStyle.glassOpacity,
+          builder: (context, _, __) {
+            final theme = Theme.of(context);
+            final isDark = theme.brightness == Brightness.dark;
 
-        final bar = NavigationBar(
-          selectedIndex: _currentIndex,
-          onDestinationSelected: (index) {
-            goToPage(index);
-          },
-          backgroundColor: glass
-              ? Colors.transparent
-              : theme.navigationBarTheme.backgroundColor ??
-                  theme.colorScheme.surface,
-          destinations: _navDestinations(),
-        );
+            final bar = NavigationBar(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: (index) {
+                goToPage(index);
+              },
+              backgroundColor: glass
+                  ? Colors.transparent
+                  : theme.navigationBarTheme.backgroundColor ??
+                      theme.colorScheme.surface,
+              destinations: _navDestinations(),
+            );
 
-        if (!glass) return bar;
+            if (!glass) return bar;
 
-        return ClipRect(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: isDark
-                    ? Colors.black.withOpacity(0.55)
-                    : Colors.white.withOpacity(0.72),
-                border: Border(
-                  top: BorderSide(
-                    color: isDark
-                        ? Colors.white.withOpacity(0.08)
-                        : Colors.black.withOpacity(0.06),
-                    width: 0.8,
+            return ClipRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    // 与顶栏同源：UiStyle 里统一取色，
+                    // 避免以前顶栏 0.55/底栏 0.72 这种各写各的不一致。
+                    color: UiStyle.navBarGlassFill(isDark),
+                    border: Border(
+                      top: BorderSide(
+                        color: UiStyle.glassBorderColor(isDark),
+                        width: 0.8,
+                      ),
+                    ),
                   ),
+                  child: bar,
                 ),
               ),
-              child: bar,
-            ),
-          ),
+            );
+          },
         );
       },
     );
