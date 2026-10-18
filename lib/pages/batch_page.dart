@@ -58,9 +58,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   final FocusNode _pageFocusNode = FocusNode();
 
   // ─── 布局常量 ───
-  // 展开态实际内容高度：标题行(48) + 副标题(19) + 分类标签行(42) ≈ 109。
-  // 原值 142 会多出约 33px 空白，展开时顶栏显得过高，这里收紧。
-  static const double _kExpandedHeight = 112.0;
+  // 展开态内容实际高度：标题行(48) + 副标题(19) + 分类标签行(52) = 119。
+  // 不含状态栏高度——SliverAppBar 的 expandedHeight 已包含状态栏，
+  // 内容里又补了一次状态栏占位，两者叠加才是顶栏偏高的真正来源。
+  static const double _kExpandedHeight = 120.0;
   static const double _kCollapsedHeight = 56.0;
 
   @override
@@ -1084,8 +1085,14 @@ class _BatchHeader extends StatelessWidget {
 
         final header = Container(
           color: bgColor,
+          // flexibleSpace 拿到的是 appbar 的固定高度（含状态栏）。
+          // 内容排布：状态栏占位 + 标题行 + 副标题 + 分类标签行。
+          // 若容器高度小于内容总高，Column 会溢出并把多余部分挤到
+          // 列表上方，表现为分类标签与第一个视频之间一大片空白。
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
               SizedBox(height: statusBarHeight),
               
