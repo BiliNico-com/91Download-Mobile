@@ -58,8 +58,9 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   final FocusNode _pageFocusNode = FocusNode();
 
   // ─── 布局常量 ───
-  // 展开态内容：标题行(48) + 副标题(20) + 分类标签行(38+14 padding) ≈ 140
-  static const double _kExpandedHeight = 142.0;
+  // 展开态实际内容高度：标题行(48) + 副标题(19) + 分类标签行(42) ≈ 109。
+  // 原值 142 会多出约 33px 空白，展开时顶栏显得过高，这里收紧。
+  static const double _kExpandedHeight = 112.0;
   static const double _kCollapsedHeight = 56.0;
 
   @override

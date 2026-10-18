@@ -445,16 +445,18 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                               children: [
                                 // 状态栏占位
                                 SizedBox(height: statusBarHeight),
-                                // 标题区域（滚动时隐藏）
-                                AnimatedOpacity(
-                                  opacity: isExpanded ? 1.0 : 0.0,
-                                  duration: const Duration(milliseconds: 150),
-                                  child: Container(
-                                    height: 56,
-                                    padding: EdgeInsets.only(left: 16, right: 8),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
+                                // 标题区域（滚动时标题文字淡出，右侧按钮常显）
+                                // 与批量页一致：状态/隐私按钮留在标题行右侧，
+                                // 只让标题文字随折叠淡出，按钮不受 AnimatedOpacity 影响。
+                                Container(
+                                  height: 56,
+                                  padding: EdgeInsets.only(left: 16, right: 8),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: AnimatedOpacity(
+                                          opacity: isExpanded ? 1.0 : 0.0,
+                                          duration: const Duration(milliseconds: 150),
                                           child: Column(
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             mainAxisSize: MainAxisSize.min,
@@ -479,8 +481,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                                             ],
                                           ),
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                      ..._buildAppBarActions(appState),
+                                    ],
                                   ),
                                 ),
                                 // 搜索区域（始终可见，吸附到顶部）
@@ -493,21 +496,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                                       : (isDark
                                           ? const Color(0xFF242424)
                                           : Colors.white),
-                                  child: Row(
-                                    children: [
-                                      Expanded(child: _buildSearchBar(appState)),
-                                      // 状态与隐私按钮常显：收起后标题行淡出，
-                                      // 若跟着一起藏起来就没地方看当前状态了。
-                                      // 与批量页行为保持一致。
-                                      Padding(
-                                        padding: EdgeInsets.only(right: 4),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: _buildAppBarActions(appState),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                  child: _buildSearchBar(appState),
                                 ),
                               ],
                             ),
