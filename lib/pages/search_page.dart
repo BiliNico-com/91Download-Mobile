@@ -522,7 +522,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                 ),
                 // 视频/作者搜索结果
                 SliverPadding(
-                  padding: EdgeInsets.all(8),
+                  // 顶部不再额外留 8：贴搜索栏更紧凑，间距交给 Card 自带 margin
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
                   sliver: _isAuthorMode && !_isAuthorPageMode
                     ? _buildAuthorResultsSliver()
                     : _buildVideoResultsSliver(appState),

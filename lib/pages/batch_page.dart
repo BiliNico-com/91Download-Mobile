@@ -58,10 +58,11 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   final FocusNode _pageFocusNode = FocusNode();
 
   // ─── 布局常量 ───
-  // 展开态内容实际高度：标题行(48) + 副标题(19) + 分类标签行(52) = 119。
-  // 不含状态栏高度——SliverAppBar 的 expandedHeight 已包含状态栏，
-  // 内容里又补了一次状态栏占位，两者叠加才是顶栏偏高的真正来源。
-  static const double _kExpandedHeight = 120.0;
+  // 展开态内容实际高度：标题行(48) + 副标题(19) + 分类标签行(52) = 119，
+  // 但内容里还补了一次状态栏占位，两者叠加才是顶栏偏高的来源。
+  // 这里只保留内容本身需要的高度（111）再略加余量，
+  // 避免 mainAxisAlignment.end 把富余高度堆到顶部、把标题下推。
+  static const double _kExpandedHeight = 112.0;
   static const double _kCollapsedHeight = 56.0;
 
   @override
@@ -534,8 +535,9 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                     ),
 
                   // 内容区域 - 视频列表
+                  // 顶部不再额外留 8：贴顶栏更紧凑，间距交给 Card 自带 margin
                   SliverPadding(
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
                     sliver: _buildSliverVideoGrid(appState),
                   ),
 
@@ -1276,7 +1278,7 @@ class _BatchHeader extends StatelessWidget {
               // 展开态与收起态现在共用同一套标签，不再各写一份下拉。
               if (collapseRatio < 0.5 && !isAuthorPageMode)
                 Padding(
-                  padding: const EdgeInsets.only(top: 6, bottom: 8),
+                  padding: const EdgeInsets.only(top: 6),
                   child: CategoryChips(
                     entries: typeNames,
                     selected: selectedType,
