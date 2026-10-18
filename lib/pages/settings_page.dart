@@ -901,16 +901,23 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
             // ── 界面风格：玻璃拟态开关 ──
             // 可在两种观感间即时切换，觉得毛玻璃卡顿或不好看可直接关掉，
             // 无需回滚代码。
+            //
+            // 文案与字号要和上方「跟随系统」保持一致：实测该行可用宽度约
+            // 220dp，原副标题「已开启：控件半透明模糊，观感更现代（低端机
+            // 可能略耗性能）」会折成两行、行高比相邻开关高出一截，看起来
+            // 就像没对齐。改成单行短句后两者视觉节奏一致。
             ValueListenableBuilder<bool>(
               valueListenable: UiStyle.glassEnabled,
               builder: (context, glass, _) {
                 return SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: Text('毛玻璃效果'),
+                  title: Text(
+                    '毛玻璃效果',
+                    style: TextStyle(fontSize: 14),
+                  ),
                   subtitle: Text(
-                    glass
-                        ? '已开启：控件半透明模糊，观感更现代（低端机可能略耗性能）'
-                        : '已关闭：控件为实心色，性能更好',
+                    glass ? '已开启，控件半透明模糊' : '已关闭，控件为实心色',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                   value: glass,
                   onChanged: (v) => UiStyle.setGlassEnabled(v),
