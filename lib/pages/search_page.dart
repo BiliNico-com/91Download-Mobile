@@ -454,29 +454,31 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                                     padding: EdgeInsets.only(left: 16, right: 8),
                                     child: Row(
                                       children: [
-                                        Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            _isAuthorPageMode
-                                              ? Row(
-                                                  children: [
-                                                    Text('作者: $_currentAuthorName', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87)),
-                                                    SizedBox(width: 12),
-                                                    // 关注按钮
-                                                    _buildFollowButton(appState),
-                                                  ],
-                                                )
-                                              : Text('搜索', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87)),
-                                            Text(
-                                              _isAuthorPageMode 
-                                                ? '点击作者主页查看视频' 
-                                                : '通过关键词搜索并下载视频',
-                                              style: TextStyle(fontSize: 12, color: Theme.of(context).brightness == Brightness.dark ? Colors.grey : Colors.black54)),
-                                          ],
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              _isAuthorPageMode
+                                                ? Row(
+                                                    children: [
+                                                      Flexible(
+                                                        child: Text('作者: $_currentAuthorName', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87)),
+                                                      ),
+                                                      SizedBox(width: 12),
+                                                      // 关注按钮
+                                                      _buildFollowButton(appState),
+                                                    ],
+                                                  )
+                                                : Text('搜索', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87)),
+                                              Text(
+                                                _isAuthorPageMode 
+                                                  ? '点击作者主页查看视频' 
+                                                  : '通过关键词搜索并下载视频',
+                                                style: TextStyle(fontSize: 12, color: Theme.of(context).brightness == Brightness.dark ? Colors.grey : Colors.black54)),
+                                            ],
+                                          ),
                                         ),
-                                        Spacer(),
-                                        ..._buildAppBarActions(appState),
                                       ],
                                     ),
                                   ),
@@ -491,7 +493,21 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                                       : (isDark
                                           ? const Color(0xFF242424)
                                           : Colors.white),
-                                  child: _buildSearchBar(appState),
+                                  child: Row(
+                                    children: [
+                                      Expanded(child: _buildSearchBar(appState)),
+                                      // 状态与隐私按钮常显：收起后标题行淡出，
+                                      // 若跟着一起藏起来就没地方看当前状态了。
+                                      // 与批量页行为保持一致。
+                                      Padding(
+                                        padding: EdgeInsets.only(right: 4),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: _buildAppBarActions(appState),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ],
                             ),
