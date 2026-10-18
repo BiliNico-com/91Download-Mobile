@@ -51,9 +51,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   // 进入作者主页前的滚动位置（返回时恢复）
   double _savedScrollOffset = 0;
 
-  // ─── 新增：滚动折叠比例 ───
-  double _collapseRatio = 0.0;
-
   final ScrollController _scrollController = ScrollController();
   bool _showBackToTop = false;
   final TextEditingController _pageController = TextEditingController();
@@ -102,13 +99,6 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
           _loadMore();
         }
       }
-    }
-    // ─── 折叠比例计算 ───
-    final expandRange = _kExpandedHeight - _kCollapsedHeight;
-    final offset = _scrollController.offset.clamp(0.0, expandRange);
-    final ratio = offset / expandRange;
-    if ((ratio - _collapseRatio).abs() > 0.01) {
-      setState(() => _collapseRatio = ratio);
     }
   }
 
@@ -434,73 +424,112 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
                     // ══════════════════════════════════════
-                    //  自定义 Header（替代原 SliverAppBar）
+                    //  顶部折叠栏（SliverAppBar）
+                    //  与搜索页使用同一套机制：floating + snap 让任意滚动位置
+                    //  下拉都能把顶栏拽出来，松手自动补完/弹回
                     // ══════════════════════════════════════
-                    SliverPersistentHeader(
+                    SliverAppBar(
                       pinned: true,
-                      delegate: _BatchHeaderDelegate(
-                        statusBarHeight: statusBarH,
-                        expandedHeight: _kExpandedHeight,
-                        collapsedHeight: _kCollapsedHeight,
-                        collapseRatio: _collapseRatio,
-                        selectedType: _selectedType,
-                        typeNames: _getTypeNames(appState.crawler?.siteType ?? 'original'),
-                        videoCount: _isAuthorPageMode ? _authorVideos.length : _videos.length,
-                      selectedCount: _selectedIds.length,
-                      totalCount: _isAuthorPageMode ? _authorVideos.length : _videos.length,
-                      status: _status,
-                      privacyMode: appState.privacyMode,
-                      isAuthorPageMode: _isAuthorPageMode,
-                      authorName: _currentAuthorName,
-                      // 使用 isFollowedSync 同步方法快速判断关注状态
-                      isFollowed: _isAuthorPageMode && appState.followedAuthorsService.isFollowedSync(_currentAuthorId),
-                      onBack: _isAuthorPageMode ? _exitAuthorPageMode : null,
-                      onFollowToggle: _isAuthorPageMode ? () async {
-                        // 使用 isFollowedSync 判断当前状态
-                        final currentlyFollowed = appState.followedAuthorsService.isFollowedSync(_currentAuthorId);
-                        if (currentlyFollowed) {
-                          await appState.followedAuthorsService.unfollow(_currentAuthorId);
-                        } else {
-                          await appState.followedAuthorsService.follow(_currentAuthorId, _currentAuthorName);
-                        }
-                        // 刷新 UI（notifyListeners 已在 follow/unfollow 中调用，这里确保 setState 触发重建）
-                        if (mounted) setState(() {});
-                      } : null,
-                      onTypeChanged: (v) async {
-                        if (v != _selectedType) {
-                          setState(() {
-                            _selectedType = v;
-                            _videos.clear();
-                            _selectedIds.clear();
-                            _loadedPage = 0;
-                          });
-                          _pageController.text = '1';
-                          // 切换分类会重新请求并回到第 1 页，显式提示避免"点了没反应"的困惑
-                          final label = _getTypeNames(appState.crawler?.siteType ?? 'original')[v] ?? v;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('已切换到「$label」，正在加载'),
-                              duration: const Duration(seconds: 1),
-                              behavior: SnackBarBehavior.floating,
-                            ),
+                      floating: true,
+                      snap: true,
+                      expandedHeight: statusBarH + _kExpandedHeight,
+                      backgroundColor: Colors.transparent,
+                      elevation: 0,
+                      scrolledUnderElevation: 0,
+                      automaticallyImplyLeading: false,
+                      flexibleSpace: LayoutBuilder(
+                        builder: (ctx, constraints) {
+                          // 由 SliverAppBar 的实际高度反推折叠进度，
+                          // 不再依赖 _onScroll 手动计算
+                          final range = _kExpandedHeight - _kCollapsedHeight;
+                          final collapsed = (constraints.maxHeight -
+                                  statusBarH -
+                                  _kCollapsedHeight)
+                              .clamp(0.0, range);
+                          final ratio = 1.0 - collapsed / range;
+                          return _BatchHeader(
+                            statusBarHeight: statusBarH,
+                            expandedHeight: _kExpandedHeight,
+                            collapsedHeight: _kCollapsedHeight,
+                            collapseRatio: ratio,
+                            selectedType: _selectedType,
+                            typeNames: _getTypeNames(
+                                appState.crawler?.siteType ?? 'original'),
+                            videoCount: _isAuthorPageMode
+                                ? _authorVideos.length
+                                : _videos.length,
+                            selectedCount: _selectedIds.length,
+                            totalCount: _isAuthorPageMode
+                                ? _authorVideos.length
+                                : _videos.length,
+                            status: _status,
+                            privacyMode: appState.privacyMode,
+                            isAuthorPageMode: _isAuthorPageMode,
+                            authorName: _currentAuthorName,
+                            isFollowed: _isAuthorPageMode &&
+                                appState.followedAuthorsService
+                                    .isFollowedSync(_currentAuthorId),
+                            onBack:
+                                _isAuthorPageMode ? _exitAuthorPageMode : null,
+                            onFollowToggle: _isAuthorPageMode
+                                ? () async {
+                                    final currentlyFollowed = appState
+                                        .followedAuthorsService
+                                        .isFollowedSync(_currentAuthorId);
+                                    if (currentlyFollowed) {
+                                      await appState.followedAuthorsService
+                                          .unfollow(_currentAuthorId);
+                                    } else {
+                                      await appState.followedAuthorsService
+                                          .follow(_currentAuthorId,
+                                              _currentAuthorName);
+                                    }
+                                    if (mounted) setState(() {});
+                                  }
+                                : null,
+                            onTypeChanged: (v) async {
+                              if (v != _selectedType) {
+                                setState(() {
+                                  _selectedType = v;
+                                  _videos.clear();
+                                  _selectedIds.clear();
+                                  _loadedPage = 0;
+                                });
+                                _pageController.text = '1';
+                                final label = _getTypeNames(
+                                        appState.crawler?.siteType ??
+                                            'original')[v] ??
+                                    v;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('已切换到「$label」，正在加载'),
+                                    duration: const Duration(seconds: 1),
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                                await _goToPage();
+                              }
+                            },
+                            onPrivacyToggle: () =>
+                                appState.togglePrivacyMode(),
+                            onSelectAll: () {
+                              final currentVideos =
+                                  _isAuthorPageMode ? _authorVideos : _videos;
+                              final isAllSelected =
+                                  _selectedIds.length == currentVideos.length;
+                              setState(() {
+                                if (isAllSelected) {
+                                  _selectedIds.clear();
+                                } else {
+                                  _selectedIds =
+                                      currentVideos.map((v) => v.id).toSet();
+                                }
+                              });
+                            },
                           );
-                          await _goToPage();
-                        }
-                      },
-                      onPrivacyToggle: () => appState.togglePrivacyMode(),
-                      onSelectAll: () {
-                        final currentVideos = _isAuthorPageMode ? _authorVideos : _videos;
-                        final isAllSelected = _selectedIds.length == currentVideos.length;
-                        setState(() {
-                          if (isAllSelected) {
-                            _selectedIds.clear();
-                          } else {
-                            _selectedIds = currentVideos.map((v) => v.id).toSet();
-                          }
-                        });
-                      },
+                        },
+                      ),
                     ),
-                  ),
 
                   // 内容区域 - 视频列表
                   SliverPadding(
@@ -981,10 +1010,11 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
 }
 
 // ════════════════════════════════════════════════════════════
-//  核心：自定义 SliverPersistentHeaderDelegate
-//  替换原有 SliverAppBar + flexibleSpace 实现滚动折叠动画
+//  顶部折叠栏内容组件
+//  由 SliverAppBar.flexibleSpace 里的 LayoutBuilder 反推折叠进度后渲染，
+//  与搜索页共用 SliverAppBar + floating/snap 这一套折叠机制。
 // ════════════════════════════════════════════════════════════
-class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
+class _BatchHeader extends StatelessWidget {
   final double statusBarHeight;
   final double expandedHeight;
   final double collapsedHeight;
@@ -1005,7 +1035,8 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
   final VoidCallback onPrivacyToggle;
   final VoidCallback onSelectAll;
 
-  const _BatchHeaderDelegate({
+  const _BatchHeader({
+    super.key,
     required this.statusBarHeight,
     required this.expandedHeight,
     required this.collapsedHeight,
@@ -1028,12 +1059,7 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
   });
 
   @override
-  double get minExtent => statusBarHeight + collapsedHeight;
-  @override
-  double get maxExtent => statusBarHeight + expandedHeight;
-
-  @override
-  Widget build(BuildContext ctx, double shrinkOffset, bool overlapsContent) {
+  Widget build(BuildContext ctx) {
     final isDark = Theme.of(ctx).brightness == Brightness.dark;
     // 作者模式下显示作者名称
     final displayTitle = isAuthorPageMode ? '作者: $authorName' : '批量爬取';
@@ -1330,16 +1356,4 @@ class _BatchHeaderDelegate extends SliverPersistentHeaderDelegate {
   // 列表选择器组件
   // 说明：原 _buildTypeChip（带蓝色光晕的下拉）已移除，
   // 分类选择统一由 CategoryChips 横滑标签承担。
-
-  bool shouldRebuild(_BatchHeaderDelegate old) =>
-      old.collapseRatio != collapseRatio ||
-      old.selectedType != selectedType ||
-      old.videoCount != videoCount ||
-      old.selectedCount != selectedCount ||
-      old.totalCount != totalCount ||
-      old.status != status ||
-      old.privacyMode != privacyMode ||
-      old.isAuthorPageMode != isAuthorPageMode ||
-      old.authorName != authorName ||
-      old.isFollowed != isFollowed;
 }
