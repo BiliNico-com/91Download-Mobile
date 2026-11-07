@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/video_info.dart';
+import '../crawler/config.dart';
 import '../crawler/crawler_core.dart';
 import '../utils/logger.dart';
 
@@ -506,12 +507,19 @@ class DownloadManager extends ChangeNotifier {
       
       // 2. 下载视频
       // 清理文件名中的非法字符
-      final safeTitle = task.video.title.replaceAll(_invalidFileNameChars, '_');
+      //
+      // 再兜一次隐形字符：任务可能是从数据库恢复的老记录，
+      // 那时 VideoInfo 的构造函数还没做净化，标题里仍夹着变体选择符。
+      // 不剥掉的话文件名里会出现肉眼看不见的字符，用户根本搜不到该文件。
+      final cleanTitle =
+          CrawlerConfig.stripInvisible(task.video.title);
+      final safeTitle = cleanTitle.replaceAll(_invalidFileNameChars, '_');
       // 构建文件名：视频名称 + 作者信息（避免同名覆盖）
       String fileName;
       final author = task.video.author ?? task.video.authorId;
       if (author != null && author.isNotEmpty) {
-        final safeAuthor = author.replaceAll(_invalidFileNameChars, '_');
+        final safeAuthor = CrawlerConfig.stripInvisible(author)
+            .replaceAll(_invalidFileNameChars, '_');
         // 带上唯一 ID：同一作者上传两个同标题的视频时，
         // 仅靠「标题_作者」会得到同一路径，后下的会静默覆盖先下的，
         // 且「已完成」里出现两条记录指向同一文件，删任一条会连带删掉另一条
