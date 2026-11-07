@@ -108,6 +108,26 @@ class CrawlerCore {
   
   /// 全局日志回调（各任务共用，只承载日志不承载进度）
   Function(String msg, String level)? onLog;
+
+  /// 用户选择的播放线路域名（空串 = 自动，不改写）。
+  ///
+  /// 注意：porn91 与 original 站点的节点表完全不同，
+  /// 设置页会按当前站点类型给出各自的选项，这里只认本类型白名单内的值。
+  String cdnHost = '';
+
+  /// 按当前线路改写视频地址。
+  ///
+  /// 只在原 host 属于**本站点类型**的域名集合时才改写：
+  /// 换了别家的地址（比如把 hdcdn 的地址套到 91porn 上）只会一律 404。
+  /// 已经是目标域名、或用户选了「自动」时原样返回。
+  String applyCdnHost(String url) {
+    if (cdnHost.isEmpty) return url;
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host.isEmpty) return url;
+    if (!CrawlerConfig.hostsFor(_siteType).contains(uri.host)) return url;
+    if (uri.host == cdnHost) return url;
+    return uri.replace(host: cdnHost).toString();
+  }
   
   // 外部数据库路径（用于持久化保存，卸载后不丢失）
   String? externalDbPath;
@@ -1519,7 +1539,9 @@ class CrawlerCore {
       video = detail;
     }
     
-    var videoUrl = video.m3u8Url!;
+    // 兜底改写：重试续传时 m3u8Url 可能来自任务里保存的旧地址，
+    // 用户切换线路后应当按新线路走。
+    var videoUrl = applyCdnHost(video.m3u8Url!);
     
     // 检查是否是直接 MP4 链接（porn91 等站点使用）
     final isDirectMp4 = videoUrl.endsWith('.mp4') || videoUrl.contains('.mp4?');
@@ -1534,7 +1556,12 @@ class CrawlerCore {
     
     try {
       // 下载 m3u8 文件（禁用缓存）
-      final m3u8Resp = await _dio.get(videoUrl, options: _noCacheOptions);
+      final m3u8Resp = await _dio.get(
+        videoUrl,
+        options: _noCacheOptions.copyWith(
+          receiveTimeout: const Duration(minutes: 2),
+        ),
+      );
       final m3u8Content = m3u8Resp.data.toString();
       
       // 解析 TS 切片列表
@@ -1546,7 +1573,9 @@ class CrawlerCore {
         return false;
       }
 
-      final tsUrls = _parseM3u8(m3u8Content, videoUrl);
+      // m3u8 里的切片可能是绝对地址（指回默认线路），同样按选定线路改写。
+      final tsUrls =
+          _parseM3u8(m3u8Content, videoUrl).map(applyCdnHost).toList();
       if (tsUrls.isEmpty) {
         ctrl.onLog?.call('解析 TS 列表失败', 'error');
         ctrl.failureReason = '解析视频地址失败，可能是站点改版';
