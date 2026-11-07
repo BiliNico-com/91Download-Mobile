@@ -56,6 +56,20 @@ void main() {
     expect(videos, isNotEmpty);
   });
 
+  test('分区分页走路径式 URL，第 2 页页脚没有更靠后的页码时停', () async {
+    if (!online) return markTestSkipped('mock 站点未启动');
+    final core = makeCore();
+    // mock 端：/video/category/hd 回放带完整分页控件的真实样本，
+    // /video/category/hd/2 回放同一份但删掉了 <ul class="pagination">
+    final page1 = await core.getVideoList('hd', 1);
+    expect(page1.length, greaterThanOrEqualTo(20));
+    expect(core.lastRequestHasMore, isTrue, reason: '页脚有 2..17152 的链接');
+
+    final page2 = await core.getVideoList('hd', 2);
+    expect(page2, isNotEmpty, reason: '第 2 页仍应有内容');
+    expect(core.lastRequestHasMore, isFalse, reason: '没有更靠后的页码必须停');
+  });
+
   test('详情页能从 data-src 取到 m3u8', () async {
     if (!online) return markTestSkipped('mock 站点未启动');
     final core = makeCore();

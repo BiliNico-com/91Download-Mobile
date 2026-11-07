@@ -131,21 +131,82 @@ class CrawlerConfig {
   
   /// jiuse 站点（91porny / jiuse.icu）的列表路径
   ///
-  /// 这套站用的是 9scdn/static 前端，路径是干净的 REST 风格：
-  ///   /video  普通视频列表，分页参数是 ?page=N
-  ///   /videos 蝌蚪，/vod 精品（同一套卡片结构）
+  /// 这套站用的是 9scdn/static 前端，分区有两处入口，必须都覆盖：
+  ///
+  /// ① 顶部导航（只有 3 个内容入口）
+  ///      /video 视频，/videos 蝌蚪，/vod 精品
+  /// ② 视频列表页里的分区面板 —— 移动端「选择分类」折叠面板
+  ///    （class mobileCateContainer）与桌面端左侧栏（class cateContainer）
+  ///    同源，都是 14 个 data-href，只是渲染容器不同：
+  ///      /video/category/{slug}
+  ///
+  /// 只做 ① 会让 App 里只剩 3 个分类，与网页上看到的十几个分类对不上。
   static const Map<String, String> listTypesJiuse = {
+    // ① 顶部导航
     "list": "video",
     "videos": "videos",
     "vod": "vod",
+    // ② 分类面板（顺序与网页一致）
+    "latest": "video/category/latest",
+    "hd": "video/category/hd",
+    "rf": "video/category/recent-favorite",
+    "hot": "video/category/hot-list",
+    "rating": "video/category/recent-rating",
+    "nonpaid": "video/category/nonpaid",
+    "ori": "video/category/ori",
+    "long": "video/category/long-list",
+    "longer": "video/category/longer-list",
+    "discuss": "video/category/month-discuss",
+    "tf": "video/category/top-favorite",
+    "mf": "video/category/most-favorite",
+    "top": "video/category/top-list",
+    "last": "video/category/top-last",
   };
 
-  /// jiuse 中文名映射
+  /// jiuse 中文名映射（顺序即分类标签的展示顺序）
   static const Map<String, String> listTypeAliasesJiuse = {
+    // 顶部导航
     "视频": "list",
     "蝌蚪": "videos",
     "精品": "vod",
+    // 分类面板
+    "最近更新": "latest",
+    "高清视频": "hd",
+    "最近加精": "rf",
+    "当前最热": "hot",
+    "最近得分": "rating",
+    "非付费": "nonpaid",
+    "91原创": "ori",
+    "10分钟以上": "long",
+    "20分钟以上": "longer",
+    "本月讨论": "discuss",
+    "本月收藏": "tf",
+    "收藏最多": "mf",
+    "本月最热": "top",
+    "上月最热": "last",
   };
+
+  /// jiuse 分类路径是否走「路径式分页」
+  ///
+  /// 实测（抓取 jiuse.icu/video 原始 HTML）：分类页第 2 页是
+  ///   /video/category/hd/2
+  /// 页码在路径里，不是 ?page=2。页脚分页链接与 id=goPage 的跳转表单
+  /// （value="/video/category/hd/"）都是这么拼的。
+  static bool jiuseUsesPathPaging(String path) {
+    final p = path.startsWith("/") ? path.substring(1) : path;
+    return p.startsWith("video/category/");
+  }
+
+  /// 构建 jiuse 列表页 URL
+  ///
+  /// 分类面板走 /path/{page}；顶部导航的 /video、/videos、/vod 未实测出
+  /// 分页格式，沿用 ?page=N（N>1 时才带）。
+  static String buildJiuseListUrl(String baseUrl, String path, int page) {
+    final p = path.startsWith("/") ? path.substring(1) : path;
+    if (page <= 1) return "$baseUrl/$p";
+    if (jiuseUsesPathPaging(p)) return "$baseUrl/$p/$page";
+    return "$baseUrl/$p?page=$page";
+  }
 
   /// 获取列表类型映射（根据站点类型）
   static Map<String, String> getListTypes(String siteType) {
@@ -448,22 +509,26 @@ class CrawlerConfig {
 
   /// jiuse 视频详情路径（站内才算，排除广告外链）
   ///
-  /// 真实站点同时存在三种路径形态，早期只认得前两种（单段 id），
+  /// 真实站点同时存在四种路径形态，早期只认得前两种（单段 id），
   /// 导致首页里 12 张「蝌蚪」卡片被整批判为广告丢弃：
   ///   /vod/view/SxeO                                精品，短 id
   ///   /video/view/8fa43eb9a5b88b2f0e5f              普通，十六进制 id
   ///   /videos/view/127663/410ed2e1f969cb2d31254a/  蝌蚪，数字 id + hash + 结尾斜杠
+  ///   /video/viewhd/ef5152fe75b733995347            高清分区专用，viewhd 段
+  ///
+  /// 最后一种是从 /video/category/* 分区页抓到的：该页 48 个详情链接全是
+  /// viewhd 形态、一个 /view/ 都没有。漏掉它会让新增的分类点开就是空列表。
   /// 因此这里不再限制 id 字符集与段数，只要求是站内相对路径。
   static final RegExp jiuseVideoHrefPattern = RegExp(
-    r'href="(/(?:vod|video|videos|v)/view/[^"#?\s]+)"',
+    r'href="(/(?:vod|video|videos|v)/view(?:hd)?/[^"#?\s]+)"',
     caseSensitive: false,
   );
 
   /// 从 jiuse 详情路径里取视频 id
   ///
-  /// 一律取 /view/ 之后的第一段：蝌蚪的多段路径（id + hash）用 id 作唯一键，
-  /// 同一视频换 hash 时仍能去重。
-  static final RegExp jiuseVideoIdPattern = RegExp(r'/view/([^/?#]+)');
+  /// 一律取 /view/（或 /viewhd/）之后的第一段：蝌蚪的多段路径（id + hash）
+  /// 用 id 作唯一键，同一视频换 hash 时仍能去重。
+  static final RegExp jiuseVideoIdPattern = RegExp(r'/view(?:hd)?/([^/?#]+)');
 
   static String? jiuseVideoId(String href) =>
       jiuseVideoIdPattern.firstMatch(href)?.group(1);
@@ -514,6 +579,32 @@ class CrawlerConfig {
     r'\s*([^<]+?)\s*<span[^>]*>\s*(\d+)\s*</span>',
     caseSensitive: false,
   );
+
+  /// jiuse 分区页的路径式分页链接（第 2 页起：/video/category/hd/2 … /17152）
+  static final RegExp jiuseCategoryPageLinkPattern = RegExp(
+    r'/video/category/[a-z0-9-]+/(\d+)',
+    caseSensitive: false,
+  );
+
+  /// jiuse 列表是否还有下一页（优先看真实分页链接）
+  ///
+  /// 实测分区页（/video/category/*）页脚是有完整分页控件的：
+  ///   <ul class="pagination">…<a href="/video/category/hd/2">2</a>…<a href="/video/category/hd/17152">17152</a>
+  /// 存在比当前页更大的页码链接就说明还有下一页；到底时只剩比当前页小的链接，
+  /// 前后翻页符号也被置灰。
+  ///
+  /// 返回 null 表示页面上没有任何路径式分页链接（例如首页），
+  /// 交给 [jiusePageHasMore] 的条数/内容比对判据。
+  static bool? jiusePaginationHasMore(String html, int currentPage) {
+    final links = jiuseCategoryPageLinkPattern.allMatches(html);
+    var found = false;
+    for (final m in links) {
+      found = true;
+      final n = int.tryParse(m.group(1) ?? '');
+      if (n != null && n > currentPage) return true;
+    }
+    return found ? false : null;
+  }
 
   /// jiuse 列表是否还有下一页
   ///

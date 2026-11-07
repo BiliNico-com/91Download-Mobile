@@ -750,11 +750,31 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
 
   /// jiuse 站点（91porny / jiuse.icu）的分类
   ///
-  /// 这套前端把内容分成三块：/video 普通、/videos 蝌蚪、/vod 精品。
+  /// 来源有两个，都要有：
+  ///   ① 顶部导航 /video(视频) /videos(蝌蚪) /vod(精品)
+  ///   ② 视频列表页的分区面板 —— 移动端「选择分类」折叠面板与桌面端
+  ///      左侧栏是同一份 14 项 data-href，网页上两者内容完全一致。
+  /// 之前只做了 ①，分类标签只有 3 个，用户看到网页上十几个分区却没有。
   static const _typeNamesJiuse = {
+    // ① 顶部导航
     'list': '视频',
     'videos': '蝌蚪',
     'vod': '精品',
+    // ② 分区面板（顺序与网页一致）
+    'latest': '最近更新',
+    'hd': '高清视频',
+    'rf': '最近加精',
+    'hot': '当前最热',
+    'rating': '最近得分',
+    'nonpaid': '非付费',
+    'ori': '91原创',
+    'long': '10分钟以上',
+    'longer': '20分钟以上',
+    'discuss': '本月讨论',
+    'tf': '本月收藏',
+    'mf': '收藏最多',
+    'top': '本月最热',
+    'last': '上月最热',
   };
 
   Map<String, String> _getTypeNames(String siteType) {

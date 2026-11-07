@@ -316,11 +316,28 @@ class CrawlerCore {
 
   /// 计算并写入本页的分页判断结果
   ///
-  /// jiuse 走「条数 + 与上一页比对」的专用判据（该站没有分页控件），
-  /// 其余站点沿用 [_detectHasNextPage] 的通用策略。
+  /// jiuse 优先看分区页的路径式分页链接，拿不到再退回「条数 + 与上一页比对」
+  /// 的专用判据；其余站点沿用 [_detectHasNextPage] 的通用策略。
   void _applyPagination(String html, int page, List<VideoInfo> videos) {
     if (_siteType == 'jiuse') {
       final signature = videos.map((v) => v.id).join(',');
+
+      // 分区页（/video/category/*）页脚有真实分页控件，直接用页码链接判断，
+      // 比「条数 + 内容比对」准确得多（分区页每页条数不固定，条数判据会误判）。
+      final fromLinks = CrawlerConfig.jiusePaginationHasMore(html, page);
+      if (fromLinks != null) {
+        _lastPaginationParsed = true;
+        _lastJiuseSignature = signature;
+        _lastRequestHasMore = fromLinks;
+        _logPagination(
+          fromLinks
+              ? 'jiuse 分页控件命中：存在大于第 $page 页的链接'
+              : 'jiuse 分页控件命中：没有更靠后的页码链接，判定为最后一页',
+          fromLinks,
+        );
+        return;
+      }
+
       final hasMore = CrawlerConfig.jiusePageHasMore(
         itemCount: videos.length,
         page: page,
@@ -490,11 +507,10 @@ class CrawlerCore {
       throw Exception('未知的列表类型: $listType');
     }
     
-    // jiuse 的分页是查询参数（/video?page=N），别的站点是路径占位符
+    // jiuse 有两种分页格式，交给 config 判断；别的站点是路径占位符
     String url;
     if (_siteType == 'jiuse') {
-      final path = urlPattern.replaceAll('{page}', page.toString());
-      url = page <= 1 ? '$baseUrl/$path' : '$baseUrl/$path?page=$page';
+      url = CrawlerConfig.buildJiuseListUrl(baseUrl, urlPattern, page);
     } else {
       url = '$baseUrl/${urlPattern.replaceAll('{page}', page.toString())}';
     }
