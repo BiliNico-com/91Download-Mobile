@@ -39,6 +39,8 @@ class CrawlerConfig {
   /// "porn91": 91porn 风格 CMS（v.php?next=watch 格式）
   static const Map<String, String> siteTypes = {
     "91porn.com": "porn91",
+    "91porny.com": "jiuse",
+    "jiuse.icu": "jiuse",
     "ml0987.xyz": "original",
     "hsex.icu": "original",
     "hsex.men": "original",
@@ -104,18 +106,45 @@ class CrawlerConfig {
     "收藏最多": "mf",
   };
   
+  /// jiuse 站点（91porny / jiuse.icu）的列表路径
+  ///
+  /// 这套站用的是 9scdn/static 前端，路径是干净的 REST 风格：
+  ///   /video  普通视频列表，分页参数是 ?page=N
+  ///   /videos 蝌蚪，/vod 精品（同一套卡片结构）
+  static const Map<String, String> listTypesJiuse = {
+    "list": "video",
+    "videos": "videos",
+    "vod": "vod",
+  };
+
+  /// jiuse 中文名映射
+  static const Map<String, String> listTypeAliasesJiuse = {
+    "视频": "list",
+    "蝌蚪": "videos",
+    "精品": "vod",
+  };
+
   /// 获取列表类型映射（根据站点类型）
   static Map<String, String> getListTypes(String siteType) {
+    if (siteType == "jiuse") return listTypesJiuse;
     return siteType == "porn91" ? listTypesV2 : listTypesOriginal;
   }
   
   /// 获取中文名映射（根据站点类型）
   static Map<String, String> getListTypeAliases(String siteType) {
+    if (siteType == "jiuse") return listTypeAliasesJiuse;
     return siteType == "porn91" ? listTypeAliasesV2 : listTypeAliasesOriginal;
   }
   
   /// 构建搜索URL
   static String buildSearchUrl(String baseUrl, String siteType, String keyword, {int page = 1, String sort = "default"}) {
+    if (siteType == "jiuse") {
+      // jiuse 是 GET 表单：/search?keywords=xxx（分页用 &page=N）
+      final kw = Uri.encodeComponent(keyword);
+      return page <= 1
+          ? "$baseUrl/search?keywords=$kw"
+          : "$baseUrl/search?keywords=$kw&page=$page";
+    }
     if (siteType == "porn91") {
       // porn91 风格搜索 URL（支持分页）
       // URL格式: search_result.php?search_id=xxx&search_type=search_videos&min_duration=&page=N
@@ -186,6 +215,8 @@ class CrawlerConfig {
   
   static const List<String> availableSites = [
     "https://91porn.com",
+    "https://91porny.com",
+    "https://jiuse.icu",
     "https://ml0987.xyz",
     "https://hsex.icu",
     "https://hsex.men",
@@ -369,8 +400,35 @@ class CrawlerConfig {
     if (input.isEmpty) return input;
     return input.replaceAll(invisibleCharsPattern, '');
   }
+
   // ==================== 正则表达式 ====================
   
+  // ---- jiuse 站点（91porny / jiuse.icu）----
+  //
+  // 卡片结构（9scdn 前端）：
+  //   <div class="colVideoList"><div class="video-elem">
+  //     <a class="display" href="/vod/view/SxeO">
+  //       <div class="img" style="background-image: url('...')"></div>
+  //       <small class="layer">00:22:08</small>
+  //     </a>
+  //     <a class="title ..." href="/vod/view/SxeO">标题</a>
+  //     <small>... 作者: <a href="/author/xxx">名字</a> ... 日期 | N次播放 ...</small>
+  //   </div></div>
+  //
+  // 注意卡片区里还混着整段是外链的广告（href 指向站外），必须按 URL 过滤。
+
+  /// jiuse 视频卡片容器
+  static final RegExp jiuseCardPattern = RegExp(
+    r'<div[^>]*class="[^"]*colVideoList[^"]*"[^>]*>([\s\S]*?)</div>\s*</div>',
+    caseSensitive: false,
+  );
+
+  /// jiuse 视频详情路径（站内才算，排除广告外链）
+  static final RegExp jiuseVideoHrefPattern = RegExp(
+    r'href="(/(?:vod|video|v)/view/[A-Za-z0-9]+)"',
+    caseSensitive: false,
+  );
+
   /// 视频容器匹配（col-lg-3 内的 well-sm）- porn91 专用
   static final RegExp containerPattern = RegExp(
     r'<div[^>]*class="[^"]*col-lg-3[^"]*"[^>]*>\s*<div[^>]*class="[^"]*well[^"]*well-sm[^"]*"',
