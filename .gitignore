@@ -1,0 +1,90 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# APK files
+*.apk
+
+# iOS/macOS
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/App.framework
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+
+# Debug logs
+assets/network_log_*.txt
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/Flutter/engine
+**/ios/Flutter/flutter_assets/
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# Platform / dev files (local only)
+.coze/
+AGENTS.md
+crawler_api.md
+assets/
+
+# 由 `flutter create` 本地生成，CI 每次构建会自行重建，不应提交
+.metadata
+analysis_options.yaml
+pubspec.lock
+android/.gitignore
+android/gradle.properties
+android/gradle/
+android/app/src/debug/
+android/app/src/profile/
+android/app/src/main/res/drawable/
+android/app/src/main/res/drawable-v21/
+android/app/src/main/res/mipmap-*/
+android/app/src/main/res/values/
+android/app/src/main/res/values-night/
+test/
+
+# 签名密钥：绝不能提交（已在历史中泄漏过，见安全说明）
+*.keystore
+*.jks

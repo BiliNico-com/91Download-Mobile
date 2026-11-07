@@ -1,0 +1,852 @@
+import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import 'dart:io';
+import '../crawler/config.dart';
+import '../crawler/crawler_core.dart';
+import '../models/video_info.dart';
+import '../utils/logger.dart';
+import 'download_manager.dart';
+import 'followed_authors_service.dart';
+import 'version_service.dart';
+import 'floating_video_service.dart';
+import 'search_history_service.dart';
+import '../theme/ui_style.dart';
+
+/// 主题模式枚举
+enum ThemeModeType {
+  light(0, '日间'),
+  dark(1, '夜间'),
+  auto(2, '跟随系统');
+
+  final int value;
+  final String label;
+  const ThemeModeType(this.value, this.label);
+
+  static ThemeModeType fromValue(int value) {
+    return ThemeModeType.values.firstWhere(
+      (e) => e.value == value,
+      orElse: () => ThemeModeType.dark,
+    );
+  }
+}
+
+/// 下载并发配置常量
+class DownloadConfig {
+  static const int minConcurrentTasks = 1;
+  static const int maxConcurrentTasksLimit = 5;
+  static const int defaultConcurrentTasks = 2;
+
+  static const int minConcurrentSegments = 1;
+  static const int maxConcurrentSegmentsLimit = 64;
+  static const int defaultConcurrentSegments = 32;
+}
+
+class AppState extends ChangeNotifier {
+  // 初始化标志（公共变量，供 main.dart 访问）
+  bool initialized = false;
+  
+  // 站点配置 - 默认为空，用户必须选择
+  String? currentSite;
+
+  // 用户手动添加的自定义站点
+  List<String> customSites = [];
+  
+  // 返回键处理回调（由子页面设置，用于作者模式等特殊状态）
+  bool Function()? onWillPopCallback;
+  
+  // 下载目录
+  String downloadDir = '';
+  bool permissionGranted = false;
+  bool overlayPermissionGranted = false;
+  
+  // Debug模式
+  bool debugMode = false;
+  
+  // Debug: 保存HTML到文件
+  bool saveDebugHtml = false;
+
+  // 实时日志开关
+  bool realtimeLogEnabled = false;
+
+  // 主题模式: 0=日间, 1=夜间, 2=跟随系统
+  int themeMode = 1;  // 默认夜间模式
+  bool _isDarkMode = true;  // 内部记录（非跟随系统时的实际主题）
+  
+  // 回顶部按钮设置
+  bool showBackToTop = true;
+  String backToTopPosition = 'right'; // 'left' 或 'right'
+
+  // 外部播放器设置
+  bool useExternalPlayer = false;
+  
+  // 同时下载任务数（任务级别并发限制）
+  int maxConcurrentTasks = DownloadConfig.defaultConcurrentTasks;
+  
+  // TS切片并发下载数
+  int maxConcurrentSegments = DownloadConfig.defaultConcurrentSegments;
+  
+  // 视频显示模式: 'grid' 大图模式, 'list' 列表模式
+  String videoDisplayMode = 'grid';
+
+  // 在线播放模式（实验性功能）
+  bool streamingMode = false;
+
+  // 隐私模式：模糊预览图
+  bool privacyMode = false;
+  
+  // .nomedia：防止下载目录被系统媒体扫描器索引
+  bool nomediaEnabled = false;
+  
+  // 应用锁：进入APP需要生物识别认证
+  bool appLockEnabled = false;
+  bool isAuthenticated = false;  // 当前会话是否已认证
+
+  // 当前页面索引（用于导航）
+  int currentPageIndex = 0;
+  Function(int)? navigateToPage;  // 由 MainPage 设置
+
+  // 爬虫实例
+  CrawlerCore? _crawler;
+  
+  // 下载管理器
+  late final DownloadManager _downloadManager;
+  
+  DownloadManager get downloadManager => _downloadManager;
+  
+  // 关注作者服务
+  FollowedAuthorsService get followedAuthorsService => FollowedAuthorsService.instance;
+
+  // 搜索历史服务
+  final SearchHistoryService searchHistory = SearchHistoryService();
+  
+  AppState() {
+    // 监听下载管理器的变化并转发通知
+    _downloadManager = DownloadManager()..addListener(_onDownloadManagerChanged);
+    // 监听关注服务的变化并转发通知
+    followedAuthorsService.addListener(_onFollowedAuthorsChanged);
+    // 监听搜索历史变化，让历史列表即时刷新
+    searchHistory.addListener(notifyListeners);
+  }
+  
+  void _onDownloadManagerChanged() {
+    // 转发下载管理器的通知
+    notifyListeners();
+  }
+  
+  void _onFollowedAuthorsChanged() {
+    // 转发关注服务的变化通知
+    notifyListeners();
+  }
+
+  CrawlerCore? get crawler {
+    if (currentSite == null) return null;
+
+    if (_crawler == null) {
+      _crawler = CrawlerCore(
+        baseUrl: currentSite!,
+        externalDbPath: downloadDir.isNotEmpty ? downloadDir : null,
+      );
+      _downloadManager.externalDbPath = downloadDir.isNotEmpty ? downloadDir : null;
+    }
+
+    // 只要 downloadDir 可用就确保 setup 被调用（修复 downloadDir 延迟就绪导致 setup 漏调）
+    if (_crawler != null && downloadDir.isNotEmpty) {
+      _downloadManager.setup(_crawler!, downloadDir);
+    }
+
+    _crawler!.saveDebugHtml = saveDebugHtml;
+    _crawler!.maxConcurrentDownloads = maxConcurrentSegments;
+    _downloadManager.maxConcurrentTasks = maxConcurrentTasks;
+    _downloadManager.maxConcurrentSegments = maxConcurrentSegments;
+
+    return _crawler;
+  }
+
+  // 初始化 - 请求权限并设置默认下载目录
+  //
+  // settings_page 每次挂载都会调它（`Future.microtask(() => init())`），
+  // 而路由来回 push/pop 会重新挂载。没有守卫时每次都会重新弹一遍权限框、
+  // 从外部备份再覆盖一次内存设置、并重复恢复已完成任务。
+  bool _initStarted = false;
+
+  Future<void> init() async {
+    if (_initStarted) return;
+    _initStarted = true;
+    await _loadSettings();  // 先加载保存的设置
+    await UiStyle.load();   // 恢复界面风格（毛玻璃开关）
+    await searchHistory.load();  // 恢复搜索历史
+    await requestPermissions();
+    overlayPermissionGranted = await NativeFloatingService.isPermissionGranted();
+    await initDownloadDir();
+    // 下载目录确定后，尝试从外部备份恢复设置（覆盖卸载重装导致的丢失）
+    await _restoreSettingsFromExternal();
+    // 备份文件可能覆盖了下载目录本身，重新落盘一次保证一致
+    await _saveSettings();
+    // 设置外部数据库路径
+    _downloadManager.externalDbPath = downloadDir.isNotEmpty ? downloadDir : null;
+    // 设置关注作者服务的外部数据库路径
+    followedAuthorsService.setExternalDbPath(downloadDir.isNotEmpty ? downloadDir : null);
+    // 初始化关注作者服务并加载关注列表
+    await followedAuthorsService.refresh();
+    // 初始化版本服务
+    await VersionService.init();
+    // 恢复未完成的下载任务
+    await _downloadManager.restorePendingTasks();
+    // 启动后静默检查关注作者更新（后台执行，不阻塞界面）
+    scheduleFollowedAuthorsAutoCheck();
+  }
+
+  /// 启动后静默检查关注作者更新
+  ///
+  /// 节流 6 小时，后台静默执行；仅更新角标，不弹任何提示。
+  /// 必须等站点配置就绪才能爬取，未配置站点时直接跳过。
+  void scheduleFollowedAuthorsAutoCheck() {
+    Future.microtask(() async {
+      try {
+        final activeCrawler = crawler;
+        if (activeCrawler == null) return;
+        if (followedAuthorsService.followedList.isEmpty) return;
+        await followedAuthorsService.autoCheckForUpdates(activeCrawler);
+      } catch (e) {
+        Logger().logSync('AppState', '后台检查作者更新失败: $e');
+      }
+    });
+  }
+
+  /// 设置备份文件的路径
+  ///
+  /// 与数据库同样放在下载目录的 .db 子目录下，卸载重装后依然存在。
+  String get _externalSettingsPath =>
+      downloadDir.isEmpty ? '' : '$downloadDir/.db/settings_backup.json';
+
+  /// 从外部备份恢复设置
+  ///
+  /// 仅在 SharedPreferences 尚无有效配置时使用（典型场景：卸载重装后
+  /// SharedPreferences 被清空，但下载目录里的备份仍在）。
+  /// 已配置过的用户不会被备份文件覆盖，避免出现"改了设置又变回去"。
+  Future<void> _restoreSettingsFromExternal() async {
+    if (downloadDir.isEmpty) return;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      // 已有站点配置说明是正常升级，不需要恢复
+      final existingSite = prefs.getString('currentSite');
+      if (existingSite != null && existingSite.isNotEmpty) return;
+
+      final file = File(_externalSettingsPath);
+      if (!await file.exists()) return;
+
+      final raw = await file.readAsString();
+      if (raw.trim().isEmpty) return;
+
+      final data = jsonDecode(raw);
+      if (data is! Map) return;
+
+      await _applySettingsMap(Map<String, dynamic>.from(data), prefs);
+      Logger().logSync('AppState', '已从外部备份恢复设置');
+      notifyListeners();
+    } catch (e) {
+      Logger().logSync('AppState', '从外部备份恢复设置失败: $e');
+    }
+  }
+
+  /// 把设置字典写回内存与 SharedPreferences
+  Future<void> _applySettingsMap(
+      Map<String, dynamic> data, SharedPreferences prefs) async {
+    if (data['currentSite'] is String) {
+      final site = data['currentSite'] as String;
+      currentSite = site.isEmpty ? null : site;
+    }
+    if (data['customSites'] is List) {
+      customSites = (data['customSites'] as List).map((e) => e.toString()).toList();
+    }
+    if (data['themeMode'] is int) themeMode = data['themeMode'] as int;
+    if (data['isDarkMode'] is bool) _isDarkMode = data['isDarkMode'] as bool;
+    if (data['videoDisplayMode'] is String) {
+      videoDisplayMode = data['videoDisplayMode'] as String;
+    }
+    if (data['streamingMode'] is bool) streamingMode = data['streamingMode'] as bool;
+    if (data['showBackToTop'] is bool) showBackToTop = data['showBackToTop'] as bool;
+    if (data['backToTopPosition'] is String) {
+      backToTopPosition = data['backToTopPosition'] as String;
+    }
+    if (data['useExternalPlayer'] is bool) {
+      useExternalPlayer = data['useExternalPlayer'] as bool;
+    }
+    if (data['maxConcurrentTasks'] is int) {
+      maxConcurrentTasks = data['maxConcurrentTasks'] as int;
+    }
+    if (data['maxConcurrentSegments'] is int) {
+      maxConcurrentSegments = data['maxConcurrentSegments'] as int;
+    }
+    // 故意不从备份恢复 appLockEnabled：
+    // 1. 旧版本备份里可能残留该字段，恢复它会让用户在没有 PIN 的情况下
+    //    处于「已上锁」状态，直接卡在解锁界面进不去；
+    // 2. 重装后本就应由用户主动重新启用应用锁。
+    // 即便 data['appLockEnabled'] 为 true 也一律忽略。
+    if (data['privacyMode'] is bool) privacyMode = data['privacyMode'] as bool;
+    if (data['nomediaEnabled'] is bool) nomediaEnabled = data['nomediaEnabled'] as bool;
+
+    // 一并写回本地，后续启动走正常路径
+    await _saveSettings();
+  }
+
+  /// 把当前设置导出到外部备份文件
+  Future<void> _backupSettingsToExternal() async {
+    if (downloadDir.isEmpty) return;
+    try {
+      final file = File(_externalSettingsPath);
+      final dir = file.parent;
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+
+      final data = <String, dynamic>{
+        'currentSite': currentSite ?? '',
+        'customSites': customSites,
+        'themeMode': themeMode,
+        'isDarkMode': _isDarkMode,
+        'videoDisplayMode': videoDisplayMode,
+        'streamingMode': streamingMode,
+        'showBackToTop': showBackToTop,
+        'backToTopPosition': backToTopPosition,
+        'useExternalPlayer': useExternalPlayer,
+        'maxConcurrentTasks': maxConcurrentTasks,
+        'maxConcurrentSegments': maxConcurrentSegments,
+        // 注意：这里**不写** appLockEnabled。
+        // 备份文件在外部存储（<下载目录>/.db/settings_backup.json），
+        // 任何 App 都能读。写上它就等于对外宣告「这个 App 有应用锁」，
+        // 反而给想翻看的人指了路。恢复时按未开启处理即可 ——
+        // 用户重装后如需上锁，重新设置一次 PIN 是合理代价。
+        'privacyMode': privacyMode,
+        'nomediaEnabled': nomediaEnabled,
+        'backup_time': DateTime.now().toIso8601String(),
+      };
+
+      await file.writeAsString(jsonEncode(data));
+    } catch (e) {
+      Logger().logSync('AppState', '备份设置失败: $e');
+    }
+  }
+
+  // 从持久化存储加载设置
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    currentSite = prefs.getString('currentSite');
+    if (currentSite != null && currentSite!.isEmpty) {
+      currentSite = null;  // 空串兜底为未选择，避免下拉框断言崩溃
+    }
+    customSites = prefs.getStringList('customSites') ?? [];
+    themeMode = prefs.getInt('themeMode') ?? ThemeModeType.dark.value;
+    _isDarkMode = prefs.getBool('isDarkMode') ?? true;
+    videoDisplayMode = prefs.getString('videoDisplayMode') ?? 'grid';
+    streamingMode = prefs.getBool('streamingMode') ?? false;
+    showBackToTop = prefs.getBool('showBackToTop') ?? true;
+    backToTopPosition = prefs.getString('backToTopPosition') ?? 'right';
+    useExternalPlayer = prefs.getBool('useExternalPlayer') ?? false;
+    maxConcurrentTasks = prefs.getInt('maxConcurrentTasks') ?? DownloadConfig.defaultConcurrentTasks;
+    maxConcurrentSegments = prefs.getInt('maxConcurrentSegments') ?? DownloadConfig.defaultConcurrentSegments;
+    appLockEnabled = prefs.getBool('appLockEnabled') ?? false;
+    privacyMode = prefs.getBool('privacyMode') ?? false;
+    nomediaEnabled = prefs.getBool('nomediaEnabled') ?? false;
+    // 恢复用户选择的下载目录；为空时由 initDownloadDir() 走平台默认路径。
+    // 之前这里没有读取，导致每次启动都当成"未设置"而回退。
+    final savedDir = prefs.getString('downloadDir');
+    if (savedDir != null && savedDir.isNotEmpty) {
+      downloadDir = savedDir;
+    }
+    
+    notifyListeners();
+  }
+
+  // 保存设置到持久化存储
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // 使用批量操作提高性能
+    await prefs.setString('currentSite', currentSite ?? '');
+    await Future.wait([
+      prefs.setInt('themeMode', themeMode),
+      prefs.setBool('isDarkMode', _isDarkMode),
+      prefs.setString('videoDisplayMode', videoDisplayMode),
+      prefs.setBool('streamingMode', streamingMode),
+      prefs.setBool('showBackToTop', showBackToTop),
+      prefs.setString('backToTopPosition', backToTopPosition),
+      prefs.setBool('useExternalPlayer', useExternalPlayer),
+      prefs.setInt('maxConcurrentTasks', maxConcurrentTasks),
+      prefs.setInt('maxConcurrentSegments', maxConcurrentSegments),
+      prefs.setBool('appLockEnabled', appLockEnabled),
+      prefs.setBool('privacyMode', privacyMode),
+      prefs.setBool('nomediaEnabled', nomediaEnabled),
+      // 下载目录必须持久化：此前它不在键列表里，
+      // 用户改完目录一重启就回退到默认路径，下载继续写旧目录。
+      prefs.setString('downloadDir', downloadDir),
+    ]);
+
+    // 同步一份到下载目录，卸载重装后可恢复（SharedPreferences 会随卸载清空）
+    await _backupSettingsToExternal();
+  }
+
+  // 请求存储权限 - 适配 Android 13+ 的细粒度媒体权限
+  Future<bool> requestPermissions() async {
+    if (Platform.isAndroid) {
+      final deviceInfo = DeviceInfoPlugin();
+      final androidInfo = await deviceInfo.androidInfo;
+      final sdkInt = androidInfo.version.sdkInt;
+      
+      permissionGranted = await _requestStoragePermission(sdkInt);
+    } else {
+      permissionGranted = true;
+    }
+    notifyListeners();
+    return permissionGranted;
+  }
+
+  /// 存储权限是否已被永久拒绝（用户勾了「不再询问」或在系统设置里关掉了）。
+  ///
+  /// 永久拒绝后 `Permission.request()` 会**立刻返回 denied 且不弹任何对话框**，
+  /// 表现为「点了授权按钮没反应」。这种情况只能引导用户去系统设置手动开启。
+  bool storagePermissionPermanentlyDenied = false;
+
+  /// 打开本应用的系统设置页，供永久拒绝权限后手动开启
+  Future<void> openAppSettingsPage() async {
+    try {
+      await openAppSettings();
+    } catch (e) {
+      Logger().logSync('AppState', '打开系统设置失败: $e');
+    }
+  }
+
+  /// 根据 Android 版本请求存储权限
+  Future<bool> _requestStoragePermission(int sdkInt) async {
+    storagePermissionPermanentlyDenied = false;
+
+    if (sdkInt >= 34) {
+      // Android 14+: 请求视频和图片权限
+      final videoStatus = await Permission.videos.request();
+      final imageStatus = await Permission.photos.request();
+      if (videoStatus.isGranted || imageStatus.isGranted) {
+        return true;
+      }
+      // 如果细粒度权限被拒绝，尝试全盘访问
+      final manageStatus = await Permission.manageExternalStorage.request();
+      if (manageStatus.isGranted) return true;
+      storagePermissionPermanentlyDenied =
+          videoStatus.isPermanentlyDenied ||
+              imageStatus.isPermanentlyDenied ||
+              manageStatus.isPermanentlyDenied;
+      return false;
+    } else if (sdkInt >= 33) {
+      // Android 13: 使用 READ_MEDIA_* 权限
+      final videoStatus = await Permission.videos.request();
+      if (videoStatus.isGranted) {
+        return true;
+      }
+      // 如果权限被拒绝，尝试全盘访问
+      final manageStatus = await Permission.manageExternalStorage.request();
+      if (manageStatus.isGranted) return true;
+      storagePermissionPermanentlyDenied =
+          videoStatus.isPermanentlyDenied ||
+              manageStatus.isPermanentlyDenied;
+      return false;
+    } else {
+      // Android 12及以下: 使用传统存储权限
+      final status = await Permission.storage.request();
+      if (status.isGranted) return true;
+      storagePermissionPermanentlyDenied = status.isPermanentlyDenied;
+      return false;
+    }
+  }
+
+  /// 检查/刷新悬浮窗权限状态（从设置页调用）
+  Future<bool> checkOverlayPermission() async {
+    overlayPermissionGranted = await NativeFloatingService.isPermissionGranted();
+    notifyListeners();
+    return overlayPermissionGranted;
+  }
+
+  /// 跳转悬浮窗权限设置页面
+  Future<void> requestOverlayPermission() async {
+    await NativeFloatingService.openSettings();
+  }
+
+  // 初始化下载目录
+  Future<void> initDownloadDir() async {
+    
+    if (downloadDir.isEmpty) {
+      if (Platform.isAndroid) {
+        try {
+          // 优先使用外部存储的 Download 目录
+          final dir = Directory('/storage/emulated/0/Download/91Download');
+          
+          if (!await dir.exists()) {
+            await dir.create(recursive: true);
+          }
+          downloadDir = dir.path;
+        } catch (e) {
+          // 如果失败，使用应用私有目录
+          try {
+            final appDir = await getExternalStorageDirectory();
+            if (appDir != null) {
+              final dir = Directory('${appDir.path}/91Download');
+              if (!await dir.exists()) {
+                await dir.create(recursive: true);
+              }
+              downloadDir = dir.path;
+            } else {
+              // 最后使用内部存储
+              final internalDir = await getApplicationDocumentsDirectory();
+              downloadDir = '${internalDir.path}/91Download';
+            }
+          } catch (e2) {
+            downloadDir = '';
+          }
+        }
+      } else {
+        // iOS: 使用应用文档目录
+        final appDir = await getApplicationDocumentsDirectory();
+        downloadDir = '${appDir.path}/91Download';
+      }
+    }
+    
+    // 同步 .nomedia 文件状态
+    if (downloadDir.isNotEmpty && nomediaEnabled) {
+      try {
+        final nomediaFile = File('$downloadDir/.nomedia');
+        if (!await nomediaFile.exists()) {
+          await nomediaFile.create();
+        }
+      } catch (_) {}
+    }
+    
+    notifyListeners();
+  }
+
+  // 检查站点是否已选择
+  bool get isSiteSelected => currentSite != null && currentSite!.isNotEmpty;
+
+  // 所有可选站点（预设 + 自定义）
+  List<String> get allSites => [...CrawlerConfig.availableSites, ...customSites];
+
+  // 手动添加自定义站点（URL 规范化、去重、持久化并切换到该站点）
+  // 返回规范化后的 URL；失败返回 null
+  Future<String?> addCustomSite(String url) async {
+    var u = url.trim();
+    if (u.isEmpty) return null;
+    // 大小写不敏感判断协议前缀
+    final lower = u.toLowerCase();
+    if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+      u = 'https://$u';
+    }
+    // 去掉所有结尾斜杠
+    final normalized = u.replaceFirst(RegExp(r'/+$'), '');
+    final alreadyPreset = CrawlerConfig.availableSites.contains(normalized);
+    if (!alreadyPreset && !customSites.contains(normalized)) {
+      customSites.add(normalized);
+    }
+    await _saveSettings();
+    changeSite(normalized);
+    return normalized;
+  }
+
+  // 切换站点
+  void changeSite(String site) {
+    currentSite = site;
+    if (_crawler != null) {
+      _crawler!.changeSite(site);
+    } else {
+      _crawler = null; // 强制下次访问时重新创建
+    }
+    _saveSettings();
+    notifyListeners();
+  }
+
+  // 主题相关
+  /// 当前**设置**是否为深色
+  ///
+  /// ⚠️ 仅用于「显示当前设置」（如设置页文案）。
+  /// 决定**控件配色**时请改用 `Theme.of(context).brightness`——
+  /// 那才是 MaterialApp 实际渲染的主题。两者在「跟随系统」模式下
+  /// 可能不一致，用错会导致浅色页面上出现深色控件。
+  bool get isDarkMode {
+    if (themeMode == 2) {
+      // 跟随系统：通过MediaQuery获取系统主题
+      return WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
+    }
+    return _isDarkMode;
+  }
+  
+  // 是否跟随系统
+  bool get isAutoTheme => themeMode == 2;
+  
+  // 切换主题模式
+  void setThemeMode(int mode) {
+    themeMode = mode;
+    if (mode == 2) {
+      // 跟随系统模式，根据系统主题设置_isDarkMode
+      _isDarkMode = WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
+    }
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 切换到日间模式
+  void setLightMode() {
+    themeMode = 0;
+    _isDarkMode = false;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 切换到夜间模式
+  void setDarkMode() {
+    themeMode = 1;
+    _isDarkMode = true;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 切换到跟随系统
+  void setAutoTheme() {
+    themeMode = 2;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 兼容旧代码的toggleTheme方法
+  void toggleTheme() {
+    if (themeMode == 2) {
+      // 当前是跟随系统，切换到日间模式
+      setLightMode();
+    } else {
+      // 切换日间/夜间
+      _isDarkMode = !_isDarkMode;
+      _saveSettings();
+      notifyListeners();
+    }
+  }
+
+  // 设置下载目录
+  //
+  // 此前既不落盘也不失效缓存：重启后路径回退到默认目录，
+  // 且 _crawler 仍指向旧目录下的数据库，表现为「.db 里的下载历史与
+  // 关注作者整个消失」，用户会以为记录全丢。
+  Future<void> setDownloadDir(String dir) async {
+    if (dir.isEmpty || dir == downloadDir) return;
+    final oldDir = downloadDir;
+    downloadDir = dir;
+
+    // 1. 持久化，否则重启即回退
+    await _saveSettings();
+
+    // 2. 让懒建的爬虫与下载管理器重新指向新目录下的数据库
+    _crawler = null;
+    _downloadManager.resetForNewDirectory(
+      externalDbPath: dir.isNotEmpty ? dir : null,
+    );
+    followedAuthorsService.setExternalDbPath(dir.isNotEmpty ? dir : null);
+
+    // 3. 新目录下重新准备 .nomedia 与目录本身
+    await initDownloadDir();
+    await _saveSettings();
+
+    // 4. 重新加载新目录里的关注列表与历史
+    await followedAuthorsService.refresh();
+
+    // 5. 尽力把旧目录的数据库搬过去，避免用户的记录看起来"消失"
+    await _migrateOldDirectoryData(oldDir, dir);
+
+    notifyListeners();
+  }
+
+  /// 把旧下载目录 `.db` 下的数据库复制到新目录（不覆盖已有文件）。
+  ///
+  /// 直接删旧文件风险太高（用户可能只是临时换目录看看），
+  /// 因此只做复制；旧目录数据保留，用户可自行清理。
+  Future<void> _migrateOldDirectoryData(String oldDir, String newDir) async {
+    if (oldDir.isEmpty || newDir.isEmpty || oldDir == newDir) return;
+    try {
+      final oldDbDir = Directory('$oldDir/.db');
+      if (!await oldDbDir.exists()) return;
+      final newDbDir = Directory('$newDir/.db');
+      if (!await newDbDir.exists()) await newDbDir.create(recursive: true);
+
+      for (final name in const [
+        'download_tasks.db',
+        'download_history.db',
+        'followed_authors.db',
+        'settings_backup.json',
+      ]) {
+        final src = File('${oldDbDir.path}/$name');
+        if (!await src.exists()) continue;
+        final dst = File('${newDbDir.path}/$name');
+        // 已存在就不动，避免覆盖用户在新目录里已有的记录
+        if (await dst.exists()) continue;
+        await src.copy(dst.path);
+        Logger().logSync('AppState', '已迁移 $name 到新下载目录');
+      }
+    } catch (e) {
+      Logger().logSync('AppState', '迁移旧目录数据失败: $e');
+    }
+  }
+
+  // 切换Debug模式
+  Future<void> toggleDebug(bool enable) async {
+    debugMode = enable;
+    await logger.toggle(enable);
+    notifyListeners();
+  }
+  
+  // 切换保存HTML开关
+  void toggleSaveDebugHtml(bool enable) {
+    saveDebugHtml = enable;
+    // 同步到crawler
+    if (_crawler != null) {
+      _crawler!.saveDebugHtml = enable;
+    }
+    notifyListeners();
+  }
+
+  // 切换外部播放器
+  void toggleExternalPlayer() {
+    useExternalPlayer = !useExternalPlayer;
+    _saveSettings();
+    notifyListeners();
+  }
+
+  // 设置外部播放器
+  void setExternalPlayer(bool enabled) {
+    useExternalPlayer = enabled;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 设置同时下载任务数
+  void setMaxConcurrentTasks(int value) {
+    maxConcurrentTasks = value.clamp(
+      DownloadConfig.minConcurrentTasks,
+      DownloadConfig.maxConcurrentTasksLimit,
+    );
+    // ✅ 同步到 DownloadManager
+    _downloadManager.maxConcurrentTasks = maxConcurrentTasks;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 设置TS切片并发数
+  void setMaxConcurrentSegments(int value) {
+    maxConcurrentSegments = value.clamp(
+      DownloadConfig.minConcurrentSegments,
+      DownloadConfig.maxConcurrentSegmentsLimit,
+    );
+    // ✅ 同步到 DownloadManager 和 CrawlerCore
+    _downloadManager.maxConcurrentSegments = maxConcurrentSegments;
+    if (_crawler != null) {
+      _crawler!.maxConcurrentDownloads = maxConcurrentSegments;
+    }
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 设置视频显示模式
+  void setVideoDisplayMode(String mode) {
+    videoDisplayMode = mode;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 切换在线播放模式（实验性功能）
+  void toggleStreamingMode(bool enable) {
+    streamingMode = enable;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 设置回顶部按钮显示
+  void setShowBackToTop(bool show) {
+    showBackToTop = show;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 设置回顶部按钮位置
+  void setBackToTopPosition(String position) {
+    backToTopPosition = position;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  // 切换隐私模式
+  Future<void> togglePrivacyMode() async {
+    privacyMode = !privacyMode;
+    await _saveSettings();
+    notifyListeners();
+  }
+  
+  // 切换应用锁
+  Future<void> toggleAppLock(bool enable) async {
+    appLockEnabled = enable;
+    await _saveSettings();
+    notifyListeners();
+  }
+  
+  // 切换 .nomedia（防止媒体扫描）
+  //
+  // 返回是否真的改成功了。以前异常被 `catch (_) {}` 吞掉后照样翻转开关，
+  // 用户看到「已开启」，相册里却依然刷出下载的视频 —— 状态与事实不符。
+  Future<bool> toggleNomedia(bool enable) async {
+    if (downloadDir.isEmpty) {
+      // 没有下载目录就无从下手，别假装成功
+      return false;
+    }
+
+    try {
+      final nomediaFile = File('$downloadDir/.nomedia');
+      if (enable) {
+        if (!await nomediaFile.exists()) {
+          await nomediaFile.create();
+        }
+      } else {
+        if (await nomediaFile.exists()) {
+          await nomediaFile.delete();
+        }
+      }
+      // 落盘后再确认一次，确认不了就当失败
+      final exists = await nomediaFile.exists();
+      if (exists != enable) {
+        Logger().logSync(
+          'AppState',
+          '.nomedia 状态校验失败: 期望 $enable，实际 $exists',
+        );
+        return false;
+      }
+    } catch (e) {
+      Logger().logSync('AppState', '切换 .nomedia 失败: $e');
+      return false;
+    }
+
+    nomediaEnabled = enable;
+    await _saveSettings();
+    notifyListeners();
+    return true;
+  }
+  
+  // 设置已认证状态
+  void setAuthenticated(bool authenticated) {
+    isAuthenticated = authenticated;
+    notifyListeners();
+  }
+  
+  @override
+  void dispose() {
+    _downloadManager.removeListener(_onDownloadManagerChanged);
+    _downloadManager.dispose();
+    super.dispose();
+  }
+}

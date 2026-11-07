@@ -1,0 +1,15 @@
+[project]
+sub_id = "192b4947"
+name = "91Download Mobile"
+requires = ["flutter-3.16", "dart-3.2"]
+project_type = "app"
+
+[preview]
+preview_enable = "disabled"
+
+[deploy]
+build = ["flutter", "build", "apk", "--release"]
+build_app_dir = "android"
+
+[subprojects]
+path = ["."]
