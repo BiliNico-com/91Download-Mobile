@@ -329,27 +329,29 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
 
 
-  /// 按站点家族分组生成选项列表（预设站在前，自定义站沉底）
+  /// 按站点家族分组生成选项列表
+  ///
+  /// 自定义站点不再单独沉底，而是按它**所属的家族**排进对应分组——
+  /// 用户手动归类（或按域名推断）到九色系的自定义站点就该出现在九色系里，
+  /// 否则「归类」这个动作在界面上看不出来。预设站在前、自定义站跟在后面。
   List<Widget> _buildSiteGroups(AppState appState) {
     final widgets = <Widget>[];
     for (final family in _siteFamilyOrder) {
-      final sites = CrawlerConfig.availableSites
-          .where((s) => CrawlerConfig.detectSiteType(s) == family)
+      final presets = CrawlerConfig.presetsOfFamily(family);
+      final customs = appState.customSites
+          .where((s) =>
+              !CrawlerConfig.availableSites.contains(s) &&
+              appState.siteFamilyOf(s) == family)
           .toList();
-      if (sites.isEmpty) continue;
+      if (presets.isEmpty && customs.isEmpty) continue;
       widgets.add(_buildSiteGroupLabel(_siteFamilyNames[family] ?? family));
-      for (var i = 0; i < sites.length; i++) {
-        widgets
-            .add(_buildSiteOption(appState, sites[i], i == 0 ? '主站' : '备用'));
+      for (var i = 0; i < presets.length; i++) {
+        widgets.add(
+            _buildSiteOption(appState, presets[i], i == 0 ? '主站' : '备用'));
       }
-    }
-    final custom = appState.customSites
-        .where((s) => !CrawlerConfig.availableSites.contains(s))
-        .toList();
-    if (custom.isNotEmpty) {
-      widgets.add(_buildSiteGroupLabel('自定义站点'));
-      for (final site in custom) {
-        widgets.add(_buildSiteOption(appState, site, '自定义'));
+      for (final site in customs) {
+        widgets
+            .add(_buildSiteOption(appState, site, '自定义', customSite: true));
       }
     }
     return widgets;
@@ -370,8 +372,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
   }
 
-  /// 单个站点选项：单选圆点 + 域名 + 角色标签 + 延迟
-  Widget _buildSiteOption(AppState appState, String site, String roleTag) {
+  /// 单个站点选项：单选圆点 + 域名 + 角色标签 + 延迟（+ 自定义站的更多操作）
+  Widget _buildSiteOption(AppState appState, String site, String roleTag,
+      {bool customSite = false}) {
     final selected = appState.currentSite == site;
     final host = _siteHost(site);
     final accent = Theme.of(context).colorScheme.primary;
@@ -387,7 +390,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
           ));
       },
       child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        padding: EdgeInsets.fromLTRB(16, 11, customSite ? 4 : 16, 11),
         child: Row(
           children: [
             Icon(
@@ -415,6 +418,10 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   ),
                   SizedBox(width: 8),
                   _buildSiteTag(roleTag),
+                  if (customSite && appState.hasManualSiteType(site)) ...[
+                    SizedBox(width: 6),
+                    _buildSiteTag('手动归类', color: Colors.orange),
+                  ],
                   if (_isFastestSite(host)) ...[
                     SizedBox(width: 6),
                     _buildSiteTag('最快', color: Colors.green),
@@ -423,10 +430,199 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               ),
             ),
             _buildSiteLatency(host),
+            if (customSite) _buildCustomSiteMenu(appState, site),
           ],
         ),
       ),
     );
+  }
+
+  /// 自定义站点的更多操作：归类到某个系 / 删除
+  Widget _buildCustomSiteMenu(AppState appState, String site) {
+    return PopupMenuButton<String>(
+      tooltip: '更多操作',
+      padding: EdgeInsets.zero,
+      icon: Icon(Icons.more_vert, size: 18, color: Colors.grey.shade500),
+      iconSize: 18,
+      onSelected: (value) {
+        if (value == 'family') {
+          _showSiteFamilyDialog(appState, site);
+        } else if (value == 'delete') {
+          _confirmRemoveCustomSite(appState, site);
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem<String>(
+          value: 'family',
+          height: 44,
+          child: Row(
+            children: [
+              Icon(Icons.category_outlined, size: 18),
+              SizedBox(width: 10),
+              Text('归 类', style: TextStyle(fontSize: 14)),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'delete',
+          height: 44,
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 18, color: Colors.red),
+              SizedBox(width: 10),
+              Text('删除',
+                  style: TextStyle(fontSize: 14, color: Colors.red)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 自定义站点归类弹窗
+  ///
+  /// 用 StatefulBuilder 而不是另建 StatefulWidget：这里只需要一个临时选中值，
+  /// 弹窗关闭即丢，没必要为它多开一个类。
+  Future<void> _showSiteFamilyDialog(AppState appState, String site) async {
+    final host = _siteHost(site);
+    final automatic = CrawlerConfig.detectSiteType(site);
+    // 用 __auto__ 做「自动推断」的哨兵值，而不是 null：
+    // Radio 的 value 为 null 在 groupValue 也为 null 时无法区分"没选"，
+    // 而且泛型 RadioListTile<String?> 的 null 分支容易踩断言。
+    const autoValue = '__auto__';
+    // 当前归类：手动指定过就用它，否则是「自动」
+    String choice =
+        appState.hasManualSiteType(site) ? appState.siteFamilyOf(site) : autoValue;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        final autoLabel = _siteFamilyNames[automatic] ?? automatic;
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text('归类站点'),
+            contentPadding: EdgeInsets.fromLTRB(0, 12, 0, 0),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(
+                    host,
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade600),
+                  ),
+                ),
+                SizedBox(height: 8),
+                RadioListTile<String>(
+                  value: autoValue,
+                  groupValue: choice,
+                  dense: true,
+                  title: Text('自动（按域名推断）',
+                      style: TextStyle(fontSize: 14)),
+                  subtitle: Text('当前判定为 $autoLabel',
+                      style: TextStyle(fontSize: 11)),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setDialogState(() => choice = v);
+                  },
+                ),
+                for (final family in _siteFamilyOrder)
+                  RadioListTile<String>(
+                    value: family,
+                    groupValue: choice,
+                    dense: true,
+                    title: Text(_siteFamilyNames[family] ?? family,
+                        style: TextStyle(fontSize: 14)),
+                    subtitle: Text(_siteFamilyHint(family),
+                        style: TextStyle(fontSize: 11)),
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setDialogState(() => choice = v);
+                    },
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, choice),
+                child: Text('确定'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (result == null || !mounted) return;
+    await appState
+        .setCustomSiteType(site, result == '__auto__' ? null : result);
+    if (!mounted) return;
+    final label = result == '__auto__'
+        ? '自动推断'
+        : (_siteFamilyNames[result] ?? result);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('$host 已归类为 $label'),
+        duration: Duration(seconds: 2),
+      ));
+  }
+
+  /// 家族的一句话说明，放进归类弹窗的副标题
+  String _siteFamilyHint(String family) {
+    switch (family) {
+      case 'porn91':
+        return '91porn 风格，v.php?next=watch 列表，移动端请求头';
+      case 'jiuse':
+        return '九色风格，列表与详情解析单独一套';
+      case 'original':
+        return 'ml0987/hsex 风格，list-{page}.htm 列表';
+      default:
+        return '';
+    }
+  }
+
+  /// 删除自定义站点（带确认）
+  Future<void> _confirmRemoveCustomSite(AppState appState, String site) async {
+    final host = _siteHost(site);
+    final wasCurrent = appState.currentSite == site;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('删除站点'),
+        content: Text(wasCurrent
+            ? '确定删除 $host 吗？它正是当前使用的站点，删除后会自动切到同系的预设站点。'
+            : '确定删除 $host 吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    final fallback = await appState.removeCustomSite(site);
+    if (!mounted) return;
+    final fallbackHost = fallback == null ? '' : _siteHost(fallback);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(fallbackHost.isEmpty
+            ? '已删除 $host'
+            : '已删除 $host，当前站点切换到 $fallbackHost'),
+        duration: Duration(seconds: 2),
+      ));
   }
 
   /// 站点徽标：取域名首段的前两个字符
@@ -568,6 +764,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   Future<void> _showAddCustomSiteDialog(AppState appState) async {
     final controller = TextEditingController();
     String? input;
+    // 添加时就能指定站点系，省掉"先加再归类"两步
+    const autoValue = '__auto__';
+    String family = autoValue;
     // 注意：controller 不能在这里 dispose。
     //
     // showDialog 的 Future 在弹窗**开始关闭**时就完成了，但退出动画还要再跑
@@ -580,7 +779,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     try {
       input = await showDialog<String>(
         context: context,
-        builder: (context) => AlertDialog(
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
           title: Text('手动输入网址'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -603,18 +803,49 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                 '支持 http/https，可省略协议前缀',
                 style: TextStyle(fontSize: 10, color: Colors.grey),
               ),
+              SizedBox(height: 12),
+              Text('站点系:', style: TextStyle(fontSize: 12)),
+              SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: Text('自动', style: TextStyle(fontSize: 12)),
+                    selected: family == autoValue,
+                    visualDensity: VisualDensity.compact,
+                    onSelected: (_) =>
+                        setDialogState(() => family = autoValue),
+                  ),
+                  for (final f in _siteFamilyOrder)
+                    ChoiceChip(
+                      label: Text(_siteFamilyNames[f] ?? f,
+                          style: TextStyle(fontSize: 12)),
+                      selected: family == f,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) => setDialogState(() => family = f),
+                    ),
+                ],
+              ),
+              SizedBox(height: 4),
+              Text(
+                '自动 = 按域名推断，大多数镜像站需要手动指定',
+                style: TextStyle(fontSize: 10, color: Colors.grey),
+              ),
             ],
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dialogContext),
               child: Text('取消'),
             ),
             TextButton(
-              onPressed: () => Navigator.pop(context, controller.text),
+              onPressed: () => Navigator.pop(
+                  dialogContext, '${family == autoValue ? '' : family}|${controller.text}'),
               child: Text('确定'),
             ),
           ],
+        ),
         ),
       );
     } finally {
@@ -622,9 +853,17 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       // 弹窗关闭动画期间 TextField 还会重建一次，提前释放会红屏。
     }
 
-    if (input == null || input.trim().isEmpty || !mounted) return;
+    if (input == null || !mounted) return;
+    // 约定：'家族|网址'，家族为空串表示自动推断
+    final sep = input.indexOf('|');
+    final chosenFamily = sep < 0 ? '' : input.substring(0, sep);
+    final url = sep < 0 ? input : input.substring(sep + 1);
+    if (url.trim().isEmpty) return;
 
-    final normalized = await appState.addCustomSite(input);
+    final normalized = await appState.addCustomSite(
+      url,
+      siteType: chosenFamily.isEmpty ? null : chosenFamily,
+    );
     if (normalized != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('已切换到 $normalized')),
