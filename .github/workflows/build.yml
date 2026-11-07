@@ -17,6 +17,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    # 固定 JDK 17：ubuntu-latest 默认已升到 JDK 25，而 Gradle 7.5
+    # 无法解析 class file major version 69，会直接 build 失败。
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
