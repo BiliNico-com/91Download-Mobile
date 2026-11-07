@@ -46,6 +46,9 @@ class CrawlerConfig {
     "hsex.men": "original",
   };
   
+  /// 站点家族（界面分组顺序也按这个顺序）
+  static const List<String> siteFamilies = ['porn91', 'jiuse', 'original'];
+
   /// 检测站点类型
   static String detectSiteType(String url) {
     final uri = Uri.tryParse(url);
@@ -53,6 +56,26 @@ class CrawlerConfig {
     final domain = uri.host.replaceAll('www.', '');
     return siteTypes[domain] ?? "original";
   }
+
+  /// 校验/兜底一个站点类型取值
+  static String normalizeSiteType(String? type) =>
+      siteFamilies.contains(type) ? type! : "original";
+
+  /// 解析某个站点最终应使用的类型
+  ///
+  /// 用户手动添加的自定义站点，域名不在 [siteTypes] 里，靠 [detectSiteType]
+  /// 只能兜底成 original —— 但用户可能就是拿九色系的镜像域名来用，
+  /// 走 original 的解析模板会一条都解析不出来。所以允许为自定义站点
+  /// 手动指定家族（[overrides]：站点 URL -> 家族），优先于域名推断。
+  static String resolveSiteType(String url, Map<String, String>? overrides) {
+    final manual = overrides?[url];
+    if (manual != null && siteFamilies.contains(manual)) return manual;
+    return detectSiteType(url);
+  }
+
+  /// 取某个家族下的预设站点（用于删除自定义站点后的回退）
+  static List<String> presetsOfFamily(String family) =>
+      availableSites.where((s) => detectSiteType(s) == family).toList();
   
   // ==================== 列表类型配置 ====================
   

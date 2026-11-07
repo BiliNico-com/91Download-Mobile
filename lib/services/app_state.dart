@@ -54,6 +54,13 @@ class AppState extends ChangeNotifier {
 
   // 用户手动添加的自定义站点
   List<String> customSites = [];
+
+  // 自定义站点手动归类的家族：站点URL -> 'porn91'/'jiuse'/'original'
+  //
+  // 域名不在 CrawlerConfig.siteTypes 里时，纯按域名推断只能兜底成 original，
+  // 用户若是拿九色系的镜像域名来用，解析模板会全错。这个映射允许手动指定。
+  // 只对 customSites 里的项生效（预设站点以 CrawlerConfig.siteTypes 为准）。
+  Map<String, String> customSiteTypes = {};
   
   // 返回键处理回调（由子页面设置，用于作者模式等特殊状态）
   bool Function()? onWillPopCallback;
@@ -157,6 +164,8 @@ class AppState extends ChangeNotifier {
       _crawler = CrawlerCore(
         baseUrl: currentSite!,
         externalDbPath: downloadDir.isNotEmpty ? downloadDir : null,
+        // 自定义站点的手动归类要带进爬虫，否则它按域名推断成 original
+        siteType: customSiteTypes[currentSite!],
       );
       _downloadManager.externalDbPath = downloadDir.isNotEmpty ? downloadDir : null;
     }
@@ -274,6 +283,14 @@ class AppState extends ChangeNotifier {
     if (data['customSites'] is List) {
       customSites = (data['customSites'] as List).map((e) => e.toString()).toList();
     }
+    if (data['customSiteTypes'] is Map) {
+      customSiteTypes = (data['customSiteTypes'] as Map).map(
+        (k, v) => MapEntry(
+          k.toString(),
+          CrawlerConfig.normalizeSiteType(v?.toString()),
+        ),
+      );
+    }
     if (data['themeMode'] is int) themeMode = data['themeMode'] as int;
     if (data['isDarkMode'] is bool) _isDarkMode = data['isDarkMode'] as bool;
     if (data['videoDisplayMode'] is String) {
@@ -318,6 +335,7 @@ class AppState extends ChangeNotifier {
       final data = <String, dynamic>{
         'currentSite': currentSite ?? '',
         'customSites': customSites,
+        'customSiteTypes': customSiteTypes,
         'themeMode': themeMode,
         'isDarkMode': _isDarkMode,
         'videoDisplayMode': videoDisplayMode,
@@ -352,6 +370,9 @@ class AppState extends ChangeNotifier {
       currentSite = null;  // 空串兜底为未选择，避免下拉框断言崩溃
     }
     customSites = prefs.getStringList('customSites') ?? [];
+    // 自定义站点的手动归类。SharedPreferences 没有 map 类型，
+    // 以 JSON 字符串存；解析失败按「未归类」处理，不影响启动。
+    customSiteTypes = _decodeSiteTypes(prefs.getString('customSiteTypes'));
     // 兼容老版本数据：老代码从没把 customSites 写进 SharedPreferences，
     // 于是升级上来的用户这里读到的永远是空列表，而 currentSite 却可能是
     // 一个自定义站点。此时下拉框的 value 不在 items 里，界面直接红屏
@@ -438,6 +459,8 @@ class AppState extends ChangeNotifier {
       // 重启后 customSites 变空、currentSite 却还留着那个自定义网址，
       // allSites 里找不到它 → 设置页 DropdownButton 断言崩溃。
       prefs.setStringList('customSites', customSites),
+      // 自定义站点的手动归类（JSON 字符串，SharedPreferences 无 map 类型）
+      prefs.setString('customSiteTypes', jsonEncode(customSiteTypes)),
     ]);
 
     // 同步一份到下载目录，卸载重装后可恢复（SharedPreferences 会随卸载清空）
@@ -590,21 +613,63 @@ class AppState extends ChangeNotifier {
   List<String> get allSites =>
       {...CrawlerConfig.availableSites, ...customSites}.toList();
 
-  // 手动添加自定义站点（URL 规范化、去重、持久化并切换到该站点）
-  // 返回规范化后的 URL；失败返回 null
-  Future<String?> addCustomSite(String url) async {
+  /// 规范化用户输入的站点网址：补协议、去尾斜杠
+  static String normalizeSiteUrl(String url) {
     var u = url.trim();
-    if (u.isEmpty) return null;
-    // 大小写不敏感判断协议前缀
+    if (u.isEmpty) return '';
     final lower = u.toLowerCase();
     if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
       u = 'https://$u';
     }
-    // 去掉所有结尾斜杠
-    final normalized = u.replaceFirst(RegExp(r'/+$'), '');
+    return u.replaceFirst(RegExp(r'/+$'), '');
+  }
+
+  /// 某个站点最终使用的家族：自定义站点的手动归类优先于域名推断
+  String siteFamilyOf(String site) =>
+      CrawlerConfig.resolveSiteType(site, customSiteTypes);
+
+  /// 某站点是否可以手动归类（只有自定义站点、且不是预设站点才行）
+  bool isCustomSite(String site) =>
+      !CrawlerConfig.availableSites.contains(site) && customSites.contains(site);
+
+  /// 该自定义站点是否被用户手动归过类（否则按域名自动推断）
+  bool hasManualSiteType(String site) => customSiteTypes.containsKey(site);
+
+  /// 解析 SharedPreferences 里的自定义站点归类（JSON），失败返回空表
+  Map<String, String> _decodeSiteTypes(String? raw) {
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final data = jsonDecode(raw);
+      if (data is! Map) return {};
+      final result = <String, String>{};
+      data.forEach((k, v) {
+        result[k.toString()] = CrawlerConfig.normalizeSiteType(v?.toString());
+      });
+      return result;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  // 手动添加自定义站点（URL 规范化、去重、持久化并切换到该站点）
+  //
+  // [siteType] 为该站点手动归类的家族，null 表示按域名推断。
+  // 返回规范化后的 URL；失败返回 null
+  Future<String?> addCustomSite(String url, {String? siteType}) async {
+    final normalized = normalizeSiteUrl(url);
+    if (normalized.isEmpty) return null;
     final alreadyPreset = CrawlerConfig.availableSites.contains(normalized);
-    if (!alreadyPreset && !customSites.contains(normalized)) {
-      customSites.add(normalized);
+    if (!alreadyPreset) {
+      if (!customSites.contains(normalized)) {
+        customSites.add(normalized);
+      }
+      // 预设站点的家族由 CrawlerConfig.siteTypes 决定，不记手动归类；
+      // 手动归类过又改回「自动推断」时要把旧值删掉。
+      if (siteType == null) {
+        customSiteTypes.remove(normalized);
+      } else {
+        customSiteTypes[normalized] = CrawlerConfig.normalizeSiteType(siteType);
+      }
     }
     // 兜底清重：历史版本可能已经把预设站点重复塞进 customSites，
     // 不清掉的话下拉框里会出现两条相同 value，触发同样的断言。
@@ -614,14 +679,70 @@ class AppState extends ChangeNotifier {
     return normalized;
   }
 
+  /// 修改已有自定义站点的所属家族
+  ///
+  /// [siteType] 传 null 表示恢复「按域名自动推断」。
+  Future<void> setCustomSiteType(String site, String? siteType) async {
+    if (!customSites.contains(site)) return;
+    if (siteType == null) {
+      customSiteTypes.remove(site);
+    } else {
+      customSiteTypes[site] = CrawlerConfig.normalizeSiteType(siteType);
+    }
+    // 当前正在用这个站点时立即生效：爬虫的站点类型缓存必须一起改，
+    // 否则列表解析、请求头仍走旧的家族，直到下次切站点才恢复。
+    if (currentSite == site) {
+      changeSite(site);
+    } else {
+      await _saveSettings();
+      notifyListeners();
+    }
+  }
+
+  /// 删除自定义站点
+  ///
+  /// 删掉的若是当前站点，自动切到同一家族里第一个预设站点（没有则保持
+  /// 未选择状态），避免 currentSite 指向一个已不存在的网址。
+  /// 返回删除后落到的新站点（保持未选择时为 null）。
+  Future<String?> removeCustomSite(String site) async {
+    if (!customSites.contains(site)) return currentSite;
+    // 家族要在清掉映射**之前**取，否则手动归类丢失、只剩域名兜底值
+    final family = siteFamilyOf(site);
+    customSites = customSites.where((s) => s != site).toList();
+    customSiteTypes.remove(site);
+    String? fallback = currentSite;
+    if (currentSite == site) {
+      final presets = CrawlerConfig.presetsOfFamily(family);
+      fallback = presets.isNotEmpty ? presets.first : null;
+      if (fallback != null) {
+        currentSite = fallback;
+        cdnHost = _cdnHostForType(CrawlerConfig.detectSiteType(fallback));
+        if (_crawler != null) {
+          _crawler!.changeSite(fallback);
+          _crawler!.cdnHost = cdnHost;
+        }
+      } else {
+        currentSite = null;
+        _crawler = null;
+      }
+    }
+    await _saveSettings();
+    notifyListeners();
+    return fallback;
+  }
+
   // 切换站点
   void changeSite(String site) {
     currentSite = site;
     // 两套节点互不相通：换站点后立刻切回该站点类型自己记住的那条线路，
     // 否则会把另一套的域名套到这家站点上，导致视频地址一律解析失败。
-    cdnHost = _cdnHostForType(CrawlerConfig.detectSiteType(site));
+    final type = siteFamilyOf(site);
+    cdnHost = _cdnHostForType(type);
     if (_crawler != null) {
-      _crawler!.changeSite(site);
+      // 自定义站点的手动归类要一起传下去：CrawlerCore 内部按 siteType
+      // 选择解析模板与请求头，只改 baseUrl 会让它回落到域名推断。
+      _crawler!.changeSite(site,
+          newSiteType: customSiteTypes.containsKey(site) ? type : null);
       _crawler!.cdnHost = cdnHost;
     } else {
       _crawler = null; // 强制下次访问时重新创建
@@ -818,9 +939,8 @@ class AppState extends ChangeNotifier {
   }
   
   /// 当前站点类型（未选站点时按 original 处理）
-  String get _currentSiteType => currentSite == null
-      ? 'original'
-      : CrawlerConfig.detectSiteType(currentSite!);
+  String get _currentSiteType =>
+      currentSite == null ? 'original' : siteFamilyOf(currentSite!);
 
   /// 当前站点类型下可选的节点列表
   List<CdnNode> get availableCdnNodes =>

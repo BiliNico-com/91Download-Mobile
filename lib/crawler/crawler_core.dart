@@ -191,21 +191,33 @@ class CrawlerCore {
     return runZoned(body, zoneValues: {_zoneKey: ctrl});
   }
 
+  /// 手动指定的站点类型（自定义站点由用户归类时传入，null = 按域名推断）
+  String? _manualSiteType;
+
   CrawlerCore({
     required this.baseUrl,
     this.imgBaseUrl,
     Dio? dio,
     this.externalDbPath,
+    String? siteType,
   }) : _dio = dio ?? Dio() {
     // 重要：先检测站点类型，再初始化Dio（请求头依赖站点类型）
+    _manualSiteType = siteType != null
+        ? CrawlerConfig.normalizeSiteType(siteType)
+        : null;
     _detectSiteType();
     _initDio();
   }
   
   /// 检测站点类型
+  ///
+  /// 自定义站点的域名不在 CrawlerConfig.siteTypes 里，纯按域名推断只能得到
+  /// original。用户手动归类后由 [_manualSiteType] 优先，否则解析模板、
+  /// 请求头、解密分支全都套错，站点一条也解析不出来。
   void _detectSiteType() {
-    _siteType = CrawlerConfig.detectSiteType(baseUrl);
-    Logger().logSync('Crawler', '站点类型检测: domain=${Uri.parse(baseUrl).host}, type=$_siteType');
+    _siteType = _manualSiteType ?? CrawlerConfig.detectSiteType(baseUrl);
+    Logger().logSync('Crawler', '站点类型检测: domain=${Uri.parse(baseUrl).host}, type=$_siteType'
+        '${_manualSiteType != null ? ' (手动指定)' : ''}');
   }
   
   /// 获取站点类型
@@ -2523,8 +2535,13 @@ class CrawlerCore {
   void reset() => control.reset();
 
   /// 更换站点
-  void changeSite(String newBaseUrl) {
+  ///
+  /// [newSiteType] 传入时表示用户手动归类（自定义站点），传 null 则回到
+  /// 按域名推断。
+  void changeSite(String newBaseUrl, {String? newSiteType}) {
     baseUrl = newBaseUrl;
+    _manualSiteType =
+        newSiteType != null ? CrawlerConfig.normalizeSiteType(newSiteType) : null;
     // 先检测新站点类型（_initDio 内部依赖 _siteType 选择请求头）
     _detectSiteType();
     // 清除旧站点的 Cookie，避免跨站点干扰（特别是从 original 切到 porn91 时）
