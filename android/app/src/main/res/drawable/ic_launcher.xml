@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  应用图标。原项目缺少 mipmap/ic_launcher，manifest 引用不到资源导致打包失败。
+  这里改用矢量图（vector drawable），不引入二进制 png，任何屏幕密度下都清晰。
+  图形含义：圆角方块 + 向下的下载箭头 + 底部托盘，呼应「下载」。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 背景圆角方块 -->
+    <path
+        android:fillColor="#FF2F6BFF"
+        android:pathData="M0,26 A26,26 0 0 1 26,0 H82 A26,26 0 0 1 108,26 V82 A26,26 0 0 1 82,108 H26 A26,26 0 0 1 0,82 Z" />
+
+    <!-- 下载箭头 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M48,26 H60 V62 H48 Z M39,56 L54,72 L69,56 L60.5,56 L54,63.5 L47.5,56 Z" />
+
+    <!-- 底部托盘 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M32,78 H76 V86 H32 Z" />
+</vector>

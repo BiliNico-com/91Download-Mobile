@@ -34,12 +34,12 @@
     <application
         android:label="91Download"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/ic_launcher"
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true">
         
         <activity
-            android:name=".MainActivity"
+            android:name="com.bilinico.download_91.MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/LaunchTheme"
@@ -64,7 +64,7 @@
             
         <!-- 原生悬浮窗播放服务 -->
         <service
-            android:name=".FloatingWindowService"
+            android:name="com.bilinico.download_91.FloatingWindowService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"
