@@ -1230,7 +1230,11 @@ class CrawlerCore {
         // ✅ 从播放页 poster 属性提取视频ID（如 poster="https://.../thumb/848765.jpg"）
         // 注意：列表页封面ID与视频ID无关，必须用播放页poster ID
         String? posterVideoId;
-        final posterMatch = RegExp(r'poster="[^"]*thumb/(\d+)\.jpg"').firstMatch(html);
+        // 站点同时存在 .jpg / .webp 两种封面后缀，两种都要认，
+        // 否则 poster ID 取不到，下面按 ID 匹配真实视频地址那步会失效。
+        final posterMatch =
+            RegExp(r'poster="[^"]*thumb/(\d+)\.(?:jpe?g|webp|png)"')
+                .firstMatch(html);
         if (posterMatch != null) {
           posterVideoId = posterMatch.group(1);
           await logger.log('Debug', '播放页poster ID: $posterVideoId');
@@ -1316,7 +1320,12 @@ class CrawlerCore {
               
               if (src.contains('.mp4') || src.contains('.m3u8')) {
                 // 排除已知的广告视频ID
-                if (src.contains('358999')) {
+                //
+                // 91porn 的播放页里 <source> 常常整段就是广告片（358999），
+                // 真实地址只藏在下面的 strencode2 里。这里必须认出来，
+                // 否则会拿广告地址去下载，用户下到的是几十秒的推广片。
+                if (CrawlerConfig.knownAdVideoIds.any(src.contains)) {
+                  await logger.log('Debug', '跳过广告视频地址: ${src.substring(0, 60)}...');
                   continue;
                 }
                 videoUrl = src;
@@ -1385,6 +1394,22 @@ class CrawlerCore {
       }
       
       if (videoUrl != null) {
+        // ===== porn91：解密页面里藏起来的真实标题 / 作者 / 时长 =====
+        //
+        // 播放页给纯 HTTP 抓取看到的是「掺了变体选择符的占位文本」，
+        // 真实值要等 JS 随机延迟 2~6 秒后才写进 DOM。不自己解密的话，
+        // 拿到的标题、作者都带着隐形字符，界面上看就是名字里有空格。
+        Porn91Secret? secret;
+        if (_siteType == "porn91") {
+          secret = CrawlerConfig.decodePorn91Secret(html);
+          if (secret != null && !secret.isEmpty) {
+            await logger.log('Debug',
+                '解密成功: 标题=${secret.title}, 作者=${secret.author}, 时长=${secret.duration}');
+          } else {
+            await logger.log('Debug', '未找到可解密的标题/作者节点，回退到页面文本');
+          }
+        }
+
         // 提取作者信息
         String? author = video.author;
         if (author == null) {
@@ -1438,14 +1463,23 @@ class CrawlerCore {
         return VideoInfo(
           id: video.id,
           url: video.url,
-          title: video.title,
+          // porn91 解密出来的标题优先：页面文本是掺了变体选择符的占位值，
+          // 直接用会让标题里凭空多出空格。
+          title: (secret?.title?.isNotEmpty ?? false)
+              ? secret!.title!
+              : video.title,
           cover: video.cover,
-          author: author,
+          author: (secret?.author?.isNotEmpty ?? false)
+              ? secret!.author
+              : author,
           authorId: video.authorId, // 保留原有的作者ID
-          duration: duration,
+          duration: (secret?.duration?.isNotEmpty ?? false)
+              ? secret!.duration
+              : duration,
           uploadDate: uploadDate,
           views: views,
-          m3u8Url: videoUrl,
+          // 按用户选择的播放线路改写域名（「自动」时不改）
+          m3u8Url: applyCdnHost(videoUrl),
         );
       }
       

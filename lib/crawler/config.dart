@@ -1,6 +1,20 @@
 /// 爬虫核心配置
 /// 严格参照 Python 版本 _src/lib/__init__.py
 
+import 'dart:convert';
+import 'dart:typed_data';
+
+/// porn91 播放页解密出来的真实信息
+class Porn91Secret {
+  final String? title;
+  final String? author;
+  final String? duration;
+  const Porn91Secret({this.title, this.author, this.duration});
+
+  bool get isEmpty =>
+      (title == null || title!.isEmpty) &&
+      (author == null || author!.isEmpty);
+}
 
 /// 一条视频 CDN 播放线路。
 ///
@@ -180,6 +194,12 @@ class CrawlerConfig {
   /// 图片 CDN 域名（仅 porn91 使用）
   static const String imgCdnUrl = "https://1729130453.rsc.cdn77.org";
 
+  /// 已知的广告片 ID。
+  ///
+  /// 91porn 播放页的 <source> 常常直接就是这条广告，
+  /// 真实地址藏在 strencode2 里，必须避开。
+  static const List<String> knownAdVideoIds = ['358999'];
+
   // ==================== 播放节点（视频 CDN 线路）====================
 
   // ---- 两套节点必须分开：porn91 和 original 用的是完全不同的 CDN ----
@@ -247,6 +267,86 @@ class CrawlerConfig {
     return nodesFor(siteType).first;
   }
 
+  // ==================== porn91 标题/作者解密 ====================
+
+  /// 解密站点藏在 `<i id="xd..." data-XXX="...">` 里的真实标题/作者。
+  ///
+  /// 91porn 的播放页会把真实标题、作者、时长加密后塞在一个隐藏的 <i> 标签里，
+  /// 页面上可见的文本只是掺了大量变体选择符的占位符；真实值要等 JS 在
+  /// 「随机 2~6 秒后」或「用户第一次滚动/点击/按键」时才替换进 DOM。
+  /// 纯 HTTP 抓取永远等不到那一刻，所以必须自己解密，否则拿到的标题和作者
+  /// 都是带隐形字符的假值。
+  ///
+  /// 算法（对应页面内联脚本的 dec 函数）：
+  ///   base64 解码 → 与密钥逐字节异或 → UTF-8 解码
+  /// 密钥（k）和值代码（m）都写在同一个 <script> 里。
+  static Porn91Secret? decodePorn91Secret(String html) {
+    try {
+      // 隐藏节点：<i id="xdXXXX" data-PREFIX="..." data-PREFIXu="..." data-PREFIXd="...">
+      final node = RegExp(
+        r'<i[^>]*id="xd[0-9a-z]+"([^>]*)>',
+        caseSensitive: false,
+      ).firstMatch(html);
+      if (node == null) return null;
+
+      final attrs = <String, String>{};
+      for (final m in RegExp(r'(data-[0-9a-z]+)="([^"]*)"')
+          .allMatches(node.group(1)!)) {
+        attrs[m.group(1)!] = m.group(2)!;
+      }
+
+      // 密钥与模式取自同页脚本：var m=0,...,k="5071dad6";
+      final keyMatch = RegExp(r'k="([0-9a-fA-F]+)"').firstMatch(html);
+      final modeMatch = RegExp(r'var\s+m=(\d+)').firstMatch(html);
+      if (keyMatch == null) return null;
+      final key = keyMatch.group(1)!;
+      final mode = int.tryParse(modeMatch?.group(1) ?? '0') ?? 0;
+
+      // data-PREFIX 是标题，后缀 u 是作者，后缀 d 是时长（秒）
+      String? title;
+      String? author;
+      String? duration;
+      for (final entry in attrs.entries) {
+        final k = entry.key;
+        if (!k.startsWith('data-')) continue;
+        if (k.endsWith('u')) {
+          author ??= _decryptPorn91(entry.value, key, mode);
+        } else if (k.endsWith('d')) {
+          final secs = int.tryParse(
+              _decryptPorn91(entry.value, key, mode) ?? '');
+          if (secs != null && secs > 0) {
+            duration = '${(secs ~/ 3600).toString().padLeft(2, '0')}:'
+                '${((secs ~/ 60) % 60).toString().padLeft(2, '0')}:'
+                '${(secs % 60).toString().padLeft(2, '0')}';
+          }
+        } else {
+          title ??= _decryptPorn91(entry.value, key, mode);
+        }
+      }
+
+      if (title == null && author == null) return null;
+      return Porn91Secret(title: title, author: author, duration: duration);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 单个字段的解密：base64 → 异或 → UTF-8
+  static String? _decryptPorn91(String value, String key, int mode) {
+    if (value.isEmpty) return null;
+    var s = value;
+    // 与页面脚本保持一致：reverse 模式先把串倒过来再 base64 解码
+    if (mode == 2) s = s.split('').reversed.join();
+    final bytes = base64Decode(s);
+    final keyBytes = key.codeUnits;
+    final out = Uint8List(bytes.length);
+    for (var i = 0; i < bytes.length; i++) {
+      out[i] = bytes[i] ^ keyBytes[i % keyBytes.length];
+    }
+    var text = utf8.decode(out, allowMalformed: true);
+    if (mode == 4) text = text.split('').reversed.join();
+    return stripInvisible(text).trim();
+  }
 
   // ==================== 文本净化 ====================
 
