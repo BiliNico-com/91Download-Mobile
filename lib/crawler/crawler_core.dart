@@ -2155,6 +2155,9 @@ class CrawlerCore {
           url,
           options: Options(
             responseType: ResponseType.bytes,
+            // 切片单个体积不大，但热门站点高峰期首包可能很慢，
+            // 30 秒的全局超时容易误杀，这里放宽到 2 分钟。
+            receiveTimeout: const Duration(minutes: 2),
             headers: {
               'Cache-Control': 'no-cache, no-store, must-revalidate',
               'Pragma': 'no-cache',
@@ -2226,10 +2229,26 @@ class CrawlerCore {
 
     final partFile = File('$savePath.part');
     try {
+      // 直链视频（往往几十上百 MB，且 CDN 首包慢）不能用全局的 30 秒超时：
+      // 超过 30 秒还没开始吐数据就会被 abort，报 receive timeout。
+      // 这里单独放宽：连接 30 秒、接收 10 分钟，足够慢速链路下完一个文件。
+      final fileOptions = Options(
+        receiveTimeout: const Duration(minutes: 10),
+        sendTimeout: const Duration(seconds: 30),
+      );
+
       // 获取文件大小
-      final headResp = await _dio.head(mp4Url);
-      final contentLength = int.tryParse(headResp.headers.value('content-length') ?? '0') ?? 0;
-      
+      int contentLength = 0;
+      try {
+        final headResp = await _dio.head(mp4Url, options: fileOptions);
+        contentLength =
+            int.tryParse(headResp.headers.value('content-length') ?? '0') ?? 0;
+      } catch (e) {
+        // 有些 CDN 不响应 HEAD，或代理下超时；拿不到大小不影响下载，
+        // 后面会用 Range 续传 + 下载进度里回传的 total 兜底。
+        ctrl.onLog?.call('获取文件大小失败（不影响下载）: $e', 'debug');
+      }
+
       if (contentLength > 0) {
         ctrl.onLog?.call('文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB', 'info');
       }
@@ -2265,6 +2284,8 @@ class CrawlerCore {
         partFile.path,
         options: Options(
           headers: alreadyBytes > 0 ? {'Range': 'bytes=$alreadyBytes-'} : null,
+          receiveTimeout: const Duration(minutes: 10),
+          sendTimeout: const Duration(seconds: 30),
         ),
         deleteOnError: false,
         onReceiveProgress: (received, total) {
