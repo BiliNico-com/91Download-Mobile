@@ -1638,6 +1638,21 @@ class CrawlerCore {
             extractionMethod = 'jiuse-video-src';
           }
         }
+
+        // data-src 有时指向站点内置的 12 秒样片（/hlsd/<名字>/index.m3u8），
+        // 直接下载/播放就只有 11 秒。真实地址藏在下载接口里，换掉它。
+        if (videoUrl != null && CrawlerConfig.isJiuseSampleUrl(videoUrl)) {
+          await logger.log('Debug',
+              'jiuse 命中站点样片地址，尝试从 /apiDownloadUrl 取真实地址');
+          final real = await _fetchJiuseRealUrl(baseUrl, html);
+          if (real != null) {
+            videoUrl = real;
+            extractionMethod = 'jiuse-apiDownloadUrl';
+          } else {
+            await logger.log('Warning',
+                '未能从 /apiDownloadUrl 取到真实地址，仍使用样片地址（可能只有约 12 秒）');
+          }
+        }
       }
 
       // ===== 通用策略 (original CMS) =====
@@ -1791,6 +1806,52 @@ class CrawlerCore {
             '这不是视频下架或站点改版，纯 HTTP 请求无法通过该验证。');
       }
       await logger.log('Error', '$stack');
+      return null;
+    }
+  }
+
+  /// 九色系：用详情页的 data-id 调站点下载接口，换出真实播放/下载地址。
+  ///
+  /// 站点前端（videoShow.js）的下载按钮就是：
+  ///   e = $(this).attr('data-id');
+  ///   requestGet('/apiDownloadUrl/' + e, url => window.open(url))
+  /// 接口是纯 GET、无签名，所以这里能直接拿同样的结果。
+  ///
+  /// 失败（无 data-id / 接口 403 / 返回不是 URL）一律返回 null，
+  /// 由调用方保留原地址——宁可播样片，也不要整条链路失败。
+  Future<String?> _fetchJiuseRealUrl(String baseUrl, String html) async {
+    try {
+      final dataId = CrawlerConfig.jiuseDataIdFromHtml(html);
+      if (dataId == null || dataId.isEmpty) {
+        await logger.log('Debug', 'jiuse 详情页未找到 data-id，跳过下载接口');
+        return null;
+      }
+      final api = CrawlerConfig.jiuseApiDownloadUrl(baseUrl, dataId);
+      await logger.log('Debug', 'jiuse 下载接口: $api');
+      final resp = await _dio.get(api,
+          options: Options(
+            headers: {
+              'Cookie': _dio.options.headers['Cookie']?.toString() ??
+                  'language=cn_CN',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0',
+            },
+            extra: {'cache': false},
+          ));
+      final real =
+          CrawlerConfig.parseJiuseDownloadApiResponse(resp.data.toString());
+      if (real == null) {
+        await logger.log('Warning', 'jiuse 下载接口返回的不是可下载地址');
+        return null;
+      }
+      // 接口可能返回站内相对地址（/2026/11/05/<hash>/index.m3u8）
+      final abs = CrawlerConfig.resolveAbsoluteUrl(baseUrl, real);
+      await logger.log('Debug',
+          'jiuse 真实地址: ${abs.length > 120 ? abs.substring(0, 120) + "..." : abs}');
+      return abs;
+    } catch (e) {
+      await logger.log('Warning', 'jiuse 下载接口失败: $e');
       return null;
     }
   }

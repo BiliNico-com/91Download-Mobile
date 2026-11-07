@@ -43,6 +43,12 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
 
   /// 测速用的探测路径，取自站点 fastest_cdn.js 里的兜底值
   static const String _cdnTestPath = '/hls/813941/index0.ts';
+
+  /// 九色系的探测路径：站点上的公开样片播放列表
+  ///
+  /// cdn2/cdn3.jiuse2.cloud 与 cdn2/cdn3.jiuse3.cloud 上这个路径都是 200，
+  /// 而根路径是 403，用根路径测会让所有线路都显示成「超时」。
+  static const String _cdnTestPathJiuse = '/hlsd/js10/index.m3u8';
   bool _cdnTesting = false;
 
   // ==================== 站点选择器状态 ====================
@@ -1262,12 +1268,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   _buildCdnNodePicker(appState),
                   SizedBox(height: 8),
                   Text(
-                    appState.currentSiteType == 'porn91'
-                        ? '对应 91porn 的「选择速度最快的视频服务器」：'
-                            '只更换视频服务器域名，视频内容不变。'
-                            '服务器 H/I 站点标注为 VIP，实测 I 可直连、H 需要签名。'
-                        : '对应播放页的「切换播放节点」：只更换CDN域名，'
-                            '视频内容不变。某条线路慢或下载失败时，换一条再重试即可。',
+                    _cdnHintFor(appState.currentSiteType),
                     style: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                 ],
@@ -1291,6 +1292,24 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         child: Icon(icon, size: 18, color: onTap != null ? Theme.of(context).colorScheme.primary : Colors.grey),
       ),
     );
+  }
+
+  /// 播放节点说明文案（按站点类型给出该系的线路来源）
+  String _cdnHintFor(String siteType) {
+    switch (siteType) {
+      case 'porn91':
+        return '对应 91porn 的「选择速度最快的视频服务器」：'
+            '只更换视频服务器域名，视频内容不变。'
+            '服务器 H/I 站点标注为 VIP，实测 I 可直连、H 需要签名。';
+      case 'jiuse':
+        return '九色系站点本身没有节点切换，这里的线路是本 App 补的：'
+            '站点把地址发到 cdn2/cdn3.jiuse2.cloud 或 cdn2/cdn3.jiuse3.cloud，'
+            '只换域名、路径与 token 原样保留，视频内容不变。'
+            '带 /hlsd/ 的地址是站点内置样片，换线路也仍是样片。';
+      default:
+        return '对应播放页的「切换播放节点」：只更换CDN域名，'
+            '视频内容不变。某条线路慢或下载失败时，换一条再重试即可。';
+    }
   }
 
   /// 播放节点选择器
@@ -1391,7 +1410,11 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     final appState = context.read<AppState>();
     final nodes = appState.availableCdnNodes;
     final siteType = appState.currentSiteType;
-    final testPath = siteType == 'porn91' ? '/' : _cdnTestPath;
+    final testPath = siteType == 'porn91'
+        ? '/'
+        : siteType == 'jiuse'
+            ? _cdnTestPathJiuse
+            : _cdnTestPath;
 
     setState(() {
       _cdnTesting = true;

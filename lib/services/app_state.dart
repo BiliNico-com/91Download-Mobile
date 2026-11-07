@@ -105,6 +105,7 @@ class AppState extends ChangeNotifier {
   // 混在一起会导致「在 A 站点选了节点，切到 B 站点后地址被改成不存在的域名」。
   String cdnHost = '';        // 当前站点类型正在用的节点
   String _cdnHostPorn91 = ''; // porn91 单独记住的选择
+  String _cdnHostJiuse = '';  // 九色系（91porny / jiuse.icu）单独记住的选择
   String _cdnHostOriginal = ''; // original 单独记住的选择
 
   // 在线播放模式（实验性功能）
@@ -394,6 +395,10 @@ class AppState extends ChangeNotifier {
     _cdnHostPorn91 = p91.isEmpty || CrawlerConfig.porn91Hosts.contains(p91)
         ? p91
         : '';
+    final ji = prefs.getString('cdnHostJiuse') ?? '';
+    _cdnHostJiuse = ji.isEmpty || CrawlerConfig.jiuseHosts.contains(ji)
+        ? ji
+        : '';
     final ori = prefs.getString('cdnHostOriginal') ?? '';
     _cdnHostOriginal = ori.isEmpty || CrawlerConfig.originalHosts.contains(ori)
         ? ori
@@ -404,6 +409,9 @@ class AppState extends ChangeNotifier {
       if (CrawlerConfig.porn91Hosts.contains(legacy) &&
           _cdnHostPorn91.isEmpty) {
         _cdnHostPorn91 = legacy;
+      } else if (CrawlerConfig.jiuseHosts.contains(legacy) &&
+          _cdnHostJiuse.isEmpty) {
+        _cdnHostJiuse = legacy;
       } else if (CrawlerConfig.originalHosts.contains(legacy) &&
           _cdnHostOriginal.isEmpty) {
         _cdnHostOriginal = legacy;
@@ -441,6 +449,7 @@ class AppState extends ChangeNotifier {
       prefs.setString('videoDisplayMode', videoDisplayMode),
       // 两套节点分开持久化，切换站点时不会互相覆盖
       prefs.setString('cdnHostPorn91', _cdnHostPorn91),
+      prefs.setString('cdnHostJiuse', _cdnHostJiuse),
       prefs.setString('cdnHostOriginal', _cdnHostOriginal),
       prefs.setBool('streamingMode', streamingMode),
       prefs.setBool('showBackToTop', showBackToTop),
@@ -947,8 +956,16 @@ class AppState extends ChangeNotifier {
       CrawlerConfig.nodesFor(_currentSiteType);
 
   /// 按类型取出已保存的节点
-  String _cdnHostForType(String siteType) =>
-      siteType == 'porn91' ? _cdnHostPorn91 : _cdnHostOriginal;
+  String _cdnHostForType(String siteType) {
+    switch (siteType) {
+      case 'porn91':
+        return _cdnHostPorn91;
+      case 'jiuse':
+        return _cdnHostJiuse;
+      default:
+        return _cdnHostOriginal;
+    }
+  }
 
   /// 当前站点类型（未选站点时按 original 处理）
   String get currentSiteType => _currentSiteType;
@@ -965,6 +982,8 @@ class AppState extends ChangeNotifier {
     }
     if (type == 'porn91') {
       _cdnHostPorn91 = host;
+    } else if (type == 'jiuse') {
+      _cdnHostJiuse = host;
     } else {
       _cdnHostOriginal = host;
     }

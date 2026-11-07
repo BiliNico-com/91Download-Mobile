@@ -366,13 +366,60 @@ class CrawlerConfig {
     'shark-v6.hdcdn.store',
   };
 
+  /// 九色系（91porny / jiuse.icu）的 CDN 线路
+  ///
+  /// 这套站点本身**没有**播放节点切换功能（app.js 里 cdn/线路/节点
+  /// 全部 0 命中），这里的选项是本 App 自己补的：站点把播放/下载地址
+  /// 发到 cdnN.jiuse2.cloud 或 cdnN.jiuse3.cloud，路径、token、查询参数
+  /// 全部原样保留，只换域名——和 original 系「切线路」的做法一致。
+  ///
+  /// 实测（HEAD，移动端 UA）：
+  ///   cdn2/cdn3.jiuse2.cloud、cdn2/cdn3.jiuse3.cloud → /hlsd/js10/index.m3u8 200
+  ///   cdn22.jiuse2.cloud、cdn22.jiuse3.cloud          → 同一路径 403
+  /// 两组分工不同：cdn(2|3) 服务公开路径，cdn22 只服务带 token 的
+  /// /yyyy/mm/dd/<hash>/ 路径。所以 cdn22 不能进改写白名单——
+  /// 把带 token 的地址改到 cdn2 上只会 403/404。
+  static const List<CdnNode> jiuseNodes = [
+    CdnNode(name: '自动（跟随站点）', host: ''),
+    CdnNode(name: '线路 1（cdn2.jiuse2）', host: 'cdn2.jiuse2.cloud'),
+    CdnNode(name: '线路 2（cdn3.jiuse2）', host: 'cdn3.jiuse2.cloud'),
+    CdnNode(name: '线路 3（cdn2.jiuse3）', host: 'cdn2.jiuse3.cloud'),
+    CdnNode(name: '线路 4（cdn3.jiuse3）', host: 'cdn3.jiuse3.cloud'),
+  ];
+
+  /// 九色系站点自带 CDN 域名集合（用于判断该不该改写）
+  ///
+  /// 刻意不含 cdn22.*：那是带 token 的专属主机，换域名必挂。
+  static const Set<String> jiuseHosts = {
+    'cdn2.jiuse2.cloud',
+    'cdn3.jiuse2.cloud',
+    'cdn2.jiuse3.cloud',
+    'cdn3.jiuse3.cloud',
+  };
+
   /// 按站点类型取节点列表
-  static List<CdnNode> nodesFor(String siteType) =>
-      siteType == 'porn91' ? porn91Nodes : originalNodes;
+  static List<CdnNode> nodesFor(String siteType) {
+    switch (siteType) {
+      case 'porn91':
+        return porn91Nodes;
+      case 'jiuse':
+        return jiuseNodes;
+      default:
+        return originalNodes;
+    }
+  }
 
   /// 按站点类型取「可改写域名」白名单
-  static Set<String> hostsFor(String siteType) =>
-      siteType == 'porn91' ? porn91Hosts : originalHosts;
+  static Set<String> hostsFor(String siteType) {
+    switch (siteType) {
+      case 'porn91':
+        return porn91Hosts;
+      case 'jiuse':
+        return jiuseHosts;
+      default:
+        return originalHosts;
+    }
+  }
 
   /// 按站点类型 + host 找线路，找不到返回「自动」
   static CdnNode nodeByHost(String siteType, String? host) {
@@ -545,6 +592,83 @@ class CrawlerConfig {
     if (u.startsWith('http://') || u.startsWith('https://')) return u;
     if (u.startsWith('/')) return '$baseUrl$u';
     return '$baseUrl/$u';
+  }
+
+  // ==================== 九色系「样片」识别与真实地址换取 ====================
+  //
+  // 九色系详情页 <video data-src> 有时给的不是真视频，而是站点内置的
+  // 12 秒样片：//cdn2.jiuse2.cloud/hlsd/js10/index.m3u8。
+  // 这个路径对任何视频都一样（hlsd/js1、js11、js99 全部 404），
+  // 无论带不带 Referer 返回的都是同一份 12.00s 播放列表。
+  // 拿它下载就得到「只有 11 秒的假视频」，在线播放也一样。
+  //
+  // 真实地址要从站点的下载接口取：GET {baseUrl}/apiDownloadUrl/{data-id}
+  // 接口是纯 GET、无签名（前端 requestGet 就是裸 $.ajax），
+  // 返回体直接就是可下载的 URL 文本，前端拿到后 window.open。
+
+  /// 样片播放列表的特征路径：/hlsd/<名字>/index.m3u8
+  static final RegExp jiuseSamplePlaylistPattern =
+      RegExp(r'/hlsd/[^/]+/index\.m3u8', caseSensitive: false);
+
+  /// 判断一条播放地址是不是站点内置样片
+  static bool isJiuseSampleUrl(String url) =>
+      jiuseSamplePlaylistPattern.hasMatch(url);
+
+  /// 详情页里点赞/收藏/下载共用的资源 id
+  ///
+  /// 形态如 js/6660f5c5aa73924ffa3511a723ac1edb，
+  /// 在 likeBtn / dislikeBtn / favoriteBtn 上各出现一次，取第一个即可。
+  static final RegExp jiuseDataIdPattern = RegExp(
+    r'data-id="([^"]{8,})"',
+    caseSensitive: false,
+  );
+
+  static String? jiuseDataIdFromHtml(String html) =>
+      jiuseDataIdPattern.firstMatch(html)?.group(1);
+
+  /// 拼下载接口地址
+  static String jiuseApiDownloadUrl(String baseUrl, String dataId) =>
+      '$baseUrl/apiDownloadUrl/$dataId';
+
+  /// 解析下载接口的返回体
+  ///
+  /// 正常是裸 URL 文本；不同版本也可能包成 JSON（url/data/downloadUrl）
+  /// 或带引号的字符串，这里都兜住。取不到 http(s) 地址时返回 null。
+  static String? parseJiuseDownloadApiResponse(String body) {
+    final raw = body.trim();
+    if (raw.isEmpty) return null;
+
+    String? candidate;
+    if (raw.startsWith('{')) {
+      try {
+        final obj = jsonDecode(raw);
+        if (obj is Map) {
+          for (final key in const ['url', 'data', 'downloadUrl', 'download']) {
+            final v = obj[key];
+            if (v is String && v.trim().isNotEmpty) {
+              candidate = v.trim();
+              break;
+            }
+          }
+        }
+      } catch (_) {
+        // 不是合法 JSON，落到下面按裸文本处理
+      }
+    }
+    candidate ??= raw;
+
+    // 去掉成对引号与页面里可能带出的 HTML 转义
+    candidate = candidate.replaceAll('&amp;', '&').trim();
+    if (candidate.length >= 2 &&
+        ((candidate.startsWith('"') && candidate.endsWith('"')) ||
+            (candidate.startsWith("'") && candidate.endsWith("'")))) {
+      candidate = candidate.substring(1, candidate.length - 1).trim();
+    }
+    if (!candidate.startsWith('http://') &&
+        !candidate.startsWith('https://')) {
+      return null;
+    }
+    return candidate;
   }
 
   /// 把页面里抓到的视频/切片地址补成绝对 URL

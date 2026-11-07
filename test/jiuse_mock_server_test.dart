@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:download_91/crawler/config.dart';
 import 'package:download_91/crawler/crawler_core.dart';
+import 'package:download_91/models/video_info.dart';
 
 /// 端到端回归：对着本地 mock 站点跑完整抓取链路。
 ///
@@ -76,5 +78,41 @@ void main() {
     final list = await core.getVideoList('list', 1);
     final detail = await core.getVideoDetail(list.first);
     expect(detail?.m3u8Url ?? '', contains('.m3u8'));
+  });
+
+  test('data-src 是样片时改走 /apiDownloadUrl 取真实地址', () async {
+    if (!online) return markTestSkipped('mock 站点未启动');
+    final core = makeCore();
+    // mock 端 /vod/view/SAMPLESRC 回放的详情页里 data-src 被换成
+    // //cdn2.jiuse2.cloud/hlsd/js10/index.m3u8（站点内置 12 秒样片）
+    final sample = VideoInfo(
+      id: 'SAMPLESRC',
+      url: 'http://127.0.0.1:8899/vod/view/SAMPLESRC',
+      title: '样片测试',
+    );
+    final detail = await core.getVideoDetail(sample);
+    expect(detail, isNotNull);
+    final url = detail!.m3u8Url ?? '';
+    expect(CrawlerConfig.isJiuseSampleUrl(url), isFalse,
+        reason: '样片地址必须被替换成真实地址');
+    expect(url, contains('e7bc985da2f0a3d3a83bfc04396f0fc7'));
+    expect(url, contains('.m3u8'));
+  });
+
+  test('接口不可用时保留原样片地址，不让整条链路失败', () async {
+    if (!online) return markTestSkipped('mock 站点未启动');
+    final core = makeCore();
+    // mock 端 /vod/view/NOAPI 的详情页是样片，且 /apiDownloadUrl/js/noapi
+    // 回一段「VIP会员才能下载」的非 URL 文本，模拟接口拒绝。
+    final sample = VideoInfo(
+      id: 'NOAPI',
+      url: 'http://127.0.0.1:8899/vod/view/NOAPI',
+      title: '样片测试',
+    );
+    final detail = await core.getVideoDetail(sample);
+    expect(detail, isNotNull, reason: '接口失败不应让详情解析整条失败');
+    final url = detail!.m3u8Url ?? '';
+    expect(CrawlerConfig.isJiuseSampleUrl(url), isTrue,
+        reason: '取不到真实地址时保留原样片地址');
   });
 }
