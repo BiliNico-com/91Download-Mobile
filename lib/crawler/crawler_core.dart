@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -239,6 +240,13 @@ class CrawlerCore {
   bool get lastPaginationParsed => _lastPaginationParsed;
   bool _lastPaginationParsed = false;
 
+  /// 上一次 jiuse 列表解析出的 id 序列。
+  ///
+  /// jiuse 页面不渲染任何分页控件（分页块、page= 链接、下一页文本全为 0），
+  /// 只能靠「本页是否与上一页完全相同」来判断是否已经到底：站点在越界时
+  /// 有的会返回空列表，有的会原样回放最后一页，后者必须靠内容比对拦下。
+  String _lastJiuseSignature = '';
+
   /// 从列表页 HTML 判断是否还有下一页（双重保险策略）
   ///
   /// 优先级：
@@ -304,6 +312,29 @@ class CrawlerCore {
     final hasMore = itemCount >= CrawlerConfig.fallbackPageSize;
     _logPagination('未解析到分页控件，按条数兜底：$itemCount 条 → hasMore=$hasMore', hasMore);
     return hasMore;
+  }
+
+  /// 计算并写入本页的分页判断结果
+  ///
+  /// jiuse 走「条数 + 与上一页比对」的专用判据（该站没有分页控件），
+  /// 其余站点沿用 [_detectHasNextPage] 的通用策略。
+  void _applyPagination(String html, int page, List<VideoInfo> videos) {
+    if (_siteType == 'jiuse') {
+      final signature = videos.map((v) => v.id).join(',');
+      final hasMore = CrawlerConfig.jiusePageHasMore(
+        itemCount: videos.length,
+        page: page,
+        signature: signature,
+        lastSignature: _lastJiuseSignature,
+      );
+      _lastPaginationParsed = true;
+      _lastJiuseSignature = signature;
+      _lastRequestHasMore = hasMore;
+      _logPagination(
+          'jiuse 无分页控件，按条数与重复内容判断：${videos.length} 条', hasMore);
+      return;
+    }
+    _lastRequestHasMore = _detectHasNextPage(html, page, videos.length);
   }
 
   void _logPagination(String msg, bool hasMore) {
@@ -566,8 +597,8 @@ class CrawlerCore {
       // ✅ 关键调试日志：记录 URL 和解析结果的对应关系
       await logger.log('Crawler', '解析结果: URL=$urlWithCache -> ${videos.length} 个视频');
 
-      // 依据站点分页控件判断是否还有下一页（取代条数猜测）
-      _lastRequestHasMore = _detectHasNextPage(html, page, videos.length);
+      // 依据站点分页控件判断是否还有下一页（jiuse 无控件，走专用判据）
+      _applyPagination(html, page, videos);
 
       return videos;
       
@@ -577,6 +608,16 @@ class CrawlerCore {
       return [];
     }
   }
+
+  /// 供测试直接调用 jiuse 列表解析（解析器是私有的，测试在另一个 library）
+  @visibleForTesting
+  List<VideoInfo> parseJiuseListForTest(String html) =>
+      _parseVideoListJiuse(html);
+
+  /// 供测试直接调用分页判据（jiuse 无分页控件，走条数 + 重复内容比对）
+  @visibleForTesting
+  void applyPaginationForTest(String html, int page, List<VideoInfo> videos) =>
+      _applyPagination(html, page, videos);
 
   /// 解析 jiuse 站点（91porny / jiuse.icu）的视频列表
   ///
@@ -599,10 +640,11 @@ class CrawlerCore {
       if (hrefMatch == null) continue;
       final href = hrefMatch.group(1)!;
 
-      // 取详情 id 作为唯一键：/vod/view/SxeO -> SxeO
-      final idMatch = RegExp(r'/view/([A-Za-z0-9]+)').firstMatch(href);
-      if (idMatch == null) continue;
-      final id = idMatch.group(1)!;
+      // 取详情 id 作为唯一键：
+      //   /vod/view/SxeO                              -> SxeO
+      //   /videos/view/127663/410ed2e1f969cb2d3125/   -> 127663（取第一段）
+      final id = CrawlerConfig.jiuseVideoId(href);
+      if (id == null || id.isEmpty) continue;
       if (seenIds.contains(id)) continue;
       seenIds.add(id);
 
@@ -625,8 +667,9 @@ class CrawlerCore {
         r"""background-image:\s*url\(\s*['"]?([^)'"]+)""",
       ).firstMatch(card);
       if (coverMatch != null) {
-        final u = coverMatch.group(1)!.trim();
-        cover = u.startsWith('http') ? u : '$baseUrl$u';
+        // 封面有两种相对写法：//cdn.../1.jpg（协议相对）与 /static/1.jpg（站内相对），
+        // 早期统一 '$baseUrl$u' 会把协议相对地址拼成 https://host//cdn...
+        cover = CrawlerConfig.resolveJiuseAssetUrl(baseUrl, coverMatch.group(1)!);
       }
 
       // 时长：
@@ -641,13 +684,14 @@ class CrawlerCore {
       // 作者：作者: <a ...>名字</a> 或 作者: 名字
       String? author;
       String? authorId;
-      final authorLink = RegExp(
-        r'作者[:：]\s*<a[^>]*href="[^"]*/(?:author|dashen)/([^"?]+)"[^>]*>([^<]+)</a>',
-        caseSensitive: false,
-      ).firstMatch(card);
+      final authorLink =
+          CrawlerConfig.jiuseAuthorLinkPattern.firstMatch(card);
       if (authorLink != null) {
-        authorId = authorLink.group(1);
-        author = CrawlerConfig.stripInvisible(authorLink.group(2)!).trim();
+        // 站点有两套作者主页：/author/xxx 与 /dashen/xxx。
+        // 记住前缀，取作者视频时才能拼对路径（dashen 系拼成 /author/ 会 404）。
+        authorId = CrawlerConfig.jiuseAuthorId(
+            authorLink.group(1)!, authorLink.group(2)!);
+        author = CrawlerConfig.stripInvisible(authorLink.group(3)!).trim();
       } else {
         final plain = RegExp(r'作者[:：]\s*([^<\n\r]+)', caseSensitive: false)
             .firstMatch(card);
@@ -1192,8 +1236,8 @@ class CrawlerCore {
       
       await logger.log('Crawler', '搜索结果: ${videos.length} 个视频');
 
-      // 依据站点分页控件判断是否还有下一页（取代条数猜测）
-      _lastRequestHasMore = _detectHasNextPage(html, page, videos.length);
+      // 依据站点分页控件判断是否还有下一页（jiuse 无控件，走专用判据）
+      _applyPagination(html, page, videos);
 
       return videos;
     } catch (e) {
@@ -1211,6 +1255,10 @@ class CrawlerCore {
     if (_siteType == "porn91") {
       // porn91 风格
       url = '$baseUrl/search_result.php?search_id=${Uri.encodeComponent(keyword)}&search_type=author';
+    } else if (_siteType == "jiuse") {
+      // jiuse 没有独立的作者搜索接口：「搜索到用户」区块就在同一个
+      // /search?keywords=xxx 结果页里（排在视频区块之前）
+      url = CrawlerConfig.buildSearchUrl(baseUrl, _siteType, keyword);
     } else {
       // original 风格：使用 search.htm?search=xxx（和搜索视频一样的URL）
       url = '$baseUrl/search.htm?search=${Uri.encodeComponent(keyword)}';
@@ -1230,6 +1278,32 @@ class CrawlerCore {
       
       final authors = <AuthorInfo>[];
       final seenNames = <String>{};
+
+      // ---- jiuse：结果页里「搜索到用户」区块 ----
+      //
+      // 该站没有独立作者搜索接口，用户区块和视频区块在同一个 /search 页里。
+      // 用户链接带 badge class，视频卡片里的作者链接只有 text-dark，
+      // 按 badge 过滤即可只拿用户。
+      if (_siteType == "jiuse") {
+        for (final match
+            in CrawlerConfig.jiuseAuthorBadgePattern.allMatches(html)) {
+          final path = match.group(1)!;            // /author/Testgogogo
+          final authorParam = match.group(2)!.trim(); // Testgogogo
+          final namePart = (match.group(3) ?? '').trim();
+          final count = int.tryParse(match.group(4) ?? '0') ?? 0;
+          if (authorParam.isEmpty) continue;
+          if (seenNames.contains(authorParam)) continue;
+          seenNames.add(authorParam);
+          authors.add(AuthorInfo(
+            id: authorParam,
+            name: namePart.isNotEmpty ? namePart : authorParam,
+            videoCount: count,
+            profileUrl: '$baseUrl$path',
+          ));
+        }
+        await logger.log('Crawler', 'jiuse 作者搜索结果: ${authors.length} 个');
+        return authors;
+      }
       
       // 匹配作者链接
       // <a class="btn btn-default" href="user.htm?author=xxx">&nbsp;名字&nbsp;<span class="badge">数量</span></a>
@@ -1269,6 +1343,21 @@ class CrawlerCore {
     if (_siteType == "porn91") {
       // porn91 作者主页URL格式
       url = '$baseUrl/author.php?author=$authorId&page=$page';
+    } else if (_siteType == "jiuse") {
+      // jiuse 作者主页：/author/{id} 或 /dashen/{id}
+      //
+      // 站点有两套作者主页，解析卡片时把前缀记进 authorId（dashen/xxx），
+      // 这里原样拼路径即可；缺前缀的默认按 /author/ 处理。
+      //
+      // authorId 可能已是 URL 编码（%E9%85%92%E7%A5%9E）、也可能带尾随空格的
+      // 编码形式（%20），原样拼进路径即可，不能再编码一次。
+      final id = authorId.trim();
+      final path = id.startsWith('author/') || id.startsWith('dashen/')
+          ? id
+          : 'author/$id';
+      url = page <= 1
+          ? '$baseUrl/$path'
+          : '$baseUrl/$path?page=$page';
     } else {
       // original CMS - 分页格式：user-N.htm?author=xxx
       url = '$baseUrl/user-$page.htm?author=$authorId';
@@ -1291,12 +1380,16 @@ class CrawlerCore {
       List<VideoInfo> videos;
       if (_siteType == "porn91") {
         videos = _parseVideoListPorn91(html);
+      } else if (_siteType == "jiuse") {
+        // 作者主页与列表页是同一套 colVideoList 卡片，此前落到 original
+        // 解析器（找 video-item），必然 0 条
+        videos = _parseVideoListJiuse(html);
       } else {
         videos = _parseVideoListOriginal(html);
       }
 
-      // 依据站点分页控件判断是否还有下一页（取代条数猜测）
-      _lastRequestHasMore = _detectHasNextPage(html, page, videos.length);
+      // 依据站点分页控件判断是否还有下一页（jiuse 无控件，走专用判据）
+      _applyPagination(html, page, videos);
 
       return videos;
     } catch (e) {
