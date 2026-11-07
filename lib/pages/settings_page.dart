@@ -45,6 +45,28 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   static const String _cdnTestPath = '/hls/813941/index0.ts';
   bool _cdnTesting = false;
 
+  // ==================== 站点选择器状态 ====================
+
+  /// 站点列表是否展开（收起态只显示当前站点一行）
+  bool _siteExpanded = false;
+
+  /// 站点测速结果：host -> 延迟毫秒（-1 表示超时/不可达）
+  final Map<String, int> _siteLatency = {};
+  bool _siteTesting = false;
+
+  /// 站点测速探测路径：直接打根路径，只用来判断域名是否可达
+  static const String _siteTestPath = '/';
+
+  /// 站点家族的展示顺序
+  static const List<String> _siteFamilyOrder = ['porn91', 'jiuse', 'original'];
+
+  /// 站点家族的中文名，键取自 CrawlerConfig.siteTypes 的值
+  static const Map<String, String> _siteFamilyNames = {
+    'porn91': '91porn 系',
+    'jiuse': '九色系',
+    'original': '原创系',
+  };
+
   @override
   bool get wantKeepAlive => true;  // 保持状态
   
@@ -125,81 +147,421 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
   }
 
-  /// 1. 当前站点选择区域（折叠）
+  /// 1. 当前站点选择区域
+  ///
+  /// 收起态只占一行（站点徽标 + 域名 + 家族 + 实测延迟 + 切换），
+  /// 展开后按 CrawlerConfig.siteTypes 的家族分组列出全部预设站点，
+  /// 自定义站点单独沉底，避免 6 条带协议头的完整网址平铺糊成一片。
   Widget _buildSiteSection(AppState appState) {
+    final currentSite = appState.currentSite ?? '';
+    final currentHost = _siteHost(currentSite);
+    final family = appState.isSiteSelected
+        ? (_siteFamilyNames[appState.currentSiteType] ?? '自定义站点')
+        : '未选择';
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: true,  // 站点选择默认展开
-          leading: Icon(Icons.language, size: 20, color: Colors.blue),
-          title: Row(
-            children: [
-              Text('当前站点', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              if (!appState.isSiteSelected) ...[
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── 卡片头：标题 + 测速 ──
+          Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 12, 0),
+            child: Row(
+              children: [
+                Icon(Icons.language, size: 20, color: Colors.blue),
                 SizedBox(width: 8),
-                Container(
-                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text('请选择', style: TextStyle(color: Colors.orange, fontSize: 12)),
-                ),
-              ],
-            ],
-          ),
-          children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  DropdownButtonFormField<String>(
-                    // 每次构建都做一次存在性校验：DropdownButton 要求
-                    // 「与 value 相等的 item 恰好一个」，只要 value 不在列表里
-                    // （或列表里有两项同值），框架就会直接抛断言把页面刷成红屏。
-                    // 这里退而求其次：找不到就当作未选，让 hint 顶上去，
-                    // 至少页面能正常显示、用户还能重新选。
-                    value: appState.allSites.contains(appState.currentSite)
-                        ? appState.currentSite
-                        : null,
-                    hint: Text('请选择站点', style: TextStyle(color: Colors.grey)),
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                Text('当前站点',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                Spacer(),
+                if (_siteTesting)
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
-                    items: appState.allSites.map((site) {
-                      return DropdownMenuItem(
-                        value: site,
-                        child: Text(site),
-                      );
-                    }).toList(),
-                    onChanged: (site) async {
-                      if (site != null) {
-                        print('[Settings] 选择站点: $site');
-                        appState.changeSite(site);
-                        print('[Settings] 站点已切换, currentSite=${appState.currentSite}');
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('已切换到 $site')),
-                        );
-                      }
-                    },
+                  )
+                else
+                  TextButton.icon(
+                    onPressed: _testSiteLatency,
+                    icon: Icon(Icons.speed, size: 16),
+                    label: Text('测速', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: 10),
+                      minimumSize: Size(0, 34),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                   ),
-                  SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => _showAddCustomSiteDialog(appState),
-                    icon: Icon(Icons.add_link, size: 18),
-                    label: Text('手动输入网址'),
+              ],
+            ),
+          ),
+          // ── 收起态：当前站点一行 ──
+          InkWell(
+            onTap: _toggleSiteExpanded,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 14),
+              child: Row(
+                children: [
+                  _buildSiteAvatar(currentHost),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                currentHost.isEmpty ? '请选择站点' : currentHost,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            if (currentHost.isNotEmpty) ...[
+                              SizedBox(width: 8),
+                              _buildSiteTag(family),
+                            ],
+                          ],
+                        ),
+                        SizedBox(height: 3),
+                        // 副标题只放延迟：家族名已经在上一行的标签里，
+                        // 再重复一遍会显得拥挤。
+                        Row(
+                          children: [
+                            Text('延迟 ',
+                                style: TextStyle(
+                                    fontSize: 12, color: Colors.grey)),
+                            if (_siteLatency[currentHost] == null)
+                              Text('未测速',
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.grey))
+                            else
+                              Text(
+                                _siteLatencyText(_siteLatency[currentHost]!),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: _siteLatencyColor(
+                                      _siteLatency[currentHost]!),
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures()
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  TextButton(
+                    onPressed: _toggleSiteExpanded,
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      minimumSize: Size(0, 34),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_siteExpanded ? '收起' : '切换',
+                            style: TextStyle(fontSize: 13)),
+                        Icon(_siteExpanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down, size: 18),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
+          ),
+          // ── 展开态：按家族分组的站点列表 ──
+          if (_siteExpanded) ...[
+            Divider(height: 1),
+            ..._buildSiteGroups(appState),
+            // 手动输入网址：虚线入口，不与预设站点并列
+            InkWell(
+              onTap: () => _showAddCustomSiteDialog(appState),
+              child: Container(
+                margin: EdgeInsets.fromLTRB(16, 6, 16, 0),
+                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: Colors.grey.shade300),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.add_link, size: 18, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('手动输入网址',
+                        style: TextStyle(fontSize: 14, color: Colors.blue)),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 14),
+              child: Text(
+                '延迟为直连该域名的 HEAD 往返耗时，超时代表当前网络不可达；'
+                '切换到同家族的其他域名不会改变站点内容。',
+                style: TextStyle(fontSize: 11, color: Colors.grey, height: 1.6),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 展开/收起站点列表；首次展开时自动测一次延迟
+  void _toggleSiteExpanded() {
+    setState(() => _siteExpanded = !_siteExpanded);
+    if (_siteExpanded && _siteLatency.isEmpty && !_siteTesting) {
+      _testSiteLatency();
+    }
+  }
+
+
+  /// 按站点家族分组生成选项列表（预设站在前，自定义站沉底）
+  List<Widget> _buildSiteGroups(AppState appState) {
+    final widgets = <Widget>[];
+    for (final family in _siteFamilyOrder) {
+      final sites = CrawlerConfig.availableSites
+          .where((s) => CrawlerConfig.detectSiteType(s) == family)
+          .toList();
+      if (sites.isEmpty) continue;
+      widgets.add(_buildSiteGroupLabel(_siteFamilyNames[family] ?? family));
+      for (var i = 0; i < sites.length; i++) {
+        widgets
+            .add(_buildSiteOption(appState, sites[i], i == 0 ? '主站' : '备用'));
+      }
+    }
+    final custom = appState.customSites
+        .where((s) => !CrawlerConfig.availableSites.contains(s))
+        .toList();
+    if (custom.isNotEmpty) {
+      widgets.add(_buildSiteGroupLabel('自定义站点'));
+      for (final site in custom) {
+        widgets.add(_buildSiteOption(appState, site, '自定义'));
+      }
+    }
+    return widgets;
+  }
+
+  Widget _buildSiteGroupLabel(String text) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, 14, 16, 4),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.6,
+          color: Colors.grey,
+        ),
+      ),
+    );
+  }
+
+  /// 单个站点选项：单选圆点 + 域名 + 角色标签 + 延迟
+  Widget _buildSiteOption(AppState appState, String site, String roleTag) {
+    final selected = appState.currentSite == site;
+    final host = _siteHost(site);
+    final accent = Theme.of(context).colorScheme.primary;
+    return InkWell(
+      onTap: () {
+        if (selected) return;
+        appState.changeSite(site);
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(
+            content: Text('已切换到 $host'),
+            duration: Duration(seconds: 2),
+          ));
+      },
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        child: Row(
+          children: [
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              size: 20,
+              color: selected ? accent : Colors.grey.shade400,
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      host,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight:
+                            selected ? FontWeight.w600 : FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  _buildSiteTag(roleTag),
+                  if (_isFastestSite(host)) ...[
+                    SizedBox(width: 6),
+                    _buildSiteTag('最快', color: Colors.green),
+                  ],
+                ],
+              ),
+            ),
+            _buildSiteLatency(host),
           ],
         ),
       ),
     );
+  }
+
+  /// 站点徽标：取域名首段的前两个字符
+  Widget _buildSiteAvatar(String host) {
+    var label = host.isEmpty ? '?' : host.split('.').first.toUpperCase();
+    if (label.length > 2) label = label.substring(0, 2);
+    return Container(
+      width: 42,
+      height: 42,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(13),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1565C0), Color(0xFF42A5F5)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+            color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  /// 该站点是否为当前实测最快的可达站点
+  bool _isFastestSite(String host) {
+    final ms = _siteLatency[host];
+    if (ms == null || ms < 0) return false;
+    return ms == _fastestSiteLatency;
+  }
+
+  /// 角色小标签（主站/备用/自定义/最快）
+  Widget _buildSiteTag(String text, {Color? color}) {
+    final c = color ?? Colors.grey.shade700;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: c.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 10.5, color: c, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  /// 当前最快可达站点的延迟（用于相对分档），无数据返回 null
+  int? get _fastestSiteLatency {
+    final values = _siteLatency.values.where((v) => v >= 0);
+    if (values.isEmpty) return null;
+    return values.reduce((a, b) => a < b ? a : b);
+  }
+
+  /// 延迟分档配色
+  ///
+  /// 绝对阈值在不同网络下没有可比性（模拟器普遍 2s 以上、真机常见 100~500ms），
+  /// 所以按「相对当前最快站点」分档：1.5 倍内绿、3 倍内橙、更慢红，超时直接红。
+  Color _siteLatencyColor(int ms) {
+    if (ms < 0) return Colors.red;
+    final fastest = _fastestSiteLatency;
+    if (fastest == null || fastest <= 0) return Colors.grey;
+    if (ms <= fastest * 1.5) return Colors.green;
+    if (ms <= fastest * 3) return Colors.orange;
+    return Colors.red;
+  }
+
+  /// 延迟展示文本
+  String _siteLatencyText(int ms) => ms < 0 ? '超时' : '${ms}ms';
+
+  /// 站点延迟文本
+  Widget _buildSiteLatency(String host) {
+    final ms = _siteLatency[host];
+    if (ms == null) return SizedBox.shrink();
+    return Text(
+      _siteLatencyText(ms),
+      style: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        color: _siteLatencyColor(ms),
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+  }
+
+  /// 去掉协议前缀取主机名（用于展示与测速）
+  String _siteHost(String site) {
+    if (site.isEmpty) return '';
+    final uri = Uri.tryParse(site);
+    if (uri != null && uri.host.isNotEmpty) {
+      return uri.host.replaceAll('www.', '');
+    }
+    return site.replaceFirst(RegExp(r'^https?://'), '').replaceAll('/', '');
+  }
+
+  /// 并发探测所有站点的可达性与延迟
+  ///
+  /// 与播放节点测速同一套判定：HEAD 站点根路径，只要拿到响应
+  /// （403/404 也算）就认为该域名可达，只有连不上/超时才记 -1。
+  Future<void> _testSiteLatency() async {
+    if (_siteTesting) return;
+    final appState = context.read<AppState>();
+    final hosts = appState.allSites
+        .map(_siteHost)
+        .where((h) => h.isNotEmpty)
+        .toSet()
+        .toList();
+    setState(() {
+      _siteTesting = true;
+      _siteLatency.clear();
+    });
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: Duration(milliseconds: 3000),
+        receiveTimeout: Duration(milliseconds: 3000),
+      ),
+    );
+    await Future.wait(hosts.map((host) async {
+      final sw = Stopwatch()..start();
+      int ms;
+      try {
+        await dio.head<void>('https://$host$_siteTestPath');
+        ms = sw.elapsedMilliseconds;
+      } on DioException catch (e) {
+        ms = e.response != null ? sw.elapsedMilliseconds : -1;
+      } catch (_) {
+        ms = -1;
+      }
+      sw.stop();
+      if (!mounted) return;
+      setState(() => _siteLatency[host] = ms);
+    }));
+    if (mounted) setState(() => _siteTesting = false);
   }
 
   /// 手动输入自定义站点网址
