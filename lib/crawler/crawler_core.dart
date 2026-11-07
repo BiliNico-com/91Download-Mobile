@@ -612,7 +612,10 @@ class CrawlerCore {
       final titleMatch = CrawlerConfig.titlePattern.firstMatch(wellContent);
       if (titleMatch == null) continue;
       
-      final title = titleMatch.group(1)!.trim();
+      // 站点把标题逐字拆开并插入变体选择符（U+FE00~U+FE0F），
+      // 这些字符没有字形但占位，不剔除的话界面上看着就是字间多了空格。
+      final title = CrawlerConfig.stripInvisible(titleMatch.group(1)!).trim();
+      if (title.isEmpty) continue;
       
       // 提取作者（尝试多种格式）
       String? author;
@@ -630,6 +633,19 @@ class CrawlerCore {
           author = linkMatch.group(2)?.trim();
         }
       }
+
+      // 格式2b: <span class="info">From:</span> 后紧跟作者名。
+      // 91porn 卡片里作者的写法是 From:，不是「作者：」，
+      // 只认中文标签会漏掉一半视频的作者。
+      if (author == null || author.isEmpty) {
+        final fromMatch = RegExp(
+          r'From[：:]\s*</span>\s*([^<\n\r]+)',
+          caseSensitive: false,
+        ).firstMatch(wellContent);
+        if (fromMatch != null) {
+          author = fromMatch.group(1)?.trim();
+        }
+      }
       
       // 格式3: 作者：xxx（直接文本，跳过HTML标签）
       if (author == null || author.isEmpty) {
@@ -645,6 +661,9 @@ class CrawlerCore {
         author = author.replaceAll(CrawlerConfig.htmlTagPattern, '');
         author = author.replaceAll('&nbsp;', '');
         author = author.replaceAll(CrawlerConfig.htmlEntityPattern, '');
+        // 作者名和标题一样被塞了变体选择符，必须一并剔除；
+        // 放在 whitespacePattern 之前，否则这些字符会被当成空白折叠成空格。
+        author = CrawlerConfig.stripInvisible(author);
         author = author.replaceAll(CrawlerConfig.whitespacePattern, ' ').trim();
         if (author.isEmpty) author = null;
       }

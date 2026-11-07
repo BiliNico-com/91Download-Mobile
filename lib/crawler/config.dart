@@ -247,6 +247,28 @@ class CrawlerConfig {
     return nodesFor(siteType).first;
   }
 
+
+  // ==================== 文本净化 ====================
+
+  /// 页面里夹在汉字中间的隐形字符（变体选择符 / 零宽字符）。
+  ///
+  /// 91porn 一类站点会把标题和作者逐字拆开、在字与字之间插入
+  /// U+FE00~U+FE0F 这类「变体选择符」做反爬/指纹混淆。这些字符没有字形，
+  /// 但会占一个位置，界面上看就是标题、作者名里凭空多出空格或缝隙，
+  /// 例如「北︀︁︃︃︀︂︀︃︀︁︃︂京」实际应显示为「北京」。
+  /// 渲染前统一剔除，标题和作者都要过一遍。
+  static final RegExp invisibleCharsPattern = RegExp(
+    r'[\uFE00-\uFE0F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u00AD\uFEFF]',
+  );
+
+  /// 剔除隐形字符并压缩连续空白
+  ///
+  /// 只处理「看得见但没内容」的字符，不会动正常的全角/半角空格和换行，
+  /// 所以原本就带空格的英文标题不会被改写坏。
+  static String stripInvisible(String input) {
+    if (input.isEmpty) return input;
+    return input.replaceAll(invisibleCharsPattern, '');
+  }
   // ==================== 正则表达式 ====================
   
   /// 视频容器匹配（col-lg-3 内的 well-sm）- porn91 专用
@@ -285,7 +307,8 @@ class CrawlerConfig {
   /// - <span>作者</span>：xxx
   /// ✅ 修复：跳过作者冒号后的HTML标签（如</span>），正确捕获作者名
   static final RegExp authorPattern = RegExp(
-    r'作者[：:]\s*(?:</?[^>]+>\s*)*([^<\n\r]+)',
+    r'(?:作者|From)[：:]\s*(?:</?[^>]+>\s*)*([^<\n\r]+)',
+    caseSensitive: false,
   );
   
   /// 作者提取 - original 风格
