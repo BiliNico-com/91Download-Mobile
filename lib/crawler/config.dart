@@ -1,6 +1,36 @@
 /// 爬虫核心配置
 /// 严格参照 Python 版本 _src/lib/__init__.py
 
+import 'dart:convert';
+import 'dart:typed_data';
+
+/// porn91 播放页解密出来的真实信息
+class Porn91Secret {
+  final String? title;
+  final String? author;
+  final String? duration;
+  const Porn91Secret({this.title, this.author, this.duration});
+
+  bool get isEmpty =>
+      (title == null || title!.isEmpty) &&
+      (author == null || author!.isEmpty);
+}
+
+/// 一条视频 CDN 播放线路。
+///
+/// [host] 为空表示「自动」——不改写站点下发的地址。
+class CdnNode {
+  final String name;
+  final String host;
+  const CdnNode({required this.name, required this.host});
+
+  /// 下拉框用：只有 host 非空时标识才是唯一的
+  String get value => host;
+
+  @override
+  String toString() => host.isEmpty ? name : '$name ($host)';
+}
+
 class CrawlerConfig {
   // ==================== 站点类型配置 ====================
   
@@ -9,6 +39,8 @@ class CrawlerConfig {
   /// "porn91": 91porn 风格 CMS（v.php?next=watch 格式）
   static const Map<String, String> siteTypes = {
     "91porn.com": "porn91",
+    "91porny.com": "jiuse",
+    "jiuse.icu": "jiuse",
     "ml0987.xyz": "original",
     "hsex.icu": "original",
     "hsex.men": "original",
@@ -74,18 +106,45 @@ class CrawlerConfig {
     "收藏最多": "mf",
   };
   
+  /// jiuse 站点（91porny / jiuse.icu）的列表路径
+  ///
+  /// 这套站用的是 9scdn/static 前端，路径是干净的 REST 风格：
+  ///   /video  普通视频列表，分页参数是 ?page=N
+  ///   /videos 蝌蚪，/vod 精品（同一套卡片结构）
+  static const Map<String, String> listTypesJiuse = {
+    "list": "video",
+    "videos": "videos",
+    "vod": "vod",
+  };
+
+  /// jiuse 中文名映射
+  static const Map<String, String> listTypeAliasesJiuse = {
+    "视频": "list",
+    "蝌蚪": "videos",
+    "精品": "vod",
+  };
+
   /// 获取列表类型映射（根据站点类型）
   static Map<String, String> getListTypes(String siteType) {
+    if (siteType == "jiuse") return listTypesJiuse;
     return siteType == "porn91" ? listTypesV2 : listTypesOriginal;
   }
   
   /// 获取中文名映射（根据站点类型）
   static Map<String, String> getListTypeAliases(String siteType) {
+    if (siteType == "jiuse") return listTypeAliasesJiuse;
     return siteType == "porn91" ? listTypeAliasesV2 : listTypeAliasesOriginal;
   }
   
   /// 构建搜索URL
   static String buildSearchUrl(String baseUrl, String siteType, String keyword, {int page = 1, String sort = "default"}) {
+    if (siteType == "jiuse") {
+      // jiuse 是 GET 表单：/search?keywords=xxx（分页用 &page=N）
+      final kw = Uri.encodeComponent(keyword);
+      return page <= 1
+          ? "$baseUrl/search?keywords=$kw"
+          : "$baseUrl/search?keywords=$kw&page=$page";
+    }
     if (siteType == "porn91") {
       // porn91 风格搜索 URL（支持分页）
       // URL格式: search_result.php?search_id=xxx&search_type=search_videos&min_duration=&page=N
@@ -156,6 +215,8 @@ class CrawlerConfig {
   
   static const List<String> availableSites = [
     "https://91porn.com",
+    "https://91porny.com",
+    "https://jiuse.icu",
     "https://ml0987.xyz",
     "https://hsex.icu",
     "https://hsex.men",
@@ -164,8 +225,210 @@ class CrawlerConfig {
   /// 图片 CDN 域名（仅 porn91 使用）
   static const String imgCdnUrl = "https://1729130453.rsc.cdn77.org";
 
+  /// 已知的广告片 ID。
+  ///
+  /// 91porn 播放页的 <source> 常常直接就是这条广告，
+  /// 真实地址藏在 strencode2 里，必须避开。
+  static const List<String> knownAdVideoIds = ['358999'];
+
+  // ==================== 播放节点（视频 CDN 线路）====================
+
+  // ---- 两套节点必须分开：porn91 和 original 用的是完全不同的 CDN ----
+  //
+  // porn91（91porn.com）：la.btc620.com / *.rsc.cdn77.org / cns.killcovid2021.com
+  //   来自站点 /speed.php「选择速度最快的视频服务器」页。
+  // original（hdcdn 系站点）：cdn/shark/fdc/shark-v6 .hdcdn.store
+  //   来自站点播放页「切换播放节点」（/static/js/fastest_cdn.js）。
+  //
+  // 两者域名互不相通，混用会 100% 下不动，所以各存各的配置项、
+  // 各用各的 host 白名单。
+
+  /// porn91 的视频服务器（对应站点 /speed.php 的服务器 A / H / I）
+  ///
+  /// 站点切换方式是 POST speed.php 提交 video_server=A|H|I，由服务端会话记住。
+  /// 其中 H、I 标注为「VIP 用户使用」，非会员只能在页面上看到但不能选；
+  /// 不过实测把域名直接换成 I 仍可正常拉流（H 需要 secure 签名，会 403），
+  /// 所以这里把三条都列出来，由用户自己按测速结果选择。
+  static const List<CdnNode> porn91Nodes = [
+    CdnNode(name: '自动（跟随站点）', host: ''),
+    CdnNode(name: '服务器 A（默认）', host: 'la.btc620.com'),
+    CdnNode(name: '服务器 H（VIP）', host: '1470423830.rsc.cdn77.org'),
+    CdnNode(name: '服务器 I（VIP）', host: 'cns.killcovid2021.com'),
+  ];
+
+  /// porn91 站点自带服务器域名集合（用于判断该不该改写）
+  static const Set<String> porn91Hosts = {
+    'la.btc620.com',
+    '1470423830.rsc.cdn77.org',
+    'cns.killcovid2021.com',
+  };
+
+  /// original 站点的 CDN 线路（播放页「切换播放节点」）
+  ///
+  /// 站点实现只做 url.hostname = host，路径 / token / 查询参数全部原样保留。
+  static const List<CdnNode> originalNodes = [
+    CdnNode(name: '自动（跟随站点）', host: ''),
+    CdnNode(name: '线路 1（默认）', host: 'cdn.hdcdn.store'),
+    CdnNode(name: '线路 2（Shark）', host: 'shark.hdcdn.store'),
+    CdnNode(name: '线路 3（FDC）', host: 'fdc.hdcdn.store'),
+    CdnNode(name: '线路 4（IPv6-SK）', host: 'shark-v6.hdcdn.store'),
+  ];
+
+  /// original 站点自带 CDN 域名集合
+  static const Set<String> originalHosts = {
+    'cdn.hdcdn.store',
+    'shark.hdcdn.store',
+    'fdc.hdcdn.store',
+    'shark-v6.hdcdn.store',
+  };
+
+  /// 按站点类型取节点列表
+  static List<CdnNode> nodesFor(String siteType) =>
+      siteType == 'porn91' ? porn91Nodes : originalNodes;
+
+  /// 按站点类型取「可改写域名」白名单
+  static Set<String> hostsFor(String siteType) =>
+      siteType == 'porn91' ? porn91Hosts : originalHosts;
+
+  /// 按站点类型 + host 找线路，找不到返回「自动」
+  static CdnNode nodeByHost(String siteType, String? host) {
+    for (final n in nodesFor(siteType)) {
+      if (n.host == (host ?? '')) return n;
+    }
+    return nodesFor(siteType).first;
+  }
+
+  // ==================== porn91 标题/作者解密 ====================
+
+  /// 解密站点藏在 `<i id="xd..." data-XXX="...">` 里的真实标题/作者。
+  ///
+  /// 91porn 的播放页会把真实标题、作者、时长加密后塞在一个隐藏的 <i> 标签里，
+  /// 页面上可见的文本只是掺了大量变体选择符的占位符；真实值要等 JS 在
+  /// 「随机 2~6 秒后」或「用户第一次滚动/点击/按键」时才替换进 DOM。
+  /// 纯 HTTP 抓取永远等不到那一刻，所以必须自己解密，否则拿到的标题和作者
+  /// 都是带隐形字符的假值。
+  ///
+  /// 算法（对应页面内联脚本的 dec 函数）：
+  ///   base64 解码 → 与密钥逐字节异或 → UTF-8 解码
+  /// 密钥（k）和值代码（m）都写在同一个 <script> 里。
+  static Porn91Secret? decodePorn91Secret(String html) {
+    try {
+      // 隐藏节点：<i id="xdXXXX" data-PREFIX="..." data-PREFIXu="..." data-PREFIXd="...">
+      final node = RegExp(
+        r'<i[^>]*id="xd[0-9a-z]+"([^>]*)>',
+        caseSensitive: false,
+      ).firstMatch(html);
+      if (node == null) return null;
+
+      final attrs = <String, String>{};
+      for (final m in RegExp(r'(data-[0-9a-z]+)="([^"]*)"')
+          .allMatches(node.group(1)!)) {
+        attrs[m.group(1)!] = m.group(2)!;
+      }
+
+      // 密钥与模式取自同页脚本：var m=0,...,k="5071dad6";
+      final keyMatch = RegExp(r'k="([0-9a-fA-F]+)"').firstMatch(html);
+      final modeMatch = RegExp(r'var\s+m=(\d+)').firstMatch(html);
+      if (keyMatch == null) return null;
+      final key = keyMatch.group(1)!;
+      final mode = int.tryParse(modeMatch?.group(1) ?? '0') ?? 0;
+
+      // data-PREFIX 是标题，后缀 u 是作者，后缀 d 是时长（秒）
+      String? title;
+      String? author;
+      String? duration;
+      for (final entry in attrs.entries) {
+        final k = entry.key;
+        if (!k.startsWith('data-')) continue;
+        if (k.endsWith('u')) {
+          author ??= _decryptPorn91(entry.value, key, mode);
+        } else if (k.endsWith('d')) {
+          final secs = int.tryParse(
+              _decryptPorn91(entry.value, key, mode) ?? '');
+          if (secs != null && secs > 0) {
+            duration = '${(secs ~/ 3600).toString().padLeft(2, '0')}:'
+                '${((secs ~/ 60) % 60).toString().padLeft(2, '0')}:'
+                '${(secs % 60).toString().padLeft(2, '0')}';
+          }
+        } else {
+          title ??= _decryptPorn91(entry.value, key, mode);
+        }
+      }
+
+      if (title == null && author == null) return null;
+      return Porn91Secret(title: title, author: author, duration: duration);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 单个字段的解密：base64 → 异或 → UTF-8
+  static String? _decryptPorn91(String value, String key, int mode) {
+    if (value.isEmpty) return null;
+    var s = value;
+    // 与页面脚本保持一致：reverse 模式先把串倒过来再 base64 解码
+    if (mode == 2) s = s.split('').reversed.join();
+    final bytes = base64Decode(s);
+    final keyBytes = key.codeUnits;
+    final out = Uint8List(bytes.length);
+    for (var i = 0; i < bytes.length; i++) {
+      out[i] = bytes[i] ^ keyBytes[i % keyBytes.length];
+    }
+    var text = utf8.decode(out, allowMalformed: true);
+    if (mode == 4) text = text.split('').reversed.join();
+    return stripInvisible(text).trim();
+  }
+
+  // ==================== 文本净化 ====================
+
+  /// 页面里夹在汉字中间的隐形字符（变体选择符 / 零宽字符）。
+  ///
+  /// 91porn 一类站点会把标题和作者逐字拆开、在字与字之间插入
+  /// U+FE00~U+FE0F 这类「变体选择符」做反爬/指纹混淆。这些字符没有字形，
+  /// 但会占一个位置，界面上看就是标题、作者名里凭空多出空格或缝隙，
+  /// 例如「北︀︁︃︃︀︂︀︃︀︁︃︂京」实际应显示为「北京」。
+  /// 渲染前统一剔除，标题和作者都要过一遍。
+  static final RegExp invisibleCharsPattern = RegExp(
+    r'[\uFE00-\uFE0F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u00AD\uFEFF]',
+  );
+
+  /// 剔除隐形字符并压缩连续空白
+  ///
+  /// 只处理「看得见但没内容」的字符，不会动正常的全角/半角空格和换行，
+  /// 所以原本就带空格的英文标题不会被改写坏。
+  static String stripInvisible(String input) {
+    if (input.isEmpty) return input;
+    return input.replaceAll(invisibleCharsPattern, '');
+  }
+
   // ==================== 正则表达式 ====================
   
+  // ---- jiuse 站点（91porny / jiuse.icu）----
+  //
+  // 卡片结构（9scdn 前端）：
+  //   <div class="colVideoList"><div class="video-elem">
+  //     <a class="display" href="/vod/view/SxeO">
+  //       <div class="img" style="background-image: url('...')"></div>
+  //       <small class="layer">00:22:08</small>
+  //     </a>
+  //     <a class="title ..." href="/vod/view/SxeO">标题</a>
+  //     <small>... 作者: <a href="/author/xxx">名字</a> ... 日期 | N次播放 ...</small>
+  //   </div></div>
+  //
+  // 注意卡片区里还混着整段是外链的广告（href 指向站外），必须按 URL 过滤。
+
+  /// jiuse 视频卡片容器
+  static final RegExp jiuseCardPattern = RegExp(
+    r'<div[^>]*class="[^"]*colVideoList[^"]*"[^>]*>([\s\S]*?)</div>\s*</div>',
+    caseSensitive: false,
+  );
+
+  /// jiuse 视频详情路径（站内才算，排除广告外链）
+  static final RegExp jiuseVideoHrefPattern = RegExp(
+    r'href="(/(?:vod|video|v)/view/[A-Za-z0-9]+)"',
+    caseSensitive: false,
+  );
+
   /// 视频容器匹配（col-lg-3 内的 well-sm）- porn91 专用
   static final RegExp containerPattern = RegExp(
     r'<div[^>]*class="[^"]*col-lg-3[^"]*"[^>]*>\s*<div[^>]*class="[^"]*well[^"]*well-sm[^"]*"',
@@ -202,7 +465,8 @@ class CrawlerConfig {
   /// - <span>作者</span>：xxx
   /// ✅ 修复：跳过作者冒号后的HTML标签（如</span>），正确捕获作者名
   static final RegExp authorPattern = RegExp(
-    r'作者[：:]\s*(?:</?[^>]+>\s*)*([^<\n\r]+)',
+    r'(?:作者|From)[：:]\s*(?:</?[^>]+>\s*)*([^<\n\r]+)',
+    caseSensitive: false,
   );
   
   /// 作者提取 - original 风格

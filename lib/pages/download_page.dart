@@ -722,18 +722,34 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
               ),
             
             // 进度条
-            if (task.status == DownloadStatus.downloading) ...[
+            // 只要这条任务有过进度，就一直显示进度条：下载中、已暂停、
+            // 排队等待中都要保留。以前只在 downloading 时渲染，
+            // 一按暂停（状态变 paused）或任务因并发上限转入等待（pending），
+            // 整块 UI 会瞬间消失——用户看到的就是「进度条丢了」，
+            // 连已经下到百分之多少都无从得知。
+            if (task.status == DownloadStatus.downloading ||
+                ((task.status == DownloadStatus.paused ||
+                        task.status == DownloadStatus.pending) &&
+                    task.progress > 0)) ...[
               SizedBox(height: 8),
-              LinearProgressIndicator(value: task.progress),
+              LinearProgressIndicator(
+                value: task.progress,
+                // 非下载中的状态用弱化配色，和「正在跑」区分开
+                valueColor: task.status == DownloadStatus.downloading
+                    ? null
+                    : AlwaysStoppedAnimation<Color>(Colors.grey.shade400),
+              ),
               SizedBox(height: 4),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // 仅显示切片进度（如「下载中 13/120」）
+                  // 百分比常驻：暂停/等待时 progressText 会变成「已暂停」
+                  // 「等待中」，只剩一个停住的进度条看不出下到了多少。
                   Text(
-                    task.progressText.isNotEmpty
-                        ? task.progressText
-                        : '${(task.progress * 100).toStringAsFixed(0)}%',
+                    [
+                      '${(task.progress * 100).toStringAsFixed(1)}%',
+                      if (task.progressText.isNotEmpty) task.progressText,
+                    ].join('  '),
                     style: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                   // 速度只在此处展示一次，避免与上方文本重复

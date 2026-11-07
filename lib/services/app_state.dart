@@ -92,6 +92,14 @@ class AppState extends ChangeNotifier {
   // 视频显示模式: 'grid' 大图模式, 'list' 列表模式
   String videoDisplayMode = 'grid';
 
+  // 播放节点（视频 CDN 线路）域名，空串 = 自动跟随站点。
+  //
+  // porn91 与 original 是两套完全不同的 CDN，必须分开存：
+  // 混在一起会导致「在 A 站点选了节点，切到 B 站点后地址被改成不存在的域名」。
+  String cdnHost = '';        // 当前站点类型正在用的节点
+  String _cdnHostPorn91 = ''; // porn91 单独记住的选择
+  String _cdnHostOriginal = ''; // original 单独记住的选择
+
   // 在线播放模式（实验性功能）
   bool streamingMode = false;
 
@@ -160,6 +168,7 @@ class AppState extends ChangeNotifier {
 
     _crawler!.saveDebugHtml = saveDebugHtml;
     _crawler!.maxConcurrentDownloads = maxConcurrentSegments;
+    _crawler!.cdnHost = cdnHost;
     _downloadManager.maxConcurrentTasks = maxConcurrentTasks;
     _downloadManager.maxConcurrentSegments = maxConcurrentSegments;
 
@@ -343,9 +352,43 @@ class AppState extends ChangeNotifier {
       currentSite = null;  // 空串兜底为未选择，避免下拉框断言崩溃
     }
     customSites = prefs.getStringList('customSites') ?? [];
+    // 兼容老版本数据：老代码从没把 customSites 写进 SharedPreferences，
+    // 于是升级上来的用户这里读到的永远是空列表，而 currentSite 却可能是
+    // 一个自定义站点。此时下拉框的 value 不在 items 里，界面直接红屏
+    // （DropdownButton 的 'There should be exactly one item with value' 断言）。
+    // 这里把当前站点补进列表，既修好下拉框，也把用户的选择保住。
+    final savedSite = currentSite;
+    if (savedSite != null &&
+        savedSite.isNotEmpty &&
+        !CrawlerConfig.availableSites.contains(savedSite) &&
+        !customSites.contains(savedSite)) {
+      customSites = [...customSites, savedSite];
+      Logger().logSync('AppState', '已把当前站点补回自定义站点列表: $savedSite');
+    }
     themeMode = prefs.getInt('themeMode') ?? ThemeModeType.dark.value;
     _isDarkMode = prefs.getBool('isDarkMode') ?? true;
     videoDisplayMode = prefs.getString('videoDisplayMode') ?? 'grid';
+    // 播放节点：porn91 与 original 各存各的，互相不覆盖。
+    final p91 = prefs.getString('cdnHostPorn91') ?? '';
+    _cdnHostPorn91 = p91.isEmpty || CrawlerConfig.porn91Hosts.contains(p91)
+        ? p91
+        : '';
+    final ori = prefs.getString('cdnHostOriginal') ?? '';
+    _cdnHostOriginal = ori.isEmpty || CrawlerConfig.originalHosts.contains(ori)
+        ? ori
+        : '';
+    // 老版本只存过一个 cdnHost，按当前站点类型回填到对应槽位。
+    final legacy = prefs.getString('cdnHost') ?? '';
+    if (legacy.isNotEmpty) {
+      if (CrawlerConfig.porn91Hosts.contains(legacy) &&
+          _cdnHostPorn91.isEmpty) {
+        _cdnHostPorn91 = legacy;
+      } else if (CrawlerConfig.originalHosts.contains(legacy) &&
+          _cdnHostOriginal.isEmpty) {
+        _cdnHostOriginal = legacy;
+      }
+    }
+    cdnHost = _cdnHostForType(_currentSiteType);
     streamingMode = prefs.getBool('streamingMode') ?? false;
     showBackToTop = prefs.getBool('showBackToTop') ?? true;
     backToTopPosition = prefs.getString('backToTopPosition') ?? 'right';
@@ -375,6 +418,9 @@ class AppState extends ChangeNotifier {
       prefs.setInt('themeMode', themeMode),
       prefs.setBool('isDarkMode', _isDarkMode),
       prefs.setString('videoDisplayMode', videoDisplayMode),
+      // 两套节点分开持久化，切换站点时不会互相覆盖
+      prefs.setString('cdnHostPorn91', _cdnHostPorn91),
+      prefs.setString('cdnHostOriginal', _cdnHostOriginal),
       prefs.setBool('streamingMode', streamingMode),
       prefs.setBool('showBackToTop', showBackToTop),
       prefs.setString('backToTopPosition', backToTopPosition),
@@ -387,6 +433,11 @@ class AppState extends ChangeNotifier {
       // 下载目录必须持久化：此前它不在键列表里，
       // 用户改完目录一重启就回退到默认路径，下载继续写旧目录。
       prefs.setString('downloadDir', downloadDir),
+      // 自定义站点同样必须持久化。此前只写进了外部备份文件
+      // （settings_backup.json），SharedPreferences 里始终没有这一项：
+      // 重启后 customSites 变空、currentSite 却还留着那个自定义网址，
+      // allSites 里找不到它 → 设置页 DropdownButton 断言崩溃。
+      prefs.setStringList('customSites', customSites),
     ]);
 
     // 同步一份到下载目录，卸载重装后可恢复（SharedPreferences 会随卸载清空）
@@ -532,7 +583,12 @@ class AppState extends ChangeNotifier {
   bool get isSiteSelected => currentSite != null && currentSite!.isNotEmpty;
 
   // 所有可选站点（预设 + 自定义）
-  List<String> get allSites => [...CrawlerConfig.availableSites, ...customSites];
+  //
+  // 必须去重：DropdownButton 要求 items 中与 value 相等的项**恰好一个**。
+  // 用户把某个预设站点手动加进自定义列表、或早期版本重复写入过，
+  // 都会出现两项同值，界面同样会红屏。用 LinkedHashSet 保序去重。
+  List<String> get allSites =>
+      {...CrawlerConfig.availableSites, ...customSites}.toList();
 
   // 手动添加自定义站点（URL 规范化、去重、持久化并切换到该站点）
   // 返回规范化后的 URL；失败返回 null
@@ -550,6 +606,9 @@ class AppState extends ChangeNotifier {
     if (!alreadyPreset && !customSites.contains(normalized)) {
       customSites.add(normalized);
     }
+    // 兜底清重：历史版本可能已经把预设站点重复塞进 customSites，
+    // 不清掉的话下拉框里会出现两条相同 value，触发同样的断言。
+    customSites = customSites.toSet().toList();
     await _saveSettings();
     changeSite(normalized);
     return normalized;
@@ -558,8 +617,12 @@ class AppState extends ChangeNotifier {
   // 切换站点
   void changeSite(String site) {
     currentSite = site;
+    // 两套节点互不相通：换站点后立刻切回该站点类型自己记住的那条线路，
+    // 否则会把另一套的域名套到这家站点上，导致视频地址一律解析失败。
+    cdnHost = _cdnHostForType(CrawlerConfig.detectSiteType(site));
     if (_crawler != null) {
       _crawler!.changeSite(site);
+      _crawler!.cdnHost = cdnHost;
     } else {
       _crawler = null; // 强制下次访问时重新创建
     }
@@ -754,6 +817,49 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
   
+  /// 当前站点类型（未选站点时按 original 处理）
+  String get _currentSiteType => currentSite == null
+      ? 'original'
+      : CrawlerConfig.detectSiteType(currentSite!);
+
+  /// 当前站点类型下可选的节点列表
+  List<CdnNode> get availableCdnNodes =>
+      CrawlerConfig.nodesFor(_currentSiteType);
+
+  /// 按类型取出已保存的节点
+  String _cdnHostForType(String siteType) =>
+      siteType == 'porn91' ? _cdnHostPorn91 : _cdnHostOriginal;
+
+  /// 当前站点类型（未选站点时按 original 处理）
+  String get currentSiteType => _currentSiteType;
+
+  // 设置播放节点（视频 CDN 线路）
+  //
+  // 只影响之后发起的请求：正在跑的任务沿用启动时定下的线路，
+  // 中途换域名会让续传的临时文件和新切片对不上。
+  void setCdnHost(String host) {
+    final type = _currentSiteType;
+    // 只接受本站点类型白名单里的值，防止把另一套节点串过来
+    if (host.isNotEmpty && !CrawlerConfig.hostsFor(type).contains(host)) {
+      return;
+    }
+    if (type == 'porn91') {
+      _cdnHostPorn91 = host;
+    } else {
+      _cdnHostOriginal = host;
+    }
+    cdnHost = host;
+    if (_crawler != null) {
+      _crawler!.cdnHost = host;
+    }
+    _saveSettings();
+    notifyListeners();
+  }
+
+  /// 当前线路的展示名
+  String get cdnHostName =>
+      CrawlerConfig.nodeByHost(_currentSiteType, cdnHost).name;
+
   // 设置视频显示模式
   void setVideoDisplayMode(String mode) {
     videoDisplayMode = mode;
