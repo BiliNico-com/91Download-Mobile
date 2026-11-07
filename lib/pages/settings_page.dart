@@ -6,6 +6,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
+import '../crawler/config.dart';
 import '../services/app_state.dart';
 import '../services/version_service.dart';
 
@@ -636,6 +637,38 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     '建议WiFi下使用32，移动数据下使用8-16',
                     style: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
+                  SizedBox(height: 12),
+                  Divider(),
+
+                  // 播放节点（视频 CDN 线路）
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('播放节点', style: TextStyle(fontSize: 14)),
+                            Text(
+                              '切换视频下载/播放的CDN线路',
+                              style: TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 8),
+                  _buildCdnNodePicker(appState),
+                  SizedBox(height: 8),
+                  Text(
+                    appState.currentSiteType == 'porn91'
+                        ? '对应 91porn 的「选择速度最快的视频服务器」：'
+                            '只更换视频服务器域名，视频内容不变。'
+                            '服务器 H/I 站点标注为 VIP，实测 I 可直连、H 需要签名。'
+                        : '对应播放页的「切换播放节点」：只更换CDN域名，'
+                            '视频内容不变。某条线路慢或下载失败时，换一条再重试即可。',
+                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                  ),
                 ],
               ),
             ),
@@ -657,6 +690,136 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         child: Icon(icon, size: 18, color: onTap != null ? Theme.of(context).colorScheme.primary : Colors.grey),
       ),
     );
+  }
+
+  /// 播放节点选择器
+  ///
+  /// 网页版播放页的「切换播放节点」点开后会先对每条线路测速再列出来，
+  /// 这里保持一致：点「测速」逐个探测，把延迟显示在选项右侧。
+  Widget _buildCdnNodePicker(AppState appState) {
+    final nodes = appState.availableCdnNodes;
+    final selected =
+        CrawlerConfig.nodeByHost(appState.currentSiteType, appState.cdnHost);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                value: selected.host,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  isDense: true,
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border:
+                      OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                items: nodes.map((node) {
+                  return DropdownMenuItem<String>(
+                    value: node.host,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child:
+                              Text(node.name, overflow: TextOverflow.ellipsis),
+                        ),
+                        _buildLatencyBadge(node.host),
+                      ],
+                    ),
+                  );
+                }).toList(),
+                onChanged: (v) => appState.setCdnHost(v ?? ''),
+              ),
+            ),
+            SizedBox(width: 8),
+            SizedBox(
+              height: 44,
+              child: OutlinedButton(
+                onPressed: _cdnTesting ? null : _testCdnLatency,
+                child: _cdnTesting
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text('测速'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 线路延迟标签：绿色 <300ms，橙色 <800ms，红色更慢或超时
+  Widget _buildLatencyBadge(String host) {
+    final ms = _cdnLatency[host];
+    if (ms == null) {
+      return SizedBox.shrink();
+    }
+    final bool timeout = ms < 0;
+    final Color color = timeout
+        ? Colors.red
+        : ms < 300
+            ? Colors.green
+            : ms < 800
+                ? Colors.orange
+                : Colors.red;
+    return Padding(
+      padding: EdgeInsets.only(left: 8),
+      child: Text(
+        timeout ? '超时' : '${ms}ms',
+        style: TextStyle(
+          fontSize: 12,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  /// 逐个探测线路延迟
+  ///
+  /// 两套站点类型的探测目标不同：
+  /// - original：和网页版 fastest_cdn.js 的 ping() 一致，HEAD 一个切片路径
+  /// - porn91：站点没有固定探测路径，直接 HEAD 服务器根路径，
+  ///   能连上（哪怕 403/404）就说明这条线路通
+  Future<void> _testCdnLatency() async {
+    final appState = context.read<AppState>();
+    final nodes = appState.availableCdnNodes;
+    final siteType = appState.currentSiteType;
+    final testPath = siteType == 'porn91' ? '/' : _cdnTestPath;
+
+    setState(() {
+      _cdnTesting = true;
+      _cdnLatency.clear();
+    });
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: Duration(milliseconds: 3000),
+        receiveTimeout: Duration(milliseconds: 3000),
+      ),
+    );
+    for (final node in nodes) {
+      if (node.host.isEmpty) continue;
+      final sw = Stopwatch()..start();
+      int ms;
+      try {
+        await dio.head<void>('https://${node.host}$testPath');
+        ms = sw.elapsedMilliseconds;
+      } on DioException catch (e) {
+        // 有响应说明域名可达（路径 404 也算通），只有连不上才算超时
+        ms = e.response != null ? sw.elapsedMilliseconds : -1;
+      } catch (_) {
+        ms = -1;
+      }
+      sw.stop();
+      if (!mounted) return;
+      setState(() => _cdnLatency[node.host] = ms);
+    }
+    if (mounted) setState(() => _cdnTesting = false);
   }
 
   /// 3. 浏览设置区域

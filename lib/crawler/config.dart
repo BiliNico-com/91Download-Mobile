@@ -1,6 +1,22 @@
 /// 爬虫核心配置
 /// 严格参照 Python 版本 _src/lib/__init__.py
 
+
+/// 一条视频 CDN 播放线路。
+///
+/// [host] 为空表示「自动」——不改写站点下发的地址。
+class CdnNode {
+  final String name;
+  final String host;
+  const CdnNode({required this.name, required this.host});
+
+  /// 下拉框用：只有 host 非空时标识才是唯一的
+  String get value => host;
+
+  @override
+  String toString() => host.isEmpty ? name : '$name ($host)';
+}
+
 class CrawlerConfig {
   // ==================== 站点类型配置 ====================
   
@@ -163,6 +179,73 @@ class CrawlerConfig {
 
   /// 图片 CDN 域名（仅 porn91 使用）
   static const String imgCdnUrl = "https://1729130453.rsc.cdn77.org";
+
+  // ==================== 播放节点（视频 CDN 线路）====================
+
+  // ---- 两套节点必须分开：porn91 和 original 用的是完全不同的 CDN ----
+  //
+  // porn91（91porn.com）：la.btc620.com / *.rsc.cdn77.org / cns.killcovid2021.com
+  //   来自站点 /speed.php「选择速度最快的视频服务器」页。
+  // original（hdcdn 系站点）：cdn/shark/fdc/shark-v6 .hdcdn.store
+  //   来自站点播放页「切换播放节点」（/static/js/fastest_cdn.js）。
+  //
+  // 两者域名互不相通，混用会 100% 下不动，所以各存各的配置项、
+  // 各用各的 host 白名单。
+
+  /// porn91 的视频服务器（对应站点 /speed.php 的服务器 A / H / I）
+  ///
+  /// 站点切换方式是 POST speed.php 提交 video_server=A|H|I，由服务端会话记住。
+  /// 其中 H、I 标注为「VIP 用户使用」，非会员只能在页面上看到但不能选；
+  /// 不过实测把域名直接换成 I 仍可正常拉流（H 需要 secure 签名，会 403），
+  /// 所以这里把三条都列出来，由用户自己按测速结果选择。
+  static const List<CdnNode> porn91Nodes = [
+    CdnNode(name: '自动（跟随站点）', host: ''),
+    CdnNode(name: '服务器 A（默认）', host: 'la.btc620.com'),
+    CdnNode(name: '服务器 H（VIP）', host: '1470423830.rsc.cdn77.org'),
+    CdnNode(name: '服务器 I（VIP）', host: 'cns.killcovid2021.com'),
+  ];
+
+  /// porn91 站点自带服务器域名集合（用于判断该不该改写）
+  static const Set<String> porn91Hosts = {
+    'la.btc620.com',
+    '1470423830.rsc.cdn77.org',
+    'cns.killcovid2021.com',
+  };
+
+  /// original 站点的 CDN 线路（播放页「切换播放节点」）
+  ///
+  /// 站点实现只做 url.hostname = host，路径 / token / 查询参数全部原样保留。
+  static const List<CdnNode> originalNodes = [
+    CdnNode(name: '自动（跟随站点）', host: ''),
+    CdnNode(name: '线路 1（默认）', host: 'cdn.hdcdn.store'),
+    CdnNode(name: '线路 2（Shark）', host: 'shark.hdcdn.store'),
+    CdnNode(name: '线路 3（FDC）', host: 'fdc.hdcdn.store'),
+    CdnNode(name: '线路 4（IPv6-SK）', host: 'shark-v6.hdcdn.store'),
+  ];
+
+  /// original 站点自带 CDN 域名集合
+  static const Set<String> originalHosts = {
+    'cdn.hdcdn.store',
+    'shark.hdcdn.store',
+    'fdc.hdcdn.store',
+    'shark-v6.hdcdn.store',
+  };
+
+  /// 按站点类型取节点列表
+  static List<CdnNode> nodesFor(String siteType) =>
+      siteType == 'porn91' ? porn91Nodes : originalNodes;
+
+  /// 按站点类型取「可改写域名」白名单
+  static Set<String> hostsFor(String siteType) =>
+      siteType == 'porn91' ? porn91Hosts : originalHosts;
+
+  /// 按站点类型 + host 找线路，找不到返回「自动」
+  static CdnNode nodeByHost(String siteType, String? host) {
+    for (final n in nodesFor(siteType)) {
+      if (n.host == (host ?? '')) return n;
+    }
+    return nodesFor(siteType).first;
+  }
 
   // ==================== 正则表达式 ====================
   
