@@ -440,7 +440,14 @@ class CrawlerCore {
       throw Exception('未知的列表类型: $listType');
     }
     
-    final url = '$baseUrl/${urlPattern.replaceAll('{page}', page.toString())}';
+    // jiuse 的分页是查询参数（/video?page=N），别的站点是路径占位符
+    String url;
+    if (_siteType == 'jiuse') {
+      final path = urlPattern.replaceAll('{page}', page.toString());
+      url = page <= 1 ? '$baseUrl/$path' : '$baseUrl/$path?page=$page';
+    } else {
+      url = '$baseUrl/${urlPattern.replaceAll('{page}', page.toString())}';
+    }
     // ✅ 修复4：使用更轻量的参数格式，避免触发反爬
     final ts = DateTime.now().millisecondsSinceEpoch;
     // original 站点对 _t 参数敏感（首页/搜索带 _t 会 404），仅 porn91 保留 _t 防缓存
@@ -529,7 +536,9 @@ class CrawlerCore {
       
       // 根据站点类型选择解析方法
       List<VideoInfo> videos;
-      if (_siteType == "porn91") {
+      if (_siteType == "jiuse") {
+        videos = _parseVideoListJiuse(html);
+      } else if (_siteType == "porn91") {
         videos = _parseVideoListPorn91(html);
       } else {
         videos = _parseVideoListOriginal(html);
@@ -548,6 +557,114 @@ class CrawlerCore {
       _lastPaginationParsed = false;
       return [];
     }
+  }
+
+  /// 解析 jiuse 站点（91porny / jiuse.icu）的视频列表
+  ///
+  /// 卡片结构见 [CrawlerConfig.jiuseCardPattern] 的注释。
+  /// 三个要点：
+  /// 1. 卡片区混着整段是站外跳转的广告，必须只认站内 /xxx/view/yyy 链接；
+  /// 2. 作者写在「作者:」文本里，且可能是纯文本也可能是 <a>；
+  /// 3. 封面在 style="background-image: url('...')" 里，不是 img[src]。
+  List<VideoInfo> _parseVideoListJiuse(String html) {
+    final videos = <VideoInfo>[];
+    final seenIds = <String>{};
+    Logger().logSync('Parse', '解析 jiuse HTML, 长度: ${html.length}');
+
+    for (final m in CrawlerConfig.jiuseCardPattern.allMatches(html)) {
+      final card = m.group(1)!;
+
+      // 必须是站内视频详情链接，站外广告直接跳过
+      final hrefMatch =
+          CrawlerConfig.jiuseVideoHrefPattern.firstMatch(card);
+      if (hrefMatch == null) continue;
+      final href = hrefMatch.group(1)!;
+
+      // 取详情 id 作为唯一键：/vod/view/SxeO -> SxeO
+      final idMatch = RegExp(r'/view/([A-Za-z0-9]+)').firstMatch(href);
+      if (idMatch == null) continue;
+      final id = idMatch.group(1)!;
+      if (seenIds.contains(id)) continue;
+      seenIds.add(id);
+
+      // 标题：优先取 title 链接的文本，取不到再退回任意 title= 属性
+      String? title;
+      final titleLink = RegExp(
+        r'<a[^>]*class="[^"]*\btitle\b[^"]*"[^>]*>([^<]+)</a>',
+        caseSensitive: false,
+      ).firstMatch(card);
+      if (titleLink != null) {
+        title = CrawlerConfig.stripInvisible(titleLink.group(1)!).trim();
+      }
+      title ??=
+          RegExp(r'title="([^"]+)"').firstMatch(card)?.group(1)?.trim();
+      if (title == null || title.isEmpty) continue;
+
+      // 封面
+      String? cover;
+      final coverMatch = RegExp(
+        r"""background-image:\s*url\(\s*['"]?([^)'"]+)""",
+      ).firstMatch(card);
+      if (coverMatch != null) {
+        final u = coverMatch.group(1)!.trim();
+        cover = u.startsWith('http') ? u : '$baseUrl$u';
+      }
+
+      // 时长：
+      // <small class="layer">00:22:08</small>
+      String? duration;
+      final durMatch = RegExp(
+        r'<small[^>]*class="[^"]*\blayer\b[^"]*"[^>]*>\s*([0-9:]+)\s*</small>',
+        caseSensitive: false,
+      ).firstMatch(card);
+      if (durMatch != null) duration = durMatch.group(1);
+
+      // 作者：作者: <a ...>名字</a> 或 作者: 名字
+      String? author;
+      String? authorId;
+      final authorLink = RegExp(
+        r'作者[:：]\s*<a[^>]*href="[^"]*/(?:author|dashen)/([^"?]+)"[^>]*>([^<]+)</a>',
+        caseSensitive: false,
+      ).firstMatch(card);
+      if (authorLink != null) {
+        authorId = authorLink.group(1);
+        author = CrawlerConfig.stripInvisible(authorLink.group(2)!).trim();
+      } else {
+        final plain = RegExp(r'作者[:：]\s*([^<\n\r]+)', caseSensitive: false)
+            .firstMatch(card);
+        if (plain != null) {
+          author = CrawlerConfig.stripInvisible(plain.group(1)!).trim();
+        }
+      }
+
+      // 日期 + 播放数：2026-11-05&nbsp;|&nbsp;1351次播放
+      String? uploadDate;
+      String? views;
+      final dateMatch =
+          RegExp(r'(\d{4}-\d{2}-\d{2})').firstMatch(card);
+      if (dateMatch != null) uploadDate = dateMatch.group(1);
+      final viewMatch =
+          RegExp(r'([\d.]+\s*[万wW]?)\s*次播放').firstMatch(card);
+      if (viewMatch != null) views = viewMatch.group(1)!.trim();
+
+      Logger().logSync('Parse',
+          'jiuse 视频: ID=$id, 作者=$author, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
+
+      videos.add(VideoInfo(
+        id: id,
+        url: '$baseUrl$href',
+        title: title,
+        cover: cover,
+        author: author,
+        authorId: authorId,
+        duration: duration,
+        uploadDate: uploadDate,
+        views: views,
+      ));
+    }
+
+    Logger().logSync('Parse', 'jiuse 解析完成: ${videos.length} 个视频');
+    return videos;
   }
 
   /// 解析视频列表 HTML - porn91 CMS（91porn 风格）
@@ -1046,7 +1163,9 @@ class CrawlerCore {
       
       // 根据站点类型选择解析方法
       List<VideoInfo> videos;
-      if (_siteType == "porn91") {
+      if (_siteType == "jiuse") {
+        videos = _parseVideoListJiuse(html);
+      } else if (_siteType == "porn91") {
         videos = _parseVideoListPorn91(html);
       } else {
         videos = _parseVideoListOriginal(html);
@@ -1357,6 +1476,33 @@ class CrawlerCore {
         }
       }
       
+      // ===== jiuse 站点（91porny / jiuse.icu）=====
+      //
+      // 详情页把播放地址放在 <video data-src="..."> 上（不是 <source src>），
+      // 由前端 JS 在播放时才塞进播放器；纯 HTTP 抓取必须自己读 data-src。
+      if (videoUrl == null && _siteType == "jiuse") {
+        final dataSrc = RegExp(
+          r'<video[^>]*\bdata-src="([^"]+)"',
+          caseSensitive: false,
+        ).firstMatch(html);
+        if (dataSrc != null) {
+          videoUrl = dataSrc.group(1)!.replaceAll('&amp;', '&');
+          extractionMethod = 'jiuse-data-src';
+          await logger.log('Debug', 'jiuse data-src: ${videoUrl.length > 120 ? videoUrl.substring(0, 120) + "..." : videoUrl}');
+        }
+        // 兜底：有些页面把地址写在 video 的 source 子节点里
+        if (videoUrl == null) {
+          final srcMatch = RegExp(
+            r'<video[^>]*>[\s\S]{0,400}?src="([^"]+\.m3u8[^"]*)"',
+            caseSensitive: false,
+          ).firstMatch(html);
+          if (srcMatch != null) {
+            videoUrl = srcMatch.group(1)!.replaceAll('&amp;', '&');
+            extractionMethod = 'jiuse-video-src';
+          }
+        }
+      }
+
       // ===== 通用策略 (original CMS) =====
       if (videoUrl == null) {
         
