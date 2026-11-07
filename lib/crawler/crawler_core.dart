@@ -168,8 +168,15 @@ class CrawlerCore {
 
   /// 开启一次受控下载：返回该任务独占的控制句柄，
   /// 并把它绑定到当前 Zone，让下载链路上的 [control] 都取到同一份。
+  ///
+  /// 同时把它登记为兜底句柄 [_zoneControl]：调用方在 runWithControl
+  /// 之外（同步上下文）读 control 时也能命中本次下载的句柄，
+  /// 不会再另建一个永远不会被回调的「孤儿句柄」——
+  /// 这正是「进度条不动」的根因。
   DownloadControl beginDownload() {
-    return DownloadControl();
+    final ctrl = DownloadControl();
+    _zoneControl = ctrl;
+    return ctrl;
   }
 
   /// 在绑定好 [ctrl] 的 Zone 中执行下载。
@@ -1706,11 +1713,18 @@ class CrawlerCore {
   // ==================== 下载 ====================
 
   /// 下载视频
-  Future<bool> downloadVideo(VideoInfo video, String savePath) async {
+  ///
+  /// [ctrl] 可由调用方先行创建并挂好 onProgress / onOverallProgress，
+  /// 再传进来；不传时内部自建一份（旧调用方式仍然可用）。
+  /// 关键点：调用方拿到的那份句柄，必须就是本次下载真正在用的那份，
+  /// 否则回调会被挂到一个永远不会被触发的句柄上。
+  Future<bool> downloadVideo(VideoInfo video, String savePath,
+      {DownloadControl? ctrl}) async {
     // 本次下载独占的控制句柄：暂停/停止/进度回调都挂在它上面，
     // 避免与并发的其它任务互相干扰。
-    final ctrl = beginDownload();
-    return runWithControl(ctrl, () => _downloadVideoInner(video, savePath, ctrl));
+    final handle = ctrl ?? beginDownload();
+    return runWithControl(
+        handle, () => _downloadVideoInner(video, savePath, handle));
   }
 
   Future<bool> _downloadVideoInner(

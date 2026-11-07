@@ -474,6 +474,14 @@ class DownloadManager extends ChangeNotifier {
   
   /// 跟踪正在下载的任务ID集合，支持并发下载时正确跟踪
   final Set<String> _activeTaskIds = {};
+
+  /// 每个任务各自独占的控制句柄（暂停/停止/进度都走它）。
+  ///
+  /// 以前这些操作读的是 CrawlerCore 上的全局单槽句柄，而真正的下载链
+  /// 用的是自己新建的那一份，两边根本不是同一个对象：
+  /// 进度回调永远不触发（进度条停在 0% 或干脆不刷新），
+  /// 暂停/停止也打不到真正在跑的任务。
+  final Map<String, DownloadControl> _taskControls = {};
   
   /// 执行下载
   Future<void> _startDownload(DownloadTask task) async {
@@ -489,7 +497,16 @@ class DownloadManager extends ChangeNotifier {
     
     await logger.log('Download', '开始下载: ${task.video.title}');
     await logger.log('Download', '视频ID: ${task.video.id}, 封面: ${task.video.cover}');
-    
+
+    // 本次任务独占的控制句柄。
+    // 必须在进入下载前就建好并登记：pauseTask/cancelTask 都按 taskId 找它，
+    // 否则「暂停」「停止」会打到一个和本次下载毫无关系的句柄上。
+    DownloadControl? taskCtrl;
+    if (_crawler != null) {
+      taskCtrl = _crawler!.createControl();
+      _taskControls[task.id] = taskCtrl;
+    }
+
     try {
       // 1. 获取视频详情（m3u8地址）
       await logger.log('Download', '获取视频详情...');
@@ -532,10 +549,12 @@ class DownloadManager extends ChangeNotifier {
       await logger.log('Download', '保存路径: $savePath');
       
       // ── 进度回调挂在本次任务独占的控制句柄上 ──
-      // 此前用的是 CrawlerCore 上的全局单槽字段，而并发数默认就是 2，
-      // 两个任务会互相覆盖：A 的进度显示成 B 的、任务结束把回调置 null
-      // 让仍在跑的任务卡在某个百分比。
-      final ctrl = _crawler!.control;
+      // 此前这里取的是 _crawler.control（Zone 外的兜底句柄），而
+      // downloadVideo 内部又新建了另一份给下载链用——回调挂在孤儿
+      // 句柄上永远不触发，表现为「进度条不动 / 进度条丢失」。
+      // 现在把开跑时建好的那份句柄显式交给 downloadVideo。
+      final ctrl = taskCtrl ??= _crawler!.createControl();
+      _taskControls[task.id] = ctrl;
       ctrl.onLog = (msg, level) => logger.log('Download', msg);
       
       // 进度唯一来源是爬虫的「已完成切片数」。
@@ -567,7 +586,10 @@ class DownloadManager extends ChangeNotifier {
         notifyListeners();
       };
       
-      final success = await _crawler!.downloadVideo(detail, savePath);
+      // 把已挂好回调的句柄一起传进去：downloadVideo 会在绑定了同一份
+      // 句柄的 Zone 里执行下载链，回调和暂停/停止才真正对得上号。
+      final success =
+          await _crawler!.downloadVideo(detail, savePath, ctrl: ctrl);
       
       if (success) {
         await logger.log('Download', '下载完成: ${task.video.title}');
@@ -606,15 +628,19 @@ class DownloadManager extends ChangeNotifier {
       task.endTime = DateTime.now();
     } finally {
       // ✅ 清理回调，避免引用泄漏（只清自己这一份，不影响并发任务）
-      final ctrl = _crawler!.control;
-      ctrl.onProgress = null;
-      ctrl.onOverallProgress = null;
-      ctrl.onLog = null;
-      // 只重置停止标记；不能 reset 暂停标记，
-      // 否则刚被暂停的任务会被立刻「解除暂停」而失去意义
-      if (task.status != DownloadStatus.paused) {
-        ctrl.reset();
+      final ctrl = taskCtrl;
+      if (ctrl != null) {
+        ctrl.onProgress = null;
+        ctrl.onOverallProgress = null;
+        ctrl.onLog = null;
+        // 只重置停止标记；不能 reset 暂停标记，
+        // 否则刚被暂停的任务会被立刻「解除暂停」而失去意义
+        if (task.status != DownloadStatus.paused) {
+          ctrl.reset();
+        }
       }
+      // 任务已退出下载链路，句柄不再需要；留着只会让人误以为还能暂停它
+      _taskControls.remove(task.id);
       // 无论成功或失败，释放并发槽位并启动下一个等待任务
       _activeDownloads--;
       _activeTaskIds.remove(task.id);
@@ -687,7 +713,7 @@ class DownloadManager extends ChangeNotifier {
       task.status = DownloadStatus.paused;
       task.progressText = '已暂停';
       task.downloadSpeed = 0.0;
-      _crawler?.control.pause();
+      _taskControls[taskId]?.pause();
       notifyListeners();
     }
   }
@@ -715,7 +741,9 @@ class DownloadManager extends ChangeNotifier {
       // 临时目录只会在这两种情况下清理：
       //   1. 下载成功完成
       //   2. 用户在下载页删除该任务（见 deleteFilesForTask）
-      _crawler?.reset();
+      // 清掉上一条链可能残留的停止标记；这里不再动全局句柄，
+      // 免得误重置同一时刻并发下载的另一个任务。
+      _taskControls[taskId]?.reset();
       task.status = DownloadStatus.pending;
       task.error = null;
       task.progress = 0;
@@ -750,7 +778,9 @@ class DownloadManager extends ChangeNotifier {
       Logger().logSync('Download', '找到任务, 状态: ${task.status}');
       // 如果任务正在下载中，通知爬虫停止并释放槽位
       if (_activeTaskIds.contains(taskId)) {
-        _crawler?.stop();
+        // 只停这一条下载链：以前调的是 CrawlerCore 的全局 stop()，
+        // 会把同一时刻在跑的另一个任务一起停掉。
+        _taskControls[taskId]?.stop();
         _activeTaskIds.remove(taskId);
         _activeDownloads--;
         // finally 块会处理 reset() 和 notifyListeners()
@@ -927,6 +957,11 @@ class DownloadManager extends ChangeNotifier {
   /// 清理所有资源
   @override
   void dispose() {
+    // 页面级销毁：把还挂着的下载链统一停掉并清空句柄表
+    for (final ctrl in _taskControls.values) {
+      ctrl.stop();
+    }
+    _taskControls.clear();
     _crawler?.reset();
     // 关闭数据库连接。不关的话每次 dispose 都泄漏一个 SQLite 句柄，
     // 且句柄未落盘的数据可能丢失（SQLite 是延迟写入）。
