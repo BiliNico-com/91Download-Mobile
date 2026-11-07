@@ -635,6 +635,11 @@ class CrawlerCore {
   void applyPaginationForTest(String html, int page, List<VideoInfo> videos) =>
       _applyPagination(html, page, videos);
 
+  /// 供测试直接调用 m3u8 切片解析
+  @visibleForTesting
+  List<String> parseM3u8ForTest(String content, String baseUrl) =>
+      _parseM3u8(content, baseUrl);
+
   /// 解析 jiuse 站点（91porny / jiuse.icu）的视频列表
   ///
   /// 卡片结构见 [CrawlerConfig.jiuseCardPattern] 的注释。
@@ -1614,7 +1619,10 @@ class CrawlerCore {
           caseSensitive: false,
         ).firstMatch(html);
         if (dataSrc != null) {
-          videoUrl = dataSrc.group(1)!.replaceAll('&amp;', '&');
+          // 站点常给协议相对地址（//cdn2.jiuse2.cloud/...）。
+          // 原样交给 Dio 会抛 Unsupported scheme ''，任务 0% 直接失败。
+          videoUrl = CrawlerConfig.resolveAbsoluteUrl(
+              baseUrl, dataSrc.group(1)!.replaceAll('&amp;', '&'));
           extractionMethod = 'jiuse-data-src';
           await logger.log('Debug', 'jiuse data-src: ${videoUrl.length > 120 ? videoUrl.substring(0, 120) + "..." : videoUrl}');
         }
@@ -1625,7 +1633,8 @@ class CrawlerCore {
             caseSensitive: false,
           ).firstMatch(html);
           if (srcMatch != null) {
-            videoUrl = srcMatch.group(1)!.replaceAll('&amp;', '&');
+            videoUrl = CrawlerConfig.resolveAbsoluteUrl(
+                baseUrl, srcMatch.group(1)!.replaceAll('&amp;', '&'));
             extractionMethod = 'jiuse-video-src';
           }
         }
@@ -1668,6 +1677,11 @@ class CrawlerCore {
       }
       
       if (videoUrl != null) {
+        // 统一补全 scheme：各条提取策略都可能拿到协议相对地址
+        // （//cdn2.jiuse2.cloud/...），而 Dio 与 Uri.parse 都会抛
+        // 「Unsupported scheme ''」，下载任务会在 0% 处立刻失败。
+        videoUrl = CrawlerConfig.resolveAbsoluteUrl(baseUrl, videoUrl);
+
         // ===== porn91：解密页面里藏起来的真实标题 / 作者 / 时长 =====
         //
         // 播放页给纯 HTTP 抓取看到的是「掺了变体选择符的占位文本」，
@@ -1875,7 +1889,10 @@ class CrawlerCore {
     
     // 兜底改写：重试续传时 m3u8Url 可能来自任务里保存的旧地址，
     // 用户切换线路后应当按新线路走。
-    var videoUrl = applyCdnHost(video.m3u8Url!);
+    // 老任务在数据库里可能存着协议相对地址（//cdn.../index.m3u8），
+    // 不补 scheme 会让 Dio 在 Uri.parse 阶段抛 Unsupported scheme ''。
+    var videoUrl = applyCdnHost(
+        CrawlerConfig.resolveAbsoluteUrl(baseUrl, video.m3u8Url!));
     
     // 检查是否是直接 MP4 链接（porn91 等站点使用）
     final isDirectMp4 = videoUrl.endsWith('.mp4') || videoUrl.contains('.mp4?');
@@ -2231,10 +2248,24 @@ class CrawlerCore {
       line = line.trim();
       if (line.isEmpty || line.startsWith('#')) continue;
       
-      if (line.startsWith('http')) {
+      // 协议相对地址（//cdn.../seg0.ts）必须补 scheme：
+      // 否则会被当成站内路径拼成 https://站域名//cdn...，必然 404。
+      if (line.startsWith('//')) {
+        urls.add('https:$line');
+      } else if (line.startsWith('http')) {
         urls.add(line);
+      } else if (line.startsWith('/')) {
+        // 以单斜杠开头是「站根相对」，要保留 m3u8 的 host，
+        // 不能直接拼目录（会得到 .../hlsd/js10//hlsd/a.ts 这种双斜杠地址）
+        final base = Uri.tryParse(baseUrl);
+        if (base != null && base.hasScheme && base.host.isNotEmpty) {
+          urls.add('${base.scheme}://${base.host}$line');
+        } else {
+          final dir = baseUrl.substring(0, baseUrl.lastIndexOf('/') + 1);
+          urls.add('$dir$line');
+        }
       } else {
-        // 相对路径转绝对路径
+        // 纯相对路径：拼到 m3u8 所在目录
         final base = baseUrl.substring(0, baseUrl.lastIndexOf('/') + 1);
         urls.add('$base$line');
       }

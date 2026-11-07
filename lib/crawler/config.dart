@@ -547,6 +547,25 @@ class CrawlerConfig {
     return '$baseUrl/$u';
   }
 
+  /// 把页面里抓到的视频/切片地址补成绝对 URL
+  ///
+  /// 站点经常用协议相对写法（`//cdn2.jiuse2.cloud/hlsd/js10/index.m3u8`），
+  /// 这种地址交给 Dio / Uri.parse 会直接抛
+  /// `Invalid argument(s): Unsupported scheme '' in URI ...`，
+  /// 表现为「下载任务 0% 立刻失败」。凡是拿到手的地址都先过一遍这里。
+  static String resolveAbsoluteUrl(String baseUrl, String raw) {
+    final u = raw.trim();
+    if (u.isEmpty) return u;
+    if (u.startsWith('//')) return 'https:$u';
+    if (u.startsWith('http://') || u.startsWith('https://')) return u;
+    // 无 scheme 但形如 host/path（带点的主机名）
+    if (!u.startsWith('/') && RegExp(r'^[\w.-]+\.[a-z]{2,}/').hasMatch(u)) {
+      return 'https://$u';
+    }
+    if (u.startsWith('/')) return '$baseUrl$u';
+    return '$baseUrl/$u';
+  }
+
   /// jiuse 卡片里的作者链接
   ///
   /// 站点有两套作者主页：/author/xxx 与 /dashen/xxx。前缀要一起捕获，

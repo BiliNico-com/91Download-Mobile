@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:provider/provider.dart';
+import '../crawler/config.dart';
 import '../models/video_info.dart';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
@@ -111,8 +112,11 @@ class _StreamingPageState extends State<StreamingPage> {
       _viewsText = detail.views;
       _uploadDateText = detail.uploadDate;
 
+      // 地址可能是协议相对的（//cdn.../index.m3u8），Uri.parse 会抛
+      // Unsupported scheme ''，播放页会显示「播放加载失败」。
       _videoController = VideoPlayerController.networkUrl(
-        Uri.parse(detail.m3u8Url!),
+        Uri.parse(CrawlerConfig.resolveAbsoluteUrl(
+            detail.url, detail.m3u8Url!)),
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
       );
 
