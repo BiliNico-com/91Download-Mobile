@@ -108,26 +108,6 @@ class CrawlerCore {
   
   /// 全局日志回调（各任务共用，只承载日志不承载进度）
   Function(String msg, String level)? onLog;
-
-  /// 用户选择的播放线路域名（空串 = 自动，不改写）。
-  ///
-  /// 注意：porn91 与 original 站点的节点表完全不同，
-  /// 设置页会按当前站点类型给出各自的选项，这里只认本类型白名单内的值。
-  String cdnHost = '';
-
-  /// 按当前线路改写视频地址。
-  ///
-  /// 只在原 host 属于**本站点类型**的域名集合时才改写：
-  /// 换了别家的地址（比如把 hdcdn 的地址套到 91porn 上）只会一律 404。
-  /// 已经是目标域名、或用户选了「自动」时原样返回。
-  String applyCdnHost(String url) {
-    if (cdnHost.isEmpty) return url;
-    final uri = Uri.tryParse(url);
-    if (uri == null || uri.host.isEmpty) return url;
-    if (!CrawlerConfig.hostsFor(_siteType).contains(uri.host)) return url;
-    if (uri.host == cdnHost) return url;
-    return uri.replace(host: cdnHost).toString();
-  }
   
   // 外部数据库路径（用于持久化保存，卸载后不丢失）
   String? externalDbPath;
@@ -168,15 +148,8 @@ class CrawlerCore {
 
   /// 开启一次受控下载：返回该任务独占的控制句柄，
   /// 并把它绑定到当前 Zone，让下载链路上的 [control] 都取到同一份。
-  ///
-  /// 同时把它登记为兜底句柄 [_zoneControl]：调用方在 runWithControl
-  /// 之外（同步上下文）读 control 时也能命中本次下载的句柄，
-  /// 不会再另建一个永远不会被回调的「孤儿句柄」——
-  /// 这正是「进度条不动」的根因。
   DownloadControl beginDownload() {
-    final ctrl = DownloadControl();
-    _zoneControl = ctrl;
-    return ctrl;
+    return DownloadControl();
   }
 
   /// 在绑定好 [ctrl] 的 Zone 中执行下载。
@@ -447,14 +420,7 @@ class CrawlerCore {
       throw Exception('未知的列表类型: $listType');
     }
     
-    // jiuse 的分页是查询参数（/video?page=N），别的站点是路径占位符
-    String url;
-    if (_siteType == 'jiuse') {
-      final path = urlPattern.replaceAll('{page}', page.toString());
-      url = page <= 1 ? '$baseUrl/$path' : '$baseUrl/$path?page=$page';
-    } else {
-      url = '$baseUrl/${urlPattern.replaceAll('{page}', page.toString())}';
-    }
+    final url = '$baseUrl/${urlPattern.replaceAll('{page}', page.toString())}';
     // ✅ 修复4：使用更轻量的参数格式，避免触发反爬
     final ts = DateTime.now().millisecondsSinceEpoch;
     // original 站点对 _t 参数敏感（首页/搜索带 _t 会 404），仅 porn91 保留 _t 防缓存
@@ -543,9 +509,7 @@ class CrawlerCore {
       
       // 根据站点类型选择解析方法
       List<VideoInfo> videos;
-      if (_siteType == "jiuse") {
-        videos = _parseVideoListJiuse(html);
-      } else if (_siteType == "porn91") {
+      if (_siteType == "porn91") {
         videos = _parseVideoListPorn91(html);
       } else {
         videos = _parseVideoListOriginal(html);
@@ -564,114 +528,6 @@ class CrawlerCore {
       _lastPaginationParsed = false;
       return [];
     }
-  }
-
-  /// 解析 jiuse 站点（91porny / jiuse.icu）的视频列表
-  ///
-  /// 卡片结构见 [CrawlerConfig.jiuseCardPattern] 的注释。
-  /// 三个要点：
-  /// 1. 卡片区混着整段是站外跳转的广告，必须只认站内 /xxx/view/yyy 链接；
-  /// 2. 作者写在「作者:」文本里，且可能是纯文本也可能是 <a>；
-  /// 3. 封面在 style="background-image: url('...')" 里，不是 img[src]。
-  List<VideoInfo> _parseVideoListJiuse(String html) {
-    final videos = <VideoInfo>[];
-    final seenIds = <String>{};
-    Logger().logSync('Parse', '解析 jiuse HTML, 长度: ${html.length}');
-
-    for (final m in CrawlerConfig.jiuseCardPattern.allMatches(html)) {
-      final card = m.group(1)!;
-
-      // 必须是站内视频详情链接，站外广告直接跳过
-      final hrefMatch =
-          CrawlerConfig.jiuseVideoHrefPattern.firstMatch(card);
-      if (hrefMatch == null) continue;
-      final href = hrefMatch.group(1)!;
-
-      // 取详情 id 作为唯一键：/vod/view/SxeO -> SxeO
-      final idMatch = RegExp(r'/view/([A-Za-z0-9]+)').firstMatch(href);
-      if (idMatch == null) continue;
-      final id = idMatch.group(1)!;
-      if (seenIds.contains(id)) continue;
-      seenIds.add(id);
-
-      // 标题：优先取 title 链接的文本，取不到再退回任意 title= 属性
-      String? title;
-      final titleLink = RegExp(
-        r'<a[^>]*class="[^"]*\btitle\b[^"]*"[^>]*>([^<]+)</a>',
-        caseSensitive: false,
-      ).firstMatch(card);
-      if (titleLink != null) {
-        title = CrawlerConfig.stripInvisible(titleLink.group(1)!).trim();
-      }
-      title ??=
-          RegExp(r'title="([^"]+)"').firstMatch(card)?.group(1)?.trim();
-      if (title == null || title.isEmpty) continue;
-
-      // 封面
-      String? cover;
-      final coverMatch = RegExp(
-        r"""background-image:\s*url\(\s*['"]?([^)'"]+)""",
-      ).firstMatch(card);
-      if (coverMatch != null) {
-        final u = coverMatch.group(1)!.trim();
-        cover = u.startsWith('http') ? u : '$baseUrl$u';
-      }
-
-      // 时长：
-      // <small class="layer">00:22:08</small>
-      String? duration;
-      final durMatch = RegExp(
-        r'<small[^>]*class="[^"]*\blayer\b[^"]*"[^>]*>\s*([0-9:]+)\s*</small>',
-        caseSensitive: false,
-      ).firstMatch(card);
-      if (durMatch != null) duration = durMatch.group(1);
-
-      // 作者：作者: <a ...>名字</a> 或 作者: 名字
-      String? author;
-      String? authorId;
-      final authorLink = RegExp(
-        r'作者[:：]\s*<a[^>]*href="[^"]*/(?:author|dashen)/([^"?]+)"[^>]*>([^<]+)</a>',
-        caseSensitive: false,
-      ).firstMatch(card);
-      if (authorLink != null) {
-        authorId = authorLink.group(1);
-        author = CrawlerConfig.stripInvisible(authorLink.group(2)!).trim();
-      } else {
-        final plain = RegExp(r'作者[:：]\s*([^<\n\r]+)', caseSensitive: false)
-            .firstMatch(card);
-        if (plain != null) {
-          author = CrawlerConfig.stripInvisible(plain.group(1)!).trim();
-        }
-      }
-
-      // 日期 + 播放数：2026-11-05&nbsp;|&nbsp;1351次播放
-      String? uploadDate;
-      String? views;
-      final dateMatch =
-          RegExp(r'(\d{4}-\d{2}-\d{2})').firstMatch(card);
-      if (dateMatch != null) uploadDate = dateMatch.group(1);
-      final viewMatch =
-          RegExp(r'([\d.]+\s*[万wW]?)\s*次播放').firstMatch(card);
-      if (viewMatch != null) views = viewMatch.group(1)!.trim();
-
-      Logger().logSync('Parse',
-          'jiuse 视频: ID=$id, 作者=$author, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
-
-      videos.add(VideoInfo(
-        id: id,
-        url: '$baseUrl$href',
-        title: title,
-        cover: cover,
-        author: author,
-        authorId: authorId,
-        duration: duration,
-        uploadDate: uploadDate,
-        views: views,
-      ));
-    }
-
-    Logger().logSync('Parse', 'jiuse 解析完成: ${videos.length} 个视频');
-    return videos;
   }
 
   /// 解析视频列表 HTML - porn91 CMS（91porn 风格）
@@ -736,10 +592,7 @@ class CrawlerCore {
       final titleMatch = CrawlerConfig.titlePattern.firstMatch(wellContent);
       if (titleMatch == null) continue;
       
-      // 站点把标题逐字拆开并插入变体选择符（U+FE00~U+FE0F），
-      // 这些字符没有字形但占位，不剔除的话界面上看着就是字间多了空格。
-      final title = CrawlerConfig.stripInvisible(titleMatch.group(1)!).trim();
-      if (title.isEmpty) continue;
+      final title = titleMatch.group(1)!.trim();
       
       // 提取作者（尝试多种格式）
       String? author;
@@ -757,19 +610,6 @@ class CrawlerCore {
           author = linkMatch.group(2)?.trim();
         }
       }
-
-      // 格式2b: <span class="info">From:</span> 后紧跟作者名。
-      // 91porn 卡片里作者的写法是 From:，不是「作者：」，
-      // 只认中文标签会漏掉一半视频的作者。
-      if (author == null || author.isEmpty) {
-        final fromMatch = RegExp(
-          r'From[：:]\s*</span>\s*([^<\n\r]+)',
-          caseSensitive: false,
-        ).firstMatch(wellContent);
-        if (fromMatch != null) {
-          author = fromMatch.group(1)?.trim();
-        }
-      }
       
       // 格式3: 作者：xxx（直接文本，跳过HTML标签）
       if (author == null || author.isEmpty) {
@@ -785,9 +625,6 @@ class CrawlerCore {
         author = author.replaceAll(CrawlerConfig.htmlTagPattern, '');
         author = author.replaceAll('&nbsp;', '');
         author = author.replaceAll(CrawlerConfig.htmlEntityPattern, '');
-        // 作者名和标题一样被塞了变体选择符，必须一并剔除；
-        // 放在 whitespacePattern 之前，否则这些字符会被当成空白折叠成空格。
-        author = CrawlerConfig.stripInvisible(author);
         author = author.replaceAll(CrawlerConfig.whitespacePattern, ' ').trim();
         if (author.isEmpty) author = null;
       }
@@ -1170,9 +1007,7 @@ class CrawlerCore {
       
       // 根据站点类型选择解析方法
       List<VideoInfo> videos;
-      if (_siteType == "jiuse") {
-        videos = _parseVideoListJiuse(html);
-      } else if (_siteType == "porn91") {
+      if (_siteType == "porn91") {
         videos = _parseVideoListPorn91(html);
       } else {
         videos = _parseVideoListOriginal(html);
@@ -1356,11 +1191,7 @@ class CrawlerCore {
         // ✅ 从播放页 poster 属性提取视频ID（如 poster="https://.../thumb/848765.jpg"）
         // 注意：列表页封面ID与视频ID无关，必须用播放页poster ID
         String? posterVideoId;
-        // 站点同时存在 .jpg / .webp 两种封面后缀，两种都要认，
-        // 否则 poster ID 取不到，下面按 ID 匹配真实视频地址那步会失效。
-        final posterMatch =
-            RegExp(r'poster="[^"]*thumb/(\d+)\.(?:jpe?g|webp|png)"')
-                .firstMatch(html);
+        final posterMatch = RegExp(r'poster="[^"]*thumb/(\d+)\.jpg"').firstMatch(html);
         if (posterMatch != null) {
           posterVideoId = posterMatch.group(1);
           await logger.log('Debug', '播放页poster ID: $posterVideoId');
@@ -1446,12 +1277,7 @@ class CrawlerCore {
               
               if (src.contains('.mp4') || src.contains('.m3u8')) {
                 // 排除已知的广告视频ID
-                //
-                // 91porn 的播放页里 <source> 常常整段就是广告片（358999），
-                // 真实地址只藏在下面的 strencode2 里。这里必须认出来，
-                // 否则会拿广告地址去下载，用户下到的是几十秒的推广片。
-                if (CrawlerConfig.knownAdVideoIds.any(src.contains)) {
-                  await logger.log('Debug', '跳过广告视频地址: ${src.substring(0, 60)}...');
+                if (src.contains('358999')) {
                   continue;
                 }
                 videoUrl = src;
@@ -1483,33 +1309,6 @@ class CrawlerCore {
         }
       }
       
-      // ===== jiuse 站点（91porny / jiuse.icu）=====
-      //
-      // 详情页把播放地址放在 <video data-src="..."> 上（不是 <source src>），
-      // 由前端 JS 在播放时才塞进播放器；纯 HTTP 抓取必须自己读 data-src。
-      if (videoUrl == null && _siteType == "jiuse") {
-        final dataSrc = RegExp(
-          r'<video[^>]*\bdata-src="([^"]+)"',
-          caseSensitive: false,
-        ).firstMatch(html);
-        if (dataSrc != null) {
-          videoUrl = dataSrc.group(1)!.replaceAll('&amp;', '&');
-          extractionMethod = 'jiuse-data-src';
-          await logger.log('Debug', 'jiuse data-src: ${videoUrl.length > 120 ? videoUrl.substring(0, 120) + "..." : videoUrl}');
-        }
-        // 兜底：有些页面把地址写在 video 的 source 子节点里
-        if (videoUrl == null) {
-          final srcMatch = RegExp(
-            r'<video[^>]*>[\s\S]{0,400}?src="([^"]+\.m3u8[^"]*)"',
-            caseSensitive: false,
-          ).firstMatch(html);
-          if (srcMatch != null) {
-            videoUrl = srcMatch.group(1)!.replaceAll('&amp;', '&');
-            extractionMethod = 'jiuse-video-src';
-          }
-        }
-      }
-
       // ===== 通用策略 (original CMS) =====
       if (videoUrl == null) {
         
@@ -1547,22 +1346,6 @@ class CrawlerCore {
       }
       
       if (videoUrl != null) {
-        // ===== porn91：解密页面里藏起来的真实标题 / 作者 / 时长 =====
-        //
-        // 播放页给纯 HTTP 抓取看到的是「掺了变体选择符的占位文本」，
-        // 真实值要等 JS 随机延迟 2~6 秒后才写进 DOM。不自己解密的话，
-        // 拿到的标题、作者都带着隐形字符，界面上看就是名字里有空格。
-        Porn91Secret? secret;
-        if (_siteType == "porn91") {
-          secret = CrawlerConfig.decodePorn91Secret(html);
-          if (secret != null && !secret.isEmpty) {
-            await logger.log('Debug',
-                '解密成功: 标题=${secret.title}, 作者=${secret.author}, 时长=${secret.duration}');
-          } else {
-            await logger.log('Debug', '未找到可解密的标题/作者节点，回退到页面文本');
-          }
-        }
-
         // 提取作者信息
         String? author = video.author;
         if (author == null) {
@@ -1616,23 +1399,14 @@ class CrawlerCore {
         return VideoInfo(
           id: video.id,
           url: video.url,
-          // porn91 解密出来的标题优先：页面文本是掺了变体选择符的占位值，
-          // 直接用会让标题里凭空多出空格。
-          title: (secret?.title?.isNotEmpty ?? false)
-              ? secret!.title!
-              : video.title,
+          title: video.title,
           cover: video.cover,
-          author: (secret?.author?.isNotEmpty ?? false)
-              ? secret!.author
-              : author,
+          author: author,
           authorId: video.authorId, // 保留原有的作者ID
-          duration: (secret?.duration?.isNotEmpty ?? false)
-              ? secret!.duration
-              : duration,
+          duration: duration,
           uploadDate: uploadDate,
           views: views,
-          // 按用户选择的播放线路改写域名（「自动」时不改）
-          m3u8Url: applyCdnHost(videoUrl),
+          m3u8Url: videoUrl,
         );
       }
       
@@ -1713,18 +1487,11 @@ class CrawlerCore {
   // ==================== 下载 ====================
 
   /// 下载视频
-  ///
-  /// [ctrl] 可由调用方先行创建并挂好 onProgress / onOverallProgress，
-  /// 再传进来；不传时内部自建一份（旧调用方式仍然可用）。
-  /// 关键点：调用方拿到的那份句柄，必须就是本次下载真正在用的那份，
-  /// 否则回调会被挂到一个永远不会被触发的句柄上。
-  Future<bool> downloadVideo(VideoInfo video, String savePath,
-      {DownloadControl? ctrl}) async {
+  Future<bool> downloadVideo(VideoInfo video, String savePath) async {
     // 本次下载独占的控制句柄：暂停/停止/进度回调都挂在它上面，
     // 避免与并发的其它任务互相干扰。
-    final handle = ctrl ?? beginDownload();
-    return runWithControl(
-        handle, () => _downloadVideoInner(video, savePath, handle));
+    final ctrl = beginDownload();
+    return runWithControl(ctrl, () => _downloadVideoInner(video, savePath, ctrl));
   }
 
   Future<bool> _downloadVideoInner(
@@ -1752,9 +1519,7 @@ class CrawlerCore {
       video = detail;
     }
     
-    // 兜底改写：重试续传时 m3u8Url 可能来自任务里保存的旧地址，
-    // 用户切换线路后应当按新线路走。
-    var videoUrl = applyCdnHost(video.m3u8Url!);
+    var videoUrl = video.m3u8Url!;
     
     // 检查是否是直接 MP4 链接（porn91 等站点使用）
     final isDirectMp4 = videoUrl.endsWith('.mp4') || videoUrl.contains('.mp4?');
@@ -1769,12 +1534,7 @@ class CrawlerCore {
     
     try {
       // 下载 m3u8 文件（禁用缓存）
-      final m3u8Resp = await _dio.get(
-        videoUrl,
-        options: _noCacheOptions.copyWith(
-          receiveTimeout: const Duration(minutes: 2),
-        ),
-      );
+      final m3u8Resp = await _dio.get(videoUrl, options: _noCacheOptions);
       final m3u8Content = m3u8Resp.data.toString();
       
       // 解析 TS 切片列表
@@ -1786,9 +1546,7 @@ class CrawlerCore {
         return false;
       }
 
-      // m3u8 里的切片可能是绝对地址（指回默认线路），同样按选定线路改写。
-      final tsUrls =
-          _parseM3u8(m3u8Content, videoUrl).map(applyCdnHost).toList();
+      final tsUrls = _parseM3u8(m3u8Content, videoUrl);
       if (tsUrls.isEmpty) {
         ctrl.onLog?.call('解析 TS 列表失败', 'error');
         ctrl.failureReason = '解析视频地址失败，可能是站点改版';
@@ -2155,9 +1913,6 @@ class CrawlerCore {
           url,
           options: Options(
             responseType: ResponseType.bytes,
-            // 切片单个体积不大，但热门站点高峰期首包可能很慢，
-            // 30 秒的全局超时容易误杀，这里放宽到 2 分钟。
-            receiveTimeout: const Duration(minutes: 2),
             headers: {
               'Cache-Control': 'no-cache, no-store, must-revalidate',
               'Pragma': 'no-cache',
@@ -2229,26 +1984,10 @@ class CrawlerCore {
 
     final partFile = File('$savePath.part');
     try {
-      // 直链视频（往往几十上百 MB，且 CDN 首包慢）不能用全局的 30 秒超时：
-      // 超过 30 秒还没开始吐数据就会被 abort，报 receive timeout。
-      // 这里单独放宽：连接 30 秒、接收 10 分钟，足够慢速链路下完一个文件。
-      final fileOptions = Options(
-        receiveTimeout: const Duration(minutes: 10),
-        sendTimeout: const Duration(seconds: 30),
-      );
-
       // 获取文件大小
-      int contentLength = 0;
-      try {
-        final headResp = await _dio.head(mp4Url, options: fileOptions);
-        contentLength =
-            int.tryParse(headResp.headers.value('content-length') ?? '0') ?? 0;
-      } catch (e) {
-        // 有些 CDN 不响应 HEAD，或代理下超时；拿不到大小不影响下载，
-        // 后面会用 Range 续传 + 下载进度里回传的 total 兜底。
-        ctrl.onLog?.call('获取文件大小失败（不影响下载）: $e', 'debug');
-      }
-
+      final headResp = await _dio.head(mp4Url);
+      final contentLength = int.tryParse(headResp.headers.value('content-length') ?? '0') ?? 0;
+      
       if (contentLength > 0) {
         ctrl.onLog?.call('文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB', 'info');
       }
@@ -2284,8 +2023,6 @@ class CrawlerCore {
         partFile.path,
         options: Options(
           headers: alreadyBytes > 0 ? {'Range': 'bytes=$alreadyBytes-'} : null,
-          receiveTimeout: const Duration(minutes: 10),
-          sendTimeout: const Duration(seconds: 30),
         ),
         deleteOnError: false,
         onReceiveProgress: (received, total) {

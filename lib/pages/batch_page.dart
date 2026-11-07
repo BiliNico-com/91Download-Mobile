@@ -748,17 +748,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     );
   }
 
-  /// jiuse 站点（91porny / jiuse.icu）的分类
-  ///
-  /// 这套前端把内容分成三块：/video 普通、/videos 蝌蚪、/vod 精品。
-  static const _typeNamesJiuse = {
-    'list': '视频',
-    'videos': '蝌蚪',
-    'vod': '精品',
-  };
-
   Map<String, String> _getTypeNames(String siteType) {
-    if (siteType == 'jiuse') return _typeNamesJiuse;
     return siteType == 'porn91' ? _typeNamesPorn91 : _typeNamesOriginal;
   }
 
