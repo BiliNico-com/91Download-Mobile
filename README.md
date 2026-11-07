@@ -13,6 +13,9 @@
 - 🔒 **应用锁** - PIN码保护隐私
 - 🎨 **深色主题** - Material 3 设计，护眼模式
 - 📱 **良好适配** - 支持Android 7.0+
+- 🌐 **多站点** - 91porn / 91porny / jiuse 站点切换，支持自定义站点
+- 🚀 **播放线路** - 内置多条视频 CDN 节点，可测速后手动选择
+- 🧹 **干净标题** - 自动剔除标题/作者中的隐形字符，搜索与文件名不再踩坑
 
 ## 截图
 
@@ -40,6 +43,11 @@
 - Dio (HTTP客户端)
 - Provider (状态管理)
 
+## 版本与提交规范
+
+版本号、提交信息与发布流程见 [VERSIONING.md](VERSIONING.md)。一句话概括：
+每次更新都要递增 `pubspec.yaml` 里的 `version`，CI 只会把 `+N` 换成 run_number。
+
 ## 编译构建
 
 ```bash
@@ -54,7 +62,14 @@ flutter run
 
 # 构建APK
 flutter build apk --release
+
+# 静态检查与用例
+flutter analyze
+flutter test
 ```
+
+本仓库已补入完整的 Android 构建配置（gradle wrapper、gradle.properties、
+启动主题与自适应图标），clone 后配置好 `android/local.properties` 即可直接构建。
 
 ## 项目结构
 
