@@ -1,5 +1,26 @@
 /// 视频信息模型
 
+/// 站点在标题/作者里插入的隐形字符。
+///
+/// 91porn 一类站点会把文字逐字拆开，在字与字之间插入 U+FE00~U+FE0F
+/// 这些「变体选择符」做反爬混淆。它们没有字形但占一个位置，
+/// 界面上看就是名字中间凭空多出空格：
+///   「北︀︁︃︃︀︂︀︃︀︁︃︂京」 → 实际应为「北京」
+///   「w︀︁︃︃︀︂︀︃︀︁︂︃xx198710」 → 实际应为「wxx198710」
+///
+/// 这里在模型层统一剔除：解析有多个分支（列表页/详情页/搜索/作者主页），
+/// 逐个改容易漏，放在构造函数里任何来源都会被净化。
+final RegExp _invisibleChars = RegExp(
+  r'[\uFE00-\uFE0F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u00AD\uFEFF]',
+);
+
+/// 去掉隐形字符（不碰正常的空格与全角空格）
+String _purify(String input) => input.replaceAll(_invisibleChars, '');
+
+/// 同上，但允许 null
+String? _purifyNullable(String? input) =>
+    input == null ? null : input.replaceAll(_invisibleChars, '');
+
 class VideoInfo {
   final String id;          // viewkey
   final String url;         // 视频页面 URL
@@ -15,15 +36,21 @@ class VideoInfo {
   VideoInfo({
     required this.id,
     required this.url,
-    required this.title,
+    required String title,
     this.cover,
-    this.author,
+    String? author,
     this.authorId,
-    this.duration,
-    this.uploadDate,
-    this.views,
+    String? duration,
+    String? uploadDate,
+    String? views,
     this.m3u8Url,
-  });
+  })  : title = _purify(title),
+        // 标题和作者是站点加料的重灾区，构造时就洗干净，
+        // 后面无论列表页、详情页还是搜索解析都拿不到脏数据。
+        author = _purifyNullable(author),
+        duration = _purifyNullable(duration),
+        uploadDate = _purifyNullable(uploadDate),
+        views = _purifyNullable(views);
 
   factory VideoInfo.fromJson(Map<String, dynamic> json) {
     return VideoInfo(

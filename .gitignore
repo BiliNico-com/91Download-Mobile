@@ -16,12 +16,7 @@ migrate_working_dir/
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
-
-# Flutter/Dart/Pub related
+# Flutter/Dart Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
@@ -32,19 +27,19 @@ migrate_working_dir/
 .pub/
 /build/
 
-# Symbolication related
+# Symbolication / obfuscation
 app.*.symbols
-
-# Obfuscation related
 app.*.map.json
 
-# Android Studio will place build artifacts here
+# Android Studio build artifacts
 /android/app/debug
 /android/app/profile
 /android/app/release
+/**/build/
 
-# APK files
+# 安装包
 *.apk
+*.aab
 
 # iOS/macOS
 **/ios/Pods/
@@ -53,9 +48,6 @@ app.*.map.json
 **/ios/Flutter/Flutter.framework
 **/ios/Flutter/Flutter.podspec
 **/ios/Flutter/Generated.xcconfig
-
-# Debug logs
-assets/network_log_*.txt
 **/ios/Flutter/app.flx
 **/ios/Flutter/app.zip
 **/ios/Flutter/engine
@@ -68,22 +60,30 @@ assets/network_log_*.txt
 AGENTS.md
 crawler_api.md
 assets/
+assets/network_log_*.txt
 
-# 由 `flutter create` 本地生成，CI 每次构建会自行重建，不应提交
+# 本地环境相关，不入库
 .metadata
 analysis_options.yaml
-pubspec.lock
 android/.gitignore
-android/gradle.properties
-android/gradle/
+android/local.properties
+**/local.properties
+android/.gradle/
 android/app/src/debug/
 android/app/src/profile/
-android/app/src/main/res/drawable/
-android/app/src/main/res/drawable-v21/
+# flutter create 生成的图标资源（本项目改用 drawable/ic_launcher.xml 矢量图标）
 android/app/src/main/res/mipmap-*/
-android/app/src/main/res/values/
 android/app/src/main/res/values-night/
-test/
+android/app/src/main/res/drawable-v21/
+
+# flutter 自动生成的插件注册文件
+android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+
+# 备份/临时文件
+*.bak
+*.orig
+*.rej
+*.patch
 
 # 签名密钥：绝不能提交（已在历史中泄漏过，见安全说明）
 *.keystore
