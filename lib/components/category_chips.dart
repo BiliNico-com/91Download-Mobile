@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 
 /// 横向滚动的分类标签行
 ///
@@ -21,7 +21,7 @@ class CategoryChips extends StatefulWidget {
   /// 选中回调
   final ValueChanged<String> onSelected;
 
-  /// 是否深色模式
+  /// 是否深色模式（保留参数以兼容既有调用点，实际由 AppTokens 自动判定）
   final bool isDark;
 
   /// 内容左右内边距
@@ -99,7 +99,8 @@ class _CategoryChipsState extends State<CategoryChips> {
 
     // 目标位置：让选中项大致居中
     final viewport = _controller.position.viewportDimension;
-    final target = (idx * _approxChipWidth) - (viewport / 2) + (_approxChipWidth / 2);
+    final target =
+        (idx * _approxChipWidth) - (viewport / 2) + (_approxChipWidth / 2);
     _controller.animateTo(
       target.clamp(0.0, _controller.position.maxScrollExtent),
       duration: const Duration(milliseconds: 220),
@@ -109,9 +110,7 @@ class _CategoryChipsState extends State<CategoryChips> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = widget.isDark;
-    final unselectedBg = isDark ? const Color(0xFF2E2E2E) : const Color(0xFFECEFF3);
-    final unselectedFg = isDark ? Colors.white70 : const Color(0xFF444444);
+    final t = AppTokens.of(context);
 
     return SizedBox(
       height: 38,
@@ -135,14 +134,16 @@ class _CategoryChipsState extends State<CategoryChips> {
               onTap: on ? null : () => widget.onSelected(key),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
-                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
                 decoration: BoxDecoration(
-                  color: on ? AppTheme.primaryColor : unselectedBg,
-                  borderRadius: AppTheme.brPill,
+                  color: on ? t.accent : t.surface2,
+                  borderRadius: BorderRadius.circular(AppRadius.pill),
+                  border: on ? null : Border.all(color: t.line, width: 1),
                   boxShadow: on
                       ? [
                           BoxShadow(
-                            color: AppTheme.primaryColor.withOpacity(0.30),
+                            color: t.accent.withOpacity(0.28),
                             blurRadius: 7,
                             offset: const Offset(0, 2),
                           ),
@@ -153,8 +154,8 @@ class _CategoryChipsState extends State<CategoryChips> {
                   label,
                   style: TextStyle(
                     fontSize: 12.5,
-                    color: on ? Colors.white : unselectedFg,
-                    fontWeight: on ? FontWeight.w600 : FontWeight.normal,
+                    color: on ? Colors.white : t.text2,
+                    fontWeight: on ? FontWeight.w700 : FontWeight.w500,
                   ),
                 ),
               ),

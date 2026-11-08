@@ -7,7 +7,8 @@ import '../services/floating_video_service.dart';
 import '../components/empty_state.dart';
 import '../components/video_list_items.dart';
 import '../components/category_chips.dart';
-import '../theme/app_theme.dart';
+import '../components/app_shell.dart';
+import '../theme/app_tokens.dart';
 import '../theme/ui_style.dart';
 import 'streaming_page.dart';
 
@@ -62,8 +63,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   // 但内容里还补了一次状态栏占位，两者叠加才是顶栏偏高的来源。
   // 这里只保留内容本身需要的高度（111）再略加余量，
   // 避免 mainAxisAlignment.end 把富余高度堆到顶部、把标题下推。
-  static const double _kExpandedHeight = 112.0;
-  static const double _kCollapsedHeight = 56.0;
+  static const double _kExpandedHeight = 138.0;
+  static const double _kCollapsedHeight = 52.0;
 
   @override
   bool get wantKeepAlive => true;
@@ -478,6 +479,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                             isFollowed: _isAuthorPageMode &&
                                 appState.followedAuthorsService
                                     .isFollowedSync(_currentAuthorId),
+                            sitePill: SitePill(
+                              appState: appState,
+                              onTap: () => appState.navigateToPage?.call(4),
+                            ),
                             onBack:
                                 _isAuthorPageMode ? _exitAuthorPageMode : null,
                             onFollowToggle: _isAuthorPageMode
@@ -565,19 +570,65 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   }
 
   Widget _buildNoSiteSelected() {
+    final t = AppTokens.of(context);
     return Scaffold(
-      appBar: AppBar(title: Text('批量爬取')),
+      appBar: AppBar(
+        centerTitle: false,
+        toolbarHeight: 62,
+        titleSpacing: 16,
+        title: Text(
+          '批量爬取',
+          style: TextStyle(
+            fontSize: 23,
+            height: 1.15,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.4,
+            color: t.text1,
+          ),
+        ),
+      ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.language, size: 64, color: Colors.grey),
-            SizedBox(height: 16),
-            Text('请先选择站点', style: TextStyle(fontSize: 18, color: Colors.grey)),
-            SizedBox(height: 8),
-            Text('在设置页面选择要使用的站点', style: TextStyle(fontSize: 14, color: Colors.grey)),
-            SizedBox(height: 24),
-            Text('← 左滑到设置页面选择站点', style: TextStyle(fontSize: 14, color: Colors.blue)),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: t.accentSoft,
+                borderRadius: BorderRadius.circular(AppRadius.xxl),
+              ),
+              child: Icon(Icons.language, size: 30, color: t.accent),
+            ),
+            const SizedBox(height: 16),
+            Text('请先选择站点',
+                style: TextStyle(
+                    fontSize: 17, fontWeight: FontWeight.w700, color: t.text1)),
+            const SizedBox(height: 8),
+            Text('在设置页面选择要使用的站点',
+                style: TextStyle(fontSize: 13, color: t.text3)),
+            const SizedBox(height: 20),
+            GestureDetector(
+              onTap: () => context.read<AppState>().navigateToPage?.call(4),
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppTokens.blue,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                child: const Text(
+                  '去选择站点',
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -585,29 +636,52 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   }
 
   List<Widget> _buildOverlays(AppState appState) {
+    final t = AppTokens.of(context);
+    final navInset = MediaQuery.of(context).padding.bottom;
+    final hasSelection = _selectedIds.isNotEmpty;
     return [
-      // 页码跳转（作者主页模式隐藏）
-      if (!_isAuthorPageMode) _buildBottomPageNavigation(),
+      // 页码跳转（作者主页模式隐藏；多选时让位给底部浮条，否则两者叠在一起）
+      if (!_isAuthorPageMode && !hasSelection) _buildBottomPageNavigation(),
       if (_showBackToTop && appState.showBackToTop)
         Positioned(
-          bottom: (appState.backToTopPosition == 'right' && _selectedIds.isNotEmpty) ? 160.0 : 80.0,
-          left: appState.backToTopPosition == 'left' ? 16 : null,
-          right: appState.backToTopPosition == 'right' ? 16 : null,
-          child: FloatingActionButton(
-            mini: true,
-            heroTag: 'batch_back_to_top',
-            onPressed: _scrollToTop,
-            child: Icon(Icons.arrow_upward),
+          bottom: hasSelection
+              ? navInset + 84
+              : (appState.backToTopPosition == 'right' ? navInset + 16 : navInset + 74),
+          left: appState.backToTopPosition == 'left' ? 14 : null,
+          right: appState.backToTopPosition == 'right' ? 14 : null,
+          child: GestureDetector(
+            onTap: _scrollToTop,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: t.surface,
+                shape: BoxShape.circle,
+                border: Border.all(color: t.line),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(t.dark ? 0.4 : 0.08),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Icon(Icons.arrow_upward_rounded, size: 19, color: t.text2),
+            ),
           ),
         ),
-      if (_selectedIds.isNotEmpty)
+      // 底部多选浮条（原型 .floatbar）
+      if (hasSelection)
         Positioned(
-          bottom: 80,
-          right: 16,
-          child: FloatingActionButton.extended(
-            onPressed: _startDownload,
-            icon: Icon(Icons.download),
-            label: Text('下载 (${_selectedIds.length})'),
+          left: 12,
+          right: 12,
+          bottom: navInset + 12,
+          child: AppFloatBar(
+            selectedCount: _selectedIds.length,
+            actionLabel: '开始下载',
+            onAction: _startDownload,
+            onCancel: () => setState(() => _selectedIds.clear()),
           ),
         ),
     ];
@@ -799,118 +873,97 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     return siteType == 'porn91' ? _typeNamesPorn91 : _typeNamesOriginal;
   }
 
+  /// 页码跳转浮条（原型 .pager：30x30 / r9 / 描边）
+  ///
+  /// 原来是一个白底胶囊里塞两个蓝色圆钮 + 64 宽输入框，阴影很重；
+  /// 现在收成一块贴着底栏的轻量卡片，三个控件统一 30 高、9 圆角，
+  /// 与任务卡、分段控件同一套圆角语言。
   Widget _buildBottomPageNavigation() {
-    final appState = Provider.of<AppState>(context, listen: false);
-    // 用实际渲染主题判断深浅色（不能用 appState.isDarkMode：
-    // 「跟随系统」时它与 MaterialApp 真正生效的主题可能不一致，
-    // 会导致浅色页面上出现深色控件）
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final t = AppTokens.of(context);
     // 底栏被遮住的原因：main_page 的 Scaffold 用了 extendBody: true
-    // （底栏做毛玻璃需要内容透上来），body 的坐标系会延伸到屏幕底部，
-    // 页码胶囊停在 bottom: 16 就被 80 高的 NavigationBar 压住了。
-    //
+    // （底栏做毛玻璃需要内容透上来），body 的坐标系会延伸到屏幕底部。
     // extendBody 为 true 时，body 内的 MediaQuery.padding.bottom 恰好等于
-    // 底栏总高（实测：无安全区 80、有安全区 80+34=114），
-    // 直接拿它当偏移量即可，不用硬编码 80 也不用自己加安全区。
+    // 底栏总高，直接拿它当偏移量即可。
     final navBarHeight = MediaQuery.of(context).padding.bottom;
+    final canPrev = !_isLoading && !_isLoadingMore && _loadedPage > 1;
+    final canNext = !_isLoading && !_isLoadingMore;
+
+    Widget arrow(IconData icon, bool enabled, VoidCallback onTap) {
+      return GestureDetector(
+        onTap: enabled ? onTap : null,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: enabled ? t.accentSoft : t.surface2,
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Icon(
+            icon,
+            size: 18,
+            color: enabled ? t.accent : t.text3,
+          ),
+        ),
+      );
+    }
+
     return Positioned(
-      bottom: navBarHeight + 16,
+      bottom: navBarHeight + 14,
       left: 0,
       right: 0,
       child: Center(
         child: Container(
-          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
           decoration: BoxDecoration(
-            color: isDark ? Colors.grey[850] : Colors.white.withOpacity(0.95),
-            borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+            color: t.surface,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: t.line),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 8,
-                offset: Offset(0, 2),
+                color: Colors.black.withOpacity(t.dark ? 0.45 : 0.07),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
               ),
             ],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 上一页按钮
-              GestureDetector(
-                onTap: (_isLoading || _isLoadingMore || _loadedPage <= 1) ? null : () => _goToPageDirect(_loadedPage - 1),
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: (_loadedPage <= 1)
-                      ? (isDark ? Colors.grey[700] : Colors.grey[300])
-                      : (isDark ? Colors.blue[900] : Colors.blue[100]),
-                    borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-                  ),
-                  child: Icon(
-                    Icons.arrow_left,
-                    size: 18,
-                    color: (_loadedPage <= 1)
-                      ? (isDark ? Colors.grey[500] : Colors.grey[500])
-                      : (isDark ? Colors.blue[300] : Colors.blue[700]),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              // 当前页码输入框
+              arrow(Icons.chevron_left_rounded, canPrev,
+                  () => _goToPageDirect(_loadedPage - 1)),
+              const SizedBox(width: 8),
               Container(
-                width: 64,
-                height: 32,
+                width: 58,
+                height: 30,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: isDark
-                          ? Colors.black.withOpacity(0.3)
-                          : Colors.grey.shade300.withOpacity(0.5),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
+                  color: t.surface2,
+                  borderRadius: BorderRadius.circular(9),
                 ),
-                child: Center(
-                  child: TextField(
-                    controller: _pageController,
-                    focusNode: _pageFocusNode,
-                    keyboardType: TextInputType.number,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                    decoration: const InputDecoration(
-                      hintText: '',
-                      contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                      border: InputBorder.none,
-                      isDense: true,
-                    ),
-                    onSubmitted: (_) => _goToPage(),
-                    textInputAction: TextInputAction.go,
+                child: TextField(
+                  controller: _pageController,
+                  focusNode: _pageFocusNode,
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: t.text1,
                   ),
+                  decoration: const InputDecoration(
+                    hintText: '',
+                    contentPadding: EdgeInsets.symmetric(horizontal: 4),
+                    border: InputBorder.none,
+                    isDense: true,
+                  ),
+                  onSubmitted: (_) => _goToPage(),
+                  textInputAction: TextInputAction.go,
                 ),
               ),
-              const SizedBox(width: 10),
-              // 下一页按钮
-              GestureDetector(
-                onTap: (_isLoading || _isLoadingMore) ? null : () => _goToPageDirect(_loadedPage + 1),
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: isDark ? Colors.blue[900] : Colors.blue[100],
-                    borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-                  ),
-                  child: Icon(
-                    Icons.arrow_right,
-                    size: 18,
-                    color: isDark ? Colors.blue[300] : Colors.blue[700],
-                  ),
-                ),
-              ),
+              const SizedBox(width: 8),
+              arrow(Icons.chevron_right_rounded, canNext,
+                  () => _goToPageDirect(_loadedPage + 1)),
             ],
           ),
         ),
@@ -1094,6 +1147,7 @@ class _BatchHeader extends StatelessWidget {
   final bool isAuthorPageMode;
   final String authorName;
   final bool isFollowed;
+  final Widget? sitePill;
   final VoidCallback? onBack;
   final VoidCallback? onFollowToggle;
   final ValueChanged<String> onTypeChanged;
@@ -1116,6 +1170,7 @@ class _BatchHeader extends StatelessWidget {
     this.isAuthorPageMode = false,
     this.authorName = '',
     this.isFollowed = false,
+    this.sitePill,
     this.onBack,
     this.onFollowToggle,
     required this.onTypeChanged,
@@ -1125,10 +1180,6 @@ class _BatchHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext ctx) {
-    final isDark = Theme.of(ctx).brightness == Brightness.dark;
-    // 主题适配颜色
-    final subTextColor = isDark ? Colors.grey : Colors.black54;
-
     // 顶部栏背后是滚动的视频列表 —— 这里最能体现毛玻璃开关的差异：
     //   开启 → 半透明，内容从栏下穿过时可见模糊
     //   关闭 → 完全不透明，内容被挡住
@@ -1141,17 +1192,48 @@ class _BatchHeader extends StatelessWidget {
         return ValueListenableBuilder<double>(
           valueListenable: UiStyle.glassOpacity,
           builder: (context, _, __) {
+            final t = AppTokens.of(ctx);
             final bgColor = glass
-                ? UiStyle.headerGlassFill(isDark, collapseRatio)
-                : (isDark ? (Theme.of(ctx).cardColor) : Colors.white);
+                ? UiStyle.headerGlassFill(t.dark, collapseRatio)
+                : t.surface;
 
-            return _buildHeaderContent(
-              ctx: ctx,
-              bgColor: bgColor,
-              glass: glass,
-              isDark: isDark,
-              subTextColor: subTextColor,
-              collapseRatio: collapseRatio,
+            final header = Container(
+              color: bgColor,
+              // flexibleSpace 拿到的是 appbar 的固定高度（含状态栏）。
+              // 内容排布：状态栏占位 + 标题行 + 站点行 + 分类标签行。
+              // 若容器高度小于内容总高，Column 会溢出并把多余部分挤到
+              // 列表上方，表现为分类标签与第一个视频之间一大片空白。
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  SizedBox(height: statusBarHeight),
+                  _buildTitleRow(t, collapsed: collapseRatio >= 0.5),
+                  if (collapseRatio < 0.5) _buildMetaRow(t),
+                  if (collapseRatio < 0.5 && !isAuthorPageMode)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: CategoryChips(
+                        entries: typeNames,
+                        selected: selectedType,
+                        onSelected: onTypeChanged,
+                        isDark: t.dark,
+                      ),
+                    ),
+                  if (collapseRatio < 0.5) const SizedBox(height: 4),
+                ],
+              ),
+            );
+
+            // 玻璃关闭时直接返回实心容器，完全省掉 BackdropFilter 的开销
+            if (!glass) return header;
+
+            return ClipRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: header,
+              ),
             );
           },
         );
@@ -1159,294 +1241,173 @@ class _BatchHeader extends StatelessWidget {
     );
   }
 
-  Widget _buildHeaderContent({
-    required BuildContext ctx,
-    required Color bgColor,
-    required bool glass,
-    required bool isDark,
-    required Color subTextColor,
-    required double collapseRatio,
-  }) {
-    // 作者模式下显示作者名称
-    final displayTitle = isAuthorPageMode ? '作者: $authorName' : '批量爬取';
-    final textColor = isDark ? Colors.white : Colors.black87;
-        final header = Container(
-          color: bgColor,
-          // flexibleSpace 拿到的是 appbar 的固定高度（含状态栏）。
-          // 内容排布：状态栏占位 + 标题行 + 副标题 + 分类标签行。
-          // 若容器高度小于内容总高，Column 会溢出并把多余部分挤到
-          // 列表上方，表现为分类标签与第一个视频之间一大片空白。
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              SizedBox(height: statusBarHeight),
-              
-              // ── 第一行：标题/下拉选择器 + 右侧按钮 ──
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // 作者模式显示返回按钮
-                    if (isAuthorPageMode && onBack != null)
-                      GestureDetector(
-                        onTap: onBack,
-                        child: Container(
-                          margin: const EdgeInsets.only(right: 8),
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(Icons.arrow_back, size: 20, color: Colors.blue),
-                        ),
-                      ),
-                    // 左侧：展开时显示标题+关注按钮（作者模式），收起时根据模式显示
-                    collapseRatio < 0.5
-                        ? Expanded(
-                            child: isAuthorPageMode
-                                ? Row(
-                                    children: [
-                                      Text(
-                                        displayTitle,
-                                        style: TextStyle(
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.w600,
-                                          color: textColor,
-                                        ),
-                                      ),
-                                      SizedBox(width: 8),
-                                      // 展开状态下也显示关注按钮
-                                      if (onFollowToggle != null)
-                                        GestureDetector(
-                                          onTap: onFollowToggle,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                            decoration: BoxDecoration(
-                                              color: isFollowed ? Colors.red.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
-                                              borderRadius: BorderRadius.circular(16),
-                                              border: Border.all(
-                                                color: isFollowed ? Colors.red : Colors.blue,
-                                                width: 1,
-                                              ),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(
-                                                  isFollowed ? Icons.favorite : Icons.favorite_border,
-                                                  size: 16,
-                                                  color: isFollowed ? Colors.red : Colors.blue,
-                                                ),
-                                                SizedBox(width: 4),
-                                                Text(
-                                                  isFollowed ? '已关注' : '关注',
-                                                  style: TextStyle(
-                                                    fontSize: 13,
-                                                    color: isFollowed ? Colors.red : Colors.blue,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  )
-                                : Text(
-                                    displayTitle,
-                                    style: TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w600,
-                                      color: textColor,
-                                    ),
-                                  ),
-                          )
-                        // 收起时：作者模式显示作者名+关注按钮，非作者模式显示下拉选择器
-                        : isAuthorPageMode
-                            ? Expanded(
-                                child: Row(
-                                  children: [
-                                    Text(
-                                      displayTitle,
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        color: textColor,
-                                      ),
-                                    ),
-                                    SizedBox(width: 8),
-                                    // 收起状态下的关注按钮
-                                    if (onFollowToggle != null)
-                                      GestureDetector(
-                                        onTap: onFollowToggle,
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                          decoration: BoxDecoration(
-                                            color: isFollowed ? Colors.red.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
-                                            borderRadius: BorderRadius.circular(12),
-                                            border: Border.all(
-                                              color: isFollowed ? Colors.red : Colors.blue,
-                                              width: 1,
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Icon(
-                                                isFollowed ? Icons.favorite : Icons.favorite_border,
-                                                size: 14,
-                                                color: isFollowed ? Colors.red : Colors.blue,
-                                              ),
-                                              SizedBox(width: 4),
-                                              Text(
-                                                isFollowed ? '已关注' : '关注',
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: isFollowed ? Colors.red : Colors.blue,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              )
-                            : const SizedBox.shrink(),
-                    // 收起时加 Spacer 让右侧按钮靠右
-                    if (collapseRatio >= 0.5) const Spacer(),
-                    // 右侧按钮
-                    _buildRightButtons(),
-                  ],
+  /// 第一行：大标题（折叠时缩到 17）+ 右侧操作
+  Widget _buildTitleRow(AppTokens t, {required bool collapsed}) {
+    final title = isAuthorPageMode ? authorName : '批量爬取';
+    return Padding(
+      padding: EdgeInsets.fromLTRB(14, collapsed ? 4 : 5, 10, collapsed ? 10 : 6),
+      child: Row(
+        children: [
+          if (isAuthorPageMode && onBack != null) ...[
+            GestureDetector(
+              onTap: onBack,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                width: 32,
+                height: 32,
+                margin: const EdgeInsets.only(right: 10),
+                decoration: BoxDecoration(
+                  color: t.accentSoft,
+                  borderRadius: BorderRadius.circular(AppRadius.sm + 1),
                 ),
-              ),
-              
-              // ── 第二行：副标题（展开时显示）──
-              if (collapseRatio < 0.5)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
-                  child: Text(
-                    isAuthorPageMode 
-                        ? '已加载 $videoCount 个视频 (作者主页)' 
-                        : '已加载 $videoCount 个视频',
-                    style: TextStyle(fontSize: 12, color: subTextColor),
-                  ),
-                ),
-
-              // ── 第三行：分类标签（横滑，展开时显示）──
-              // 展开态与收起态现在共用同一套标签，不再各写一份下拉。
-              if (collapseRatio < 0.5 && !isAuthorPageMode)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: CategoryChips(
-                    entries: typeNames,
-                    selected: selectedType,
-                    onSelected: onTypeChanged,
-                    isDark: isDark,
-                  ),
-                ),
-            ],
-          ),
-        );
-
-        // 玻璃关闭时直接返回实心容器，完全省掉 BackdropFilter 的开销
-        if (!glass) return header;
-
-        return ClipRect(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: header,
-          ),
-        );
-  }
-  
-  // 右侧按钮组
-  Widget _buildRightButtons() {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // 作者模式下不显示批量操作按钮
-        if (!isAuthorPageMode) ...[
-          // 已选数量
-          if (selectedCount > 0)
-            Container(
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                '已选 $selectedCount 个',
-                style: const TextStyle(color: Colors.blue, fontSize: 11),
+                child: Icon(Icons.arrow_back_rounded, size: 18, color: t.accent),
               ),
             ),
-          
-          // 全选按钮
-          if (selectedCount > 0)
+          ],
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    isAuthorPageMode ? '作者: $title' : title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: collapsed ? 17 : 23,
+                      height: 1.15,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.4,
+                      color: t.text1,
+                    ),
+                  ),
+                ),
+                if (isAuthorPageMode && onFollowToggle != null) ...[
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: onFollowToggle,
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      height: collapsed ? 24 : 26,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: isFollowed ? t.dangerSoft : t.accentSoft,
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isFollowed
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            size: 13,
+                            color: isFollowed ? t.danger : t.accent,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            isFollowed ? '已关注' : '关注',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                              color: isFollowed ? t.danger : t.accent,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (!isAuthorPageMode && selectedCount > 0) ...[
             GestureDetector(
               onTap: onSelectAll,
+              behavior: HitTestBehavior.opaque,
               child: Container(
-                margin: const EdgeInsets.only(right: 8),
-                padding: const EdgeInsets.all(6),
+                width: 32,
+                height: 32,
+                margin: const EdgeInsets.only(right: 7),
                 decoration: BoxDecoration(
                   color: selectedCount == totalCount
-                      ? Colors.blue
+                      ? AppTokens.blue
                       : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(AppRadius.sm + 1),
                   border: selectedCount == totalCount
                       ? null
-                      : Border.all(color: Colors.blue, width: 2),
+                      : Border.all(color: AppTokens.blue, width: 1.6),
                 ),
                 child: Icon(
-                  Icons.check,
+                  Icons.check_rounded,
+                  size: 18,
                   color: selectedCount == totalCount
                       ? Colors.white
-                      : Colors.blue,
-                  size: 18,
+                      : AppTokens.blue,
                 ),
               ),
             ),
-          
-          // 就绪标签
-          Container(
-            margin: const EdgeInsets.only(right: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: status == '就绪'
-                  ? Colors.green.withOpacity(0.2)
-                  : Colors.orange.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              status,
-              style: TextStyle(
-                color: status == '就绪' ? Colors.green : Colors.orange,
-                fontSize: 11,
+          ],
+          GestureDetector(
+            onTap: onPrivacyToggle,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: privacyMode ? t.dangerSoft : t.surface2,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+              child: Icon(
+                privacyMode ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                size: 18,
+                color: privacyMode ? t.danger : t.text2,
               ),
             ),
           ),
         ],
-        
-        // 隐私按钮
-        IconButton(
-          icon: Icon(
-            privacyMode ? Icons.visibility_off : Icons.visibility,
-            color: privacyMode ? Colors.red : Colors.grey,
-            size: 20,
-          ),
-          onPressed: onPrivacyToggle,
-          tooltip: privacyMode ? '取消模糊' : '模糊预览图',
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-        ),
-      ],
+      ),
     );
   }
-  
-  // 列表选择器组件
-  // 说明：原 _buildTypeChip（带蓝色光晕的下拉）已移除，
-  // 分类选择统一由 CategoryChips 横滑标签承担。
+
+  /// 第二行：站点胶囊 + 数量 + 状态
+  Widget _buildMetaRow(AppTokens t) {
+    final statusColor = status == '就绪'
+        ? t.success
+        : (status == '无结果' ? t.text3 : t.warning);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 2),
+      child: Row(
+        children: [
+          if (!isAuthorPageMode && sitePill != null)
+            Flexible(child: sitePill!),
+          const SizedBox(width: 9),
+          Text(
+            isAuthorPageMode ? '已加载 $videoCount 个视频' : '共 $totalCount 条',
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: t.text3,
+            ),
+          ),
+          const Spacer(),
+          if (!isAuthorPageMode && status != '就绪')
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: statusColor.withOpacity(t.dark ? 0.18 : 0.10),
+                borderRadius: BorderRadius.circular(AppRadius.pill),
+              ),
+              child: Text(
+                status,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  color: statusColor,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }

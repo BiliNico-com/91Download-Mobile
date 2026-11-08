@@ -14,6 +14,8 @@ import '../services/pin_service.dart';
 import '../utils/logger.dart';
 import '../utils/open_directory.dart';
 import '../theme/ui_style.dart';
+import '../theme/app_tokens.dart';
+import '../components/app_shell.dart';
 import '../theme/app_theme.dart';
 import 'pin_input_dialog.dart';
 import 'cache_manager_page.dart';
@@ -53,15 +55,16 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
 
   // ==================== 站点选择器状态 ====================
 
-  /// 站点列表是否展开（收起态只显示当前站点一行）
-  bool _siteExpanded = false;
-
   /// 站点测速结果：host -> 延迟毫秒（-1 表示超时/不可达）
   final Map<String, int> _siteLatency = {};
   bool _siteTesting = false;
 
   /// 站点测速探测路径：直接打根路径，只用来判断域名是否可达
   static const String _siteTestPath = '/';
+
+  /// 站点页是 push 出来的独立路由，父 State 的 setState 建不到它，
+  /// 测速结果只能靠这个 notifier 主动触发二级页重建。
+  final ValueNotifier<int> _siteRevision = ValueNotifier<int>(0);
 
   /// 站点家族的展示顺序
   static const List<String> _siteFamilyOrder = [
@@ -102,56 +105,119 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   void dispose() {
     _customSiteController?.dispose();
     _customSiteController = null;
+    _siteRevision.dispose();
     super.dispose();
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
     super.build(context);  // 必须调用，启用AutomaticKeepAliveClientMixin
+    final t = AppTokens.of(context);
     return Consumer<AppState>(
       builder: (context, appState, _) {
         return Scaffold(
-          appBar: AppBar(
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('设置'),
-                Text('站点、下载目录',
-                    style: TextStyle(fontSize: 12, color: Colors.grey)),
-              ],
-            ),
-          ),
+          backgroundColor: t.bg,
+          appBar: _buildAppBar(appState, t),
           body: ListView(
+            padding: EdgeInsets.fromLTRB(
+                12, 12, 12, MediaQuery.of(context).padding.bottom + 90),
             children: [
-              // 1. 当前站点选择（折叠）
-              _buildSiteSection(appState),
-              
-              // 2. 下载目录设置（折叠）
-              _buildDownloadDirSection(appState),
-              
-              // 3. 下载并发设置（折叠）
-              _buildDownloadConcurrencySection(appState),
-              
-              // 4. 浏览设置（折叠）
-              _buildBrowseSection(appState),
-              
-              // 5. 主题模式设置（折叠）
-              _buildThemeSection(appState),
-              
-              // 6. 应用锁设置（不折叠）
-              _buildAppLockSection(appState),
-              
-              // 7. 权限状态展示（折叠）
-              _buildPermissionSection(appState),
-              
-              // 8. 调试设置（折叠）
-              _buildDebugSection(appState),
-              
-              // 9. 关于页面 + 检查更新（不折叠）
-              _buildAboutSection(),
-              
-              // 底部间距
-              const SizedBox(height: 32),
+              _buildGroup(t, '抓取与下载', [
+                _buildRow(
+                  t,
+                  icon: Icons.language_rounded,
+                  color: AppTokens.blue,
+                  title: '站点与线路',
+                  subtitle: _siteSummary(appState),
+                  onTap: () => _openSitePage(appState),
+                ),
+                _buildRow(
+                  t,
+                  icon: Icons.folder_rounded,
+                  color: const Color(0xFFB26B00),
+                  title: '下载目录',
+                  subtitle: appState.downloadDir.isEmpty
+                      ? '正在初始化...'
+                      : appState.downloadDir,
+                  onTap: () => _pushSubPage(
+                      '下载目录', (context) => _buildDownloadDirContent(appState)),
+                ),
+                _buildRow(
+                  t,
+                  icon: Icons.speed_rounded,
+                  color: t.success,
+                  title: '并发与限速',
+                  subtitle:
+                      '${appState.maxConcurrentTasks} 个任务 · ${appState.maxConcurrentSegments} 切片 · 播放节点',
+                  onTap: () => _pushSubPage('下载设置',
+                      (context) => _buildDownloadConcurrencyContent(appState)),
+                ),
+              ]),
+              _buildGroup(t, '外观与浏览', [
+                _buildRow(
+                  t,
+                  icon: Icons.palette_rounded,
+                  color: const Color(0xFF7E57C2),
+                  title: '主题模式',
+                  subtitle: _themeSummary(appState),
+                  onTap: () => _pushSubPage(
+                      '主题模式', (context) => _buildThemeContent(appState)),
+                ),
+                _buildRow(
+                  t,
+                  icon: Icons.view_module_rounded,
+                  color: AppTokens.blue2,
+                  title: '浏览设置',
+                  subtitle:
+                      '${appState.videoDisplayMode == 'list' ? '列表模式' : '大图模式'} · ${appState.privacyMode ? '隐私模式开' : '隐私模式关'}',
+                  onTap: () => _pushSubPage(
+                      '浏览设置', (context) => _buildBrowseContent(appState)),
+                ),
+                _buildRow(
+                  t,
+                  icon: Icons.lock_rounded,
+                  color: t.danger,
+                  title: '应用锁',
+                  subtitle: appState.appLockEnabled
+                      ? '已开启，启动时需输入 PIN 码'
+                      : '未开启，点击设置 4 位 PIN 码',
+                  onTap: () => _pushSubPage(
+                      '应用锁', (context) => _buildAppLockContent(appState)),
+                ),
+              ]),
+              _buildGroup(t, '权限与其他', [
+                _buildRow(
+                  t,
+                  icon: Icons.security_rounded,
+                  color: t.success,
+                  title: '权限状态',
+                  subtitle:
+                      '${appState.permissionGranted ? '存储权限已授权' : '存储权限未授权'} · ${appState.overlayPermissionGranted ? '悬浮窗已授权' : '悬浮窗未授权'}',
+                  onTap: () => _pushSubPage('权限状态',
+                      (context) => _buildPermissionContent(appState)),
+                ),
+                _buildRow(
+                  t,
+                  icon: Icons.bug_report_rounded,
+                  color: const Color(0xFF7E57C2),
+                  title: '调试设置',
+                  subtitle:
+                      '${appState.debugMode ? 'Debug 已开启' : 'Debug 已关闭'} · ${appState.realtimeLogEnabled ? '实时日志开' : '实时日志关'}',
+                  onTap: () => _pushSubPage(
+                      '调试设置', (context) => _buildDebugContent(appState)),
+                ),
+                _buildRow(
+                  t,
+                  icon: Icons.info_outline_rounded,
+                  color: const Color(0xFF00ACC1),
+                  title: '关于',
+                  subtitle: '91Download 移动端 · ${VersionService.fullVersion}',
+                  onTap: () => _pushSubPage(
+                      '关于', (context) => _buildAboutContent()),
+                  last: true,
+                ),
+              ]),
             ],
           ),
         );
@@ -159,194 +225,418 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
   }
 
-  /// 1. 当前站点选择区域
-  ///
-  /// 收起态只占一行（站点徽标 + 域名 + 家族 + 实测延迟 + 切换），
-  /// 展开后按 CrawlerConfig.siteTypes 的家族分组列出全部预设站点，
-  /// 自定义站点单独沉底，避免 6 条带协议头的完整网址平铺糊成一片。
-  Widget _buildSiteSection(AppState appState) {
-    final currentSite = appState.currentSite ?? '';
-    final currentHost = _siteHost(currentSite);
-    final family = appState.isSiteSelected
-        ? (_siteFamilyNames[appState.currentSiteType] ?? '自定义站点')
-        : '未选择';
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // ── 卡片头：标题 + 测速 ──
-          Padding(
-            padding: EdgeInsets.fromLTRB(16, 12, 12, 0),
+  PreferredSizeWidget _buildAppBar(AppState appState, AppTokens t) {
+    return AppBar(
+      backgroundColor: t.surface,
+      centerTitle: false,
+      toolbarHeight: 88,
+      titleSpacing: 0,
+      elevation: 0,
+      title: Padding(
+        padding: const EdgeInsets.only(left: 14, right: 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  '设置',
+                  style: TextStyle(
+                    fontSize: 23,
+                    height: 1.15,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.4,
+                    color: t.text1,
+                  ),
+                ),
+                const Spacer(),
+                AppIconBtn(
+                  icon: Icons.info_outline_rounded,
+                  tooltip: '关于',
+                  onTap: () => _pushSubPage(
+                      '关于', (context) => _buildAboutContent()),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Flexible(child: SitePill(appState: appState)),
+                if (_siteLatency.isNotEmpty) ...[
+                  const SizedBox(width: 9),
+                  AppCountPill(
+                    text: _fastestSiteLatency == null
+                        ? '测速超时'
+                        : '最快 ${_fastestSiteLatency}ms',
+                    color: _fastestSiteLatency == null
+                        ? t.danger
+                        : t.success,
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _siteSummary(AppState appState) {
+    if (!appState.isSiteSelected) return '未选择站点，点击进入选择';
+    final host = _siteHost(appState.currentSite ?? '');
+    final family = _siteFamilyNames[appState.currentSiteType] ?? '自定义站点';
+    return '$family · $host';
+  }
+
+  String _themeSummary(AppState appState) {
+    final mode = appState.themeMode == 0
+        ? '浅色'
+        : appState.themeMode == 1
+            ? '深色'
+            : '跟随系统';
+    final glass = UiStyle.glassEnabled.value ? '毛玻璃开' : '毛玻璃关';
+    return '$mode · $glass';
+  }
+
+  Widget _buildGroup(AppTokens t, String title, List<Widget> rows) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 6, 14, 8),
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.6,
+              color: t.text3,
+            ),
+          ),
+        ),
+        Container(
+          decoration: BoxDecoration(
+            color: t.surface,
+            borderRadius: BorderRadius.circular(AppRadius.xl),
+            border: Border.all(color: t.line),
+            boxShadow: t.cardShadow,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(children: rows),
+        ),
+        const SizedBox(height: 14),
+      ],
+    );
+  }
+
+  Widget _buildRow(
+    AppTokens t, {
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    bool last = false,
+  }) {
+    return Column(
+      children: [
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(13, 12, 10, 12),
             child: Row(
               children: [
-                Icon(Icons.language, size: 20, color: Colors.blue),
-                SizedBox(width: 8),
-                Text('当前站点',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                Spacer(),
-                if (_siteTesting)
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12),
-                    child: SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                else
-                  TextButton.icon(
-                    onPressed: _testSiteLatency,
-                    icon: Icon(Icons.speed, size: 16),
-                    label: Text('测速', style: TextStyle(fontSize: 12)),
-                    style: TextButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: 10),
-                      minimumSize: Size(0, 34),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
+                Container(
+                  width: 34,
+                  height: 34,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(t.dark ? 0.18 : 0.10),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
                   ),
+                  child: Icon(icon, size: 18, color: color),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: t.text1,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 11.5, color: t.text3),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, size: 20, color: t.text3),
               ],
             ),
           ),
-          // ── 收起态：当前站点一行 ──
-          InkWell(
-            onTap: _toggleSiteExpanded,
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 14),
-              child: Row(
-                children: [
-                  _buildSiteAvatar(currentHost),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                currentHost.isEmpty ? '请选择站点' : currentHost,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                            if (currentHost.isNotEmpty) ...[
-                              SizedBox(width: 8),
-                              _buildSiteTag(family),
-                            ],
-                          ],
-                        ),
-                        SizedBox(height: 3),
-                        // 副标题只放延迟：家族名已经在上一行的标签里，
-                        // 再重复一遍会显得拥挤。
-                        Row(
-                          children: [
-                            Text('延迟 ',
-                                style: TextStyle(
-                                    fontSize: 12, color: Colors.grey)),
-                            if (_siteLatency[currentHost] == null)
-                              Text('未测速',
-                                  style: TextStyle(
-                                      fontSize: 12, color: Colors.grey))
-                            else
-                              Text(
-                                _siteLatencyText(_siteLatency[currentHost]!),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: _siteLatencyColor(
-                                      _siteLatency[currentHost]!),
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures()
-                                  ],
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  TextButton(
-                    onPressed: _toggleSiteExpanded,
-                    style: TextButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: 12),
-                      minimumSize: Size(0, 34),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(_siteExpanded ? '收起' : '切换',
-                            style: TextStyle(fontSize: 13)),
-                        Icon(_siteExpanded
-                            ? Icons.keyboard_arrow_up
-                            : Icons.keyboard_arrow_down, size: 18),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+        ),
+        if (!last)
+          Divider(
+            height: 1,
+            thickness: 1,
+            indent: 59,
+            color: t.line,
+          ),
+      ],
+    );
+  }
+
+
+  Future<void> _pushSubPage(
+    String title,
+    WidgetBuilder body, {
+    List<Widget> Function(BuildContext context)? actions,
+    bool plain = false,
+    Listenable? listenable,
+  }) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _SettingsSubPage(
+          title: title,
+          body: body,
+          actions: actions,
+          plain: plain,
+          listenable: listenable,
+        ),
+      ),
+    );
+  }
+
+  /// 打开「站点与线路」二级页，首次进入自动测一次延迟
+  void _openSitePage(AppState appState) {
+    if (_siteLatency.isEmpty && !_siteTesting) {
+      _testSiteLatency();
+    }
+    _pushSubPage(
+      '站点与线路',
+      (context) => _buildSiteSection(context.read<AppState>()),
+      plain: true,
+      listenable: _siteRevision,
+      actions: (context) {
+        final t = AppTokens.of(context);
+        return [_siteTesting ? _buildTestLoading(t) : _buildTestButton(t)];
+      },
+    );
+  }
+
+  /// 测速进行中的胶囊（与「测速」按钮同尺寸，避免顶栏跳动）
+  Widget _buildTestLoading(AppTokens t) {
+    return Container(
+      height: 31,
+      padding: const EdgeInsets.symmetric(horizontal: 13),
+      decoration: BoxDecoration(
+        color: t.surface2,
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 13,
+            height: 13,
+            child: CircularProgressIndicator(strokeWidth: 1.8, color: t.accent),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '测速中',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: t.accent,
             ),
           ),
-          // ── 展开态：按家族分组的站点列表 ──
-          if (_siteExpanded) ...[
-            Divider(height: 1),
-            ..._buildSiteGroups(appState),
-            // 手动输入网址：虚线入口，不与预设站点并列
-            InkWell(
-              onTap: () => _showAddCustomSiteDialog(appState),
-              child: Container(
-                margin: EdgeInsets.fromLTRB(16, 6, 16, 0),
-                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 12),
-                decoration: BoxDecoration(
-                  border: Border(
-                    top: BorderSide(color: Colors.grey.shade300),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.add_link, size: 18, color: Colors.blue),
-                    SizedBox(width: 8),
-                    Text('手动输入网址',
-                        style: TextStyle(fontSize: 14, color: Colors.blue)),
-                  ],
-                ),
-              ),
-            ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 14),
-              child: Text(
-                '延迟为直连该域名的 HEAD 往返耗时，超时代表当前网络不可达；'
-                '切换到同家族的其他域名不会改变站点内容。',
-                style: TextStyle(fontSize: 11, color: Colors.grey, height: 1.6),
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
 
-  /// 展开/收起站点列表；首次展开时自动测一次延迟
-  void _toggleSiteExpanded() {
-    setState(() => _siteExpanded = !_siteExpanded);
-    if (_siteExpanded && _siteLatency.isEmpty && !_siteTesting) {
-      _testSiteLatency();
-    }
+  /// 顶栏「测速」胶囊
+  Widget _buildTestButton(AppTokens t) {
+    return Material(
+      color: t.surface2,
+      borderRadius: BorderRadius.circular(AppRadius.pill),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        onTap: _testSiteLatency,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.speed_rounded, size: 15, color: t.accent),
+              const SizedBox(width: 5),
+              Text(
+                '测速',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: t.accent,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
+
+
+  /// 站点与线路（二级页整页内容）
+  ///
+  /// 布局对齐 _ui_v2.html 第 6 屏：顶部大卡放当前站点 →
+  /// 按站点系分组列出全部站点（自定义站跟着它所属的站点系走）→ 底部添加入口。
+  /// 延迟仍是相对分档：≤1.5× 最快绿、≤3× 琥珀、其余红，超时直接红。
+  Widget _buildSiteSection(AppState appState) {
+    final t = AppTokens.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildCurrentSiteCard(appState, t),
+        ..._buildSiteGroups(appState, t),
+        const SizedBox(height: 2),
+        _buildAddSiteButton(appState, t),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text(
+            '延迟为直连该域名的 HEAD 往返耗时，超时代表当前网络不可达；'
+            '切换到同系的其他域名不会改变站点内容。',
+            style: TextStyle(fontSize: 11, height: 1.6, color: t.text3),
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
+    );
+  }
+
+  /// 顶部大卡：当前站点
+  Widget _buildCurrentSiteCard(AppState appState, AppTokens t) {
+    final host = _siteHost(appState.currentSite ?? '');
+    final family = appState.isSiteSelected
+        ? (_siteFamilyNames[appState.currentSiteType] ?? '自定义站点')
+        : '未选择';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
+      decoration: BoxDecoration(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(AppRadius.xxl),
+        border: Border.all(color: t.line),
+        boxShadow: t.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '当前站点',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+              color: t.text3,
+            ),
+          ),
+          const SizedBox(height: 9),
+          Row(
+            children: [
+              _buildSiteAvatar(host),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      host.isEmpty ? '请选择站点' : host,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: t.text1,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 5,
+                      runSpacing: 5,
+                      children: [
+                        _buildSiteTag(family, t, color: t.accent),
+                        if (_isFastestSite(host))
+                          _buildSiteTag('最快', t, color: t.success),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _buildSiteLatency(host, t),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 底部「添加自定义站点」入口
+  Widget _buildAddSiteButton(AppState appState, AppTokens t) {
+    return Material(
+      color: t.surface,
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        onTap: () => _showAddCustomSiteDialog(appState),
+        child: Container(
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: t.line),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.add_rounded, size: 18, color: t.accent),
+              const SizedBox(width: 7),
+              Text(
+                '添加自定义站点',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: t.accent,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+
 
 
   /// 按站点家族分组生成选项列表
   ///
-  /// 自定义站点不再单独沉底，而是按它**所属的家族**排进对应分组——
+  /// 自定义站点不单独沉底，而是按它**所属的家族**排进对应分组——
   /// 用户手动归类（或按域名推断）到九色系的自定义站点就该出现在九色系里，
   /// 否则「归类」这个动作在界面上看不出来。预设站在前、自定义站跟在后面。
-  List<Widget> _buildSiteGroups(AppState appState) {
+  List<Widget> _buildSiteGroups(AppState appState, AppTokens t) {
     final widgets = <Widget>[];
     for (final family in _siteFamilyOrder) {
       final presets = CrawlerConfig.presetsOfFamily(family);
@@ -356,40 +646,68 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               appState.siteFamilyOf(s) == family)
           .toList();
       if (presets.isEmpty && customs.isEmpty) continue;
-      widgets.add(_buildSiteGroupLabel(_siteFamilyNames[family] ?? family));
+      final rows = <Widget>[];
       for (var i = 0; i < presets.length; i++) {
-        widgets.add(
-            _buildSiteOption(appState, presets[i], i == 0 ? '主站' : '备用'));
+        if (rows.isNotEmpty) rows.add(_buildSiteDivider(t));
+        rows.add(
+            _buildSiteOption(appState, presets[i], i == 0 ? '主站' : '备用', t));
       }
       for (final site in customs) {
-        widgets
-            .add(_buildSiteOption(appState, site, '自定义', customSite: true));
+        if (rows.isNotEmpty) rows.add(_buildSiteDivider(t));
+        rows.add(
+            _buildSiteOption(appState, site, '自定义', t, customSite: true));
       }
+      widgets.add(_buildSiteGroupLabel(_siteFamilyNames[family] ?? family, t));
+      widgets.add(
+        Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: t.surface,
+            borderRadius: BorderRadius.circular(AppRadius.xl),
+            border: Border.all(color: t.line),
+            boxShadow: t.cardShadow,
+          ),
+          child: Column(children: rows),
+        ),
+      );
+      widgets.add(const SizedBox(height: 2));
     }
     return widgets;
   }
 
-  Widget _buildSiteGroupLabel(String text) {
+  Widget _buildSiteDivider(AppTokens t) =>
+      Divider(height: 1, thickness: 1, color: t.line);
+
+
+  Widget _buildSiteGroupLabel(String text, AppTokens t) {
     return Padding(
-      padding: EdgeInsets.fromLTRB(16, 14, 16, 4),
+      padding: const EdgeInsets.fromLTRB(4, 14, 4, 7),
       child: Text(
         text,
         style: TextStyle(
-          fontSize: 11.5,
+          fontSize: 11,
           fontWeight: FontWeight.w700,
-          letterSpacing: 0.6,
-          color: Colors.grey,
+          letterSpacing: 0.4,
+          color: t.text3,
         ),
       ),
     );
   }
 
-  /// 单个站点选项：单选圆点 + 域名 + 角色标签 + 延迟（+ 自定义站的更多操作）
-  Widget _buildSiteOption(AppState appState, String site, String roleTag,
+
+  /// 单个站点选项：状态圆点 + 域名 + 角色/测速状态 + 延迟（+ 自定义站更多操作）
+  Widget _buildSiteOption(
+      AppState appState, String site, String roleTag, AppTokens t,
       {bool customSite = false}) {
     final selected = appState.currentSite == site;
     final host = _siteHost(site);
-    final accent = Theme.of(context).colorScheme.primary;
+    final ms = _siteLatency[host];
+    final subtitle = [
+      roleTag,
+      if (customSite && appState.hasManualSiteType(site)) '手动归类',
+      if (_isFastestSite(host)) '最快',
+      ms == null ? '未测速' : '已测速',
+    ].join(' · ');
     return InkWell(
       onTap: () {
         if (selected) return;
@@ -398,63 +716,74 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
           ..hideCurrentSnackBar()
           ..showSnackBar(SnackBar(
             content: Text('已切换到 $host'),
-            duration: Duration(seconds: 2),
+            duration: const Duration(seconds: 2),
           ));
       },
       child: Padding(
-        padding: EdgeInsets.fromLTRB(16, 11, customSite ? 4 : 16, 11),
+        padding: EdgeInsets.fromLTRB(13, 11, customSite ? 4 : 13, 11),
         child: Row(
           children: [
-            Icon(
-              selected
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_unchecked,
-              size: 20,
-              color: selected ? accent : Colors.grey.shade400,
-            ),
-            SizedBox(width: 12),
+            _buildSiteRowIcon(selected, t),
+            const SizedBox(width: 11),
             Expanded(
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Flexible(
-                    child: Text(
-                      host,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14.5,
-                        fontWeight:
-                            selected ? FontWeight.w600 : FontWeight.w400,
-                      ),
+                  Text(
+                    host,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight:
+                          selected ? FontWeight.w700 : FontWeight.w600,
+                      color: selected ? t.accent : t.text1,
                     ),
                   ),
-                  SizedBox(width: 8),
-                  _buildSiteTag(roleTag),
-                  if (customSite && appState.hasManualSiteType(site)) ...[
-                    SizedBox(width: 6),
-                    _buildSiteTag('手动归类', color: Colors.orange),
-                  ],
-                  if (_isFastestSite(host)) ...[
-                    SizedBox(width: 6),
-                    _buildSiteTag('最快', color: Colors.green),
-                  ],
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11.5, color: t.text3),
+                  ),
                 ],
               ),
             ),
-            _buildSiteLatency(host),
-            if (customSite) _buildCustomSiteMenu(appState, site),
+            const SizedBox(width: 8),
+            _buildSiteLatency(host, t),
+            if (customSite) _buildCustomSiteMenu(appState, site, t),
           ],
         ),
       ),
     );
   }
 
+  /// 选项左侧状态圆点：选中是实心勾，未选中是描边地球
+  Widget _buildSiteRowIcon(bool selected, AppTokens t) {
+    return Container(
+      width: 28,
+      height: 28,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: selected ? t.accent : t.surface2,
+        shape: BoxShape.circle,
+      ),
+      child: Icon(
+        selected ? Icons.check_rounded : Icons.language_rounded,
+        size: 15,
+        color: selected ? Colors.white : t.text2,
+      ),
+    );
+  }
+
+
   /// 自定义站点的更多操作：归类到某个系 / 删除
-  Widget _buildCustomSiteMenu(AppState appState, String site) {
+  Widget _buildCustomSiteMenu(AppState appState, String site, AppTokens t) {
     return PopupMenuButton<String>(
       tooltip: '更多操作',
       padding: EdgeInsets.zero,
-      icon: Icon(Icons.more_vert, size: 18, color: Colors.grey.shade500),
+      icon: Icon(Icons.more_vert_rounded, size: 18, color: t.text3),
       iconSize: 18,
       onSelected: (value) {
         if (value == 'family') {
@@ -469,9 +798,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
           height: 44,
           child: Row(
             children: [
-              Icon(Icons.category_outlined, size: 18),
-              SizedBox(width: 10),
-              Text('归 类', style: TextStyle(fontSize: 14)),
+              Icon(Icons.category_outlined, size: 18, color: t.text2),
+              const SizedBox(width: 10),
+              Text('归类', style: TextStyle(fontSize: 14, color: t.text1)),
             ],
           ),
         ),
@@ -480,10 +809,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
           height: 44,
           child: Row(
             children: [
-              Icon(Icons.delete_outline, size: 18, color: Colors.red),
-              SizedBox(width: 10),
-              Text('删除',
-                  style: TextStyle(fontSize: 14, color: Colors.red)),
+              Icon(Icons.delete_outline, size: 18, color: t.danger),
+              const SizedBox(width: 10),
+              Text('删除', style: TextStyle(fontSize: 14, color: t.danger)),
             ],
           ),
         ),
@@ -640,8 +968,13 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
 
   /// 站点徽标：取域名首段的前两个字符
+  ///
+  /// IP（含本地 mock 的 172.16.1.2:8899）首段是纯数字，取两位会显示成
+  /// 毫无意义的「17」，这类主机统一改用地球图标。
   Widget _buildSiteAvatar(String host) {
-    var label = host.isEmpty ? '?' : host.split('.').first.toUpperCase();
+    final first = host.isEmpty ? '' : host.split(RegExp(r'[.:]')).first;
+    final isIpLike = first.isNotEmpty && int.tryParse(first) != null;
+    var label = first.toUpperCase();
     if (label.length > 2) label = label.substring(0, 2);
     return Container(
       width: 42,
@@ -655,11 +988,15 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
           end: Alignment.bottomRight,
         ),
       ),
-      child: Text(
-        label,
-        style: const TextStyle(
-            color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
-      ),
+      child: isIpLike || label.isEmpty
+          ? const Icon(Icons.language_rounded, size: 22, color: Colors.white)
+          : Text(
+              label,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold),
+            ),
     );
   }
 
@@ -670,21 +1007,27 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     return ms == _fastestSiteLatency;
   }
 
+
   /// 角色小标签（主站/备用/自定义/最快）
-  Widget _buildSiteTag(String text, {Color? color}) {
-    final c = color ?? Colors.grey.shade700;
+  Widget _buildSiteTag(String text, AppTokens t, {Color? color}) {
+    final c = color ?? t.text2;
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
-        color: c.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(6),
+        color: c.withOpacity(t.dark ? 0.18 : 0.10),
+        borderRadius: BorderRadius.circular(5),
       ),
       child: Text(
         text,
-        style: TextStyle(fontSize: 10.5, color: c, fontWeight: FontWeight.w600),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          color: c,
+        ),
       ),
     );
   }
+
 
   /// 当前最快可达站点的延迟（用于相对分档），无数据返回 null
   int? get _fastestSiteLatency {
@@ -697,42 +1040,61 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   ///
   /// 绝对阈值在不同网络下没有可比性（模拟器普遍 2s 以上、真机常见 100~500ms），
   /// 所以按「相对当前最快站点」分档：1.5 倍内绿、3 倍内橙、更慢红，超时直接红。
-  Color _siteLatencyColor(int ms) {
-    if (ms < 0) return Colors.red;
+  Color _siteLatencyColor(int ms, AppTokens t) {
+    if (ms < 0) return t.danger;
     final fastest = _fastestSiteLatency;
-    if (fastest == null || fastest <= 0) return Colors.grey;
-    if (ms <= fastest * 1.5) return Colors.green;
-    if (ms <= fastest * 3) return Colors.orange;
-    return Colors.red;
+    if (fastest == null || fastest <= 0) return t.text3;
+    if (ms <= fastest * 1.5) return t.success;
+    if (ms <= fastest * 3) return t.warning;
+    return t.danger;
   }
 
   /// 延迟展示文本
   String _siteLatencyText(int ms) => ms < 0 ? '超时' : '${ms}ms';
 
-  /// 站点延迟文本
-  Widget _buildSiteLatency(String host) {
+  /// 站点延迟文本（未测速时不占位）
+  Widget _buildSiteLatency(String host, AppTokens t) {
     final ms = _siteLatency[host];
-    if (ms == null) return SizedBox.shrink();
+    if (ms == null) return const SizedBox.shrink();
     return Text(
       _siteLatencyText(ms),
       style: TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.w600,
-        color: _siteLatencyColor(ms),
+        fontSize: 11.5,
+        fontWeight: FontWeight.w700,
+        color: _siteLatencyColor(ms, t),
         fontFeatures: const [FontFeature.tabularFigures()],
       ),
     );
   }
 
   /// 去掉协议前缀取主机名（用于展示与测速）
+  /// 测速用的探测地址：沿用站点自己的协议与端口，只保留 origin
+  String _siteProbeUrl(String site) {
+    final raw = site.trim();
+    if (raw.isEmpty) return '';
+    final withScheme =
+        raw.startsWith('http://') || raw.startsWith('https://')
+            ? raw
+            : 'https://$raw';
+    final uri = Uri.tryParse(withScheme);
+    if (uri == null || uri.host.isEmpty) return '';
+    final scheme = uri.scheme.isEmpty ? 'https' : uri.scheme;
+    final port = uri.hasPort ? ':${uri.port}' : '';
+    return '$scheme://${uri.host}$port$_siteTestPath';
+  }
+
   String _siteHost(String site) {
     if (site.isEmpty) return '';
     final uri = Uri.tryParse(site);
     if (uri != null && uri.host.isNotEmpty) {
-      return uri.host.replaceAll('www.', '');
+      final host = uri.host.replaceAll('www.', '');
+      // 非默认端口要带上，否则本地 mock 的 8899 / 8901 会显示成同一个域名
+      final port = uri.hasPort ? uri.port : 0;
+      return (port == 0 || port == 80 || port == 443) ? host : '$host:$port';
     }
     return site.replaceFirst(RegExp(r'^https?://'), '').replaceAll('/', '');
   }
+
 
   /// 并发探测所有站点的可达性与延迟
   ///
@@ -741,26 +1103,32 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   Future<void> _testSiteLatency() async {
     if (_siteTesting) return;
     final appState = context.read<AppState>();
-    final hosts = appState.allSites
-        .map(_siteHost)
-        .where((h) => h.isNotEmpty)
-        .toSet()
-        .toList();
+    // host -> 探测地址。用站点自己的协议，本地 http 的 mock 站点
+    // 才不会因为被强制拼成 https 而一律显示「超时」。
+    final targets = <String, String>{};
+    for (final site in appState.allSites) {
+      final host = _siteHost(site);
+      final url = _siteProbeUrl(site);
+      if (host.isEmpty || url.isEmpty) continue;
+      targets.putIfAbsent(host, () => url);
+    }
     setState(() {
       _siteTesting = true;
       _siteLatency.clear();
     });
+    _siteRevision.value++;
     final dio = Dio(
       BaseOptions(
         connectTimeout: Duration(milliseconds: 3000),
         receiveTimeout: Duration(milliseconds: 3000),
       ),
     );
-    await Future.wait(hosts.map((host) async {
+    await Future.wait(targets.entries.map((entry) async {
+      final host = entry.key;
       final sw = Stopwatch()..start();
       int ms;
       try {
-        await dio.head<void>('https://$host$_siteTestPath');
+        await dio.head<void>(entry.value);
         ms = sw.elapsedMilliseconds;
       } on DioException catch (e) {
         ms = e.response != null ? sw.elapsedMilliseconds : -1;
@@ -770,8 +1138,11 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       sw.stop();
       if (!mounted) return;
       setState(() => _siteLatency[host] = ms);
+      // 二级页是独立路由，拿不到这里的 setState，只能靠 notifier 触发重建
+      _siteRevision.value++;
     }));
     if (mounted) setState(() => _siteTesting = false);
+    _siteRevision.value++;
   }
 
   /// 手动输入自定义站点网址
@@ -886,104 +1257,88 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
 
   /// 2. 下载目录设置区域
-  Widget _buildDownloadDirSection(AppState appState) {
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: false,  // 默认折叠
-          leading: Icon(Icons.folder, size: 20, color: Colors.amber),
-          title: Text('下载目录', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+  Widget _buildDownloadDirContent(AppState appState) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  appState.downloadDir.isEmpty 
+                    ? '正在初始化...' 
+                    : appState.downloadDir,
+                  style: TextStyle(fontSize: 13),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: 12),
+        Row(
           children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            appState.downloadDir.isEmpty 
-                              ? '正在初始化...' 
-                              : appState.downloadDir,
-                            style: TextStyle(fontSize: 13),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _selectDownloadDirectory(appState),
-                          icon: Icon(Icons.folder_open, size: 18),
-                          label: Text('选择目录'),
-                        ),
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _openDownloadDirectory(appState.downloadDir),
-                          icon: Icon(Icons.folder_shared, size: 18),
-                          label: Text('打开目录'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Divider(height: 24),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('防媒体扫描', style: TextStyle(fontSize: 14)),
-                    subtitle: Text('在下载目录创建 .nomedia，防止视频出现在相册', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                    value: appState.nomediaEnabled,
-                    onChanged: (v) async {
-                      final ok = await appState.toggleNomedia(v);
-                      if (!mounted) return;
-                      if (!ok) {
-                        // 失败时开关不会翻（appState 没改状态），
-                        // 这里明确告诉用户原因，别让人反复点。
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              appState.downloadDir.isEmpty
-                                  ? '请先设置下载目录'
-                                  : '设置失败，请检查下载目录是否可写',
-                            ),
-                          ),
-                        );
-                      }
-                    },
-                  ),
-                  Divider(height: 24),
-                  // 缓存管理：清理临时残留与失效记录
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.cleaning_services_outlined),
-                    title: Text('缓存管理', style: TextStyle(fontSize: 14)),
-                    subtitle: Text(
-                      '清理未合并的临时文件、以及文件已删除却残留的记录',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    trailing: Icon(Icons.chevron_right),
-                    onTap: () => _openCacheManager(appState),
-                  ),
-                ],
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => _selectDownloadDirectory(appState),
+                icon: Icon(Icons.folder_open, size: 18),
+                label: Text('选择目录'),
+              ),
+            ),
+            SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => _openDownloadDirectory(appState.downloadDir),
+                icon: Icon(Icons.folder_shared, size: 18),
+                label: Text('打开目录'),
               ),
             ),
           ],
         ),
-      ),
+        Divider(height: 24),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('防媒体扫描', style: TextStyle(fontSize: 14)),
+          subtitle: Text('在下载目录创建 .nomedia，防止视频出现在相册', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          value: appState.nomediaEnabled,
+          onChanged: (v) async {
+            final ok = await appState.toggleNomedia(v);
+            if (!mounted) return;
+            if (!ok) {
+              // 失败时开关不会翻（appState 没改状态），
+              // 这里明确告诉用户原因，别让人反复点。
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    appState.downloadDir.isEmpty
+                        ? '请先设置下载目录'
+                        : '设置失败，请检查下载目录是否可写',
+                  ),
+                ),
+              );
+            }
+          },
+        ),
+        Divider(height: 24),
+        // 缓存管理：清理临时残留与失效记录
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.cleaning_services_outlined),
+          title: Text('缓存管理', style: TextStyle(fontSize: 14)),
+          subtitle: Text(
+            '清理未合并的临时文件、以及文件已删除却残留的记录',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          trailing: Icon(Icons.chevron_right),
+          onTap: () => _openCacheManager(appState),
+        ),
+      ],
     );
   }
   
@@ -1141,150 +1496,134 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
 
   /// 2.5 下载并发设置区域
-  Widget _buildDownloadConcurrencySection(AppState appState) {
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: false,  // 默认折叠
-          leading: Icon(Icons.download, size: 20, color: Colors.teal),
-          title: Text('下载设置', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+  Widget _buildDownloadConcurrencyContent(AppState appState) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 同时下载任务数
+        Row(
           children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 同时下载任务数
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('同时下载任务数', style: TextStyle(fontSize: 14)),
-                            Text('同时下载的视频数量', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                          ],
-                        ),
-                      ),
-                      SizedBox(width: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Theme.of(context).colorScheme.primary),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: [
-                            _buildConcurrentButton(
-                              icon: Icons.remove,
-                              onTap: appState.maxConcurrentTasks > 1
-                                  ? () => appState.setMaxConcurrentTasks(appState.maxConcurrentTasks - 1)
-                                  : null,
-                            ),
-                            Container(
-                              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              child: Text(
-                                '${appState.maxConcurrentTasks}',
-                                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            _buildConcurrentButton(
-                              icon: Icons.add,
-                              onTap: appState.maxConcurrentTasks < 5
-                                  ? () => appState.setMaxConcurrentTasks(appState.maxConcurrentTasks + 1)
-                                  : null,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                  Text('同时下载任务数', style: TextStyle(fontSize: 14)),
+                  Text('同时下载的视频数量', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ],
+              ),
+            ),
+            SizedBox(width: 8),
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Theme.of(context).colorScheme.primary),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  _buildConcurrentButton(
+                    icon: Icons.remove,
+                    onTap: appState.maxConcurrentTasks > 1
+                        ? () => appState.setMaxConcurrentTasks(appState.maxConcurrentTasks - 1)
+                        : null,
                   ),
-                  SizedBox(height: 12),
-                  Divider(),
-                  
-                  // TS切片并发数
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('切片并发数', style: TextStyle(fontSize: 14)),
-                            Text('单个视频TS切片同时下载数', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                          ],
-                        ),
-                      ),
-                      SizedBox(width: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Theme.of(context).colorScheme.primary),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: [
-                            _buildConcurrentButton(
-                              icon: Icons.remove,
-                              onTap: appState.maxConcurrentSegments > 4
-                                  ? () => appState.setMaxConcurrentSegments(appState.maxConcurrentSegments - 4)
-                                  : null,
-                            ),
-                            Container(
-                              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              child: Text(
-                                '${appState.maxConcurrentSegments}',
-                                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            _buildConcurrentButton(
-                              icon: Icons.add,
-                              onTap: appState.maxConcurrentSegments < 64
-                                  ? () => appState.setMaxConcurrentSegments(appState.maxConcurrentSegments + 4)
-                                  : null,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Text(
+                      '${appState.maxConcurrentTasks}',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                  SizedBox(height: 8),
-                  Text(
-                    '建议WiFi下使用32，移动数据下使用8-16',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                  SizedBox(height: 12),
-                  Divider(),
-
-                  // 播放节点（视频 CDN 线路）
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('播放节点', style: TextStyle(fontSize: 14)),
-                            Text(
-                              '切换视频下载/播放的CDN线路',
-                              style: TextStyle(fontSize: 12, color: Colors.grey),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 8),
-                  _buildCdnNodePicker(appState),
-                  SizedBox(height: 8),
-                  Text(
-                    _cdnHintFor(appState.currentSiteType),
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                  _buildConcurrentButton(
+                    icon: Icons.add,
+                    onTap: appState.maxConcurrentTasks < 5
+                        ? () => appState.setMaxConcurrentTasks(appState.maxConcurrentTasks + 1)
+                        : null,
                   ),
                 ],
               ),
             ),
           ],
         ),
-      ),
+        SizedBox(height: 12),
+        Divider(),
+        
+        // TS切片并发数
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('切片并发数', style: TextStyle(fontSize: 14)),
+                  Text('单个视频TS切片同时下载数', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ],
+              ),
+            ),
+            SizedBox(width: 8),
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Theme.of(context).colorScheme.primary),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  _buildConcurrentButton(
+                    icon: Icons.remove,
+                    onTap: appState.maxConcurrentSegments > 4
+                        ? () => appState.setMaxConcurrentSegments(appState.maxConcurrentSegments - 4)
+                        : null,
+                  ),
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Text(
+                      '${appState.maxConcurrentSegments}',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  _buildConcurrentButton(
+                    icon: Icons.add,
+                    onTap: appState.maxConcurrentSegments < 64
+                        ? () => appState.setMaxConcurrentSegments(appState.maxConcurrentSegments + 4)
+                        : null,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 8),
+        Text(
+          '建议WiFi下使用32，移动数据下使用8-16',
+          style: TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+        SizedBox(height: 12),
+        Divider(),
+
+        // 播放节点（视频 CDN 线路）
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('播放节点', style: TextStyle(fontSize: 14)),
+                  Text(
+                    '切换视频下载/播放的CDN线路',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 8),
+        _buildCdnNodePicker(appState),
+        SizedBox(height: 8),
+        Text(
+          _cdnHintFor(appState.currentSiteType),
+          style: TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+      ],
     );
   }
   
@@ -1458,285 +1797,253 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
 
   /// 3. 浏览设置区域
-  Widget _buildBrowseSection(AppState appState) {
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: false,  // 默认折叠
-          leading: Icon(Icons.view_module, size: 20, color: Colors.blue),
-          title: Text('浏览设置', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+  Widget _buildBrowseContent(AppState appState) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 视频显示模式切换
+        Row(
           children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            Text('视频显示模式', style: TextStyle(fontSize: 14)),
+            Spacer(),
+            ChoiceChip(
+              label: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // 视频显示模式切换
-                  Row(
-                    children: [
-                      Text('视频显示模式', style: TextStyle(fontSize: 14)),
-                      Spacer(),
-                      ChoiceChip(
-                        label: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.grid_view, size: 16),
-                            SizedBox(width: 4),
-                            Text('大图'),
-                          ],
-                        ),
-                        selected: appState.videoDisplayMode == 'grid',
-                        onSelected: (selected) {
-                          if (selected) {
-                            appState.setVideoDisplayMode('grid');
-                          }
-                        },
-                      ),
-                      SizedBox(width: 8),
-                      ChoiceChip(
-                        label: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.list, size: 16),
-                            SizedBox(width: 4),
-                            Text('列表'),
-                          ],
-                        ),
-                        selected: appState.videoDisplayMode == 'list',
-                        onSelected: (selected) {
-                          if (selected) {
-                            appState.setVideoDisplayMode('list');
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                  Divider(),
-                  
-                  // 搜索历史管理
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.history, size: 20),
-                    title: Text('搜索历史'),
-                    subtitle: Text(
-                      appState.searchHistory.isEmpty
-                          ? '暂无记录'
-                          : '已保存 ${appState.searchHistory.entries.length} 条',
-                    ),
-                    trailing: Icon(Icons.chevron_right, size: 20),
-                    onTap: () => _openSearchHistory(appState),
-                  ),
-                  Divider(),
-                  
-                  // 在线播放（实验性功能）
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Row(
-                      children: [
-                        Text('在线播放'),
-                        SizedBox(width: 8),
-                        Container(
-                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text('实验', style: TextStyle(fontSize: 10, color: Colors.orange)),
-                        ),
-                      ],
-                    ),
-                    subtitle: Text('列表模式时点击封面直接在线播放'),
-                    value: appState.streamingMode,
-                    onChanged: appState.toggleStreamingMode,
-                  ),
-                  Divider(),
-                  
-                  // 回顶部按钮设置
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('显示回顶部按钮'),
-                    subtitle: Text('滚动时显示快速回顶部按钮'),
-                    value: appState.showBackToTop,
-                    onChanged: (v) {
-                      appState.setShowBackToTop(v);
-                    },
-                  ),
-                  if (appState.showBackToTop)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text('按钮位置'),
-                      trailing: SegmentedButton<String>(
-                        segments: [
-                          ButtonSegment(value: 'left', label: Text('左下')),
-                          ButtonSegment(value: 'right', label: Text('右下')),
-                        ],
-                        selected: {appState.backToTopPosition},
-                        onSelectionChanged: (s) {
-                          appState.setBackToTopPosition(s.first);
-                        },
-                      ),
-                    ),
-                  Divider(),
-                  
-                  // 外部播放器设置
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('使用外部播放器'),
-                    subtitle: Text('点击视频时使用系统播放器打开'),
-                    value: appState.useExternalPlayer,
-                    onChanged: (v) {
-                      appState.setExternalPlayer(v);
-                    },
-                  ),
-                  Divider(),
-
-                  // 隐私模式：列表封面加模糊，避免公共场合被看到内容
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('隐私模式'),
-                    subtitle: Text('列表封面加模糊，长按封面可临时看清'),
-                    value: appState.privacyMode,
-                    onChanged: (v) async {
-                      await appState.togglePrivacyMode();
-                    },
-                  ),
-                  Divider(),
-
-                  // 作者更新自动检查开关
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('自动检查作者更新'),
-                    subtitle: Text('每 6 小时在后台检查一次已关注作者的新视频'),
-                    value: _followedAutoCheck,
-                    onChanged: (v) async {
-                      await appState.followedAuthorsService
-                          .setAutoCheckEnabled(v);
-                      if (mounted) setState(() => _followedAutoCheck = v);
-                    },
-                  ),
+                  Icon(Icons.grid_view, size: 16),
+                  SizedBox(width: 4),
+                  Text('大图'),
                 ],
               ),
+              selected: appState.videoDisplayMode == 'grid',
+              onSelected: (selected) {
+                if (selected) {
+                  appState.setVideoDisplayMode('grid');
+                }
+              },
+            ),
+            SizedBox(width: 8),
+            ChoiceChip(
+              label: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.list, size: 16),
+                  SizedBox(width: 4),
+                  Text('列表'),
+                ],
+              ),
+              selected: appState.videoDisplayMode == 'list',
+              onSelected: (selected) {
+                if (selected) {
+                  appState.setVideoDisplayMode('list');
+                }
+              },
             ),
           ],
         ),
-      ),
+        Divider(),
+        
+        // 搜索历史管理
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.history, size: 20),
+          title: Text('搜索历史'),
+          subtitle: Text(
+            appState.searchHistory.isEmpty
+                ? '暂无记录'
+                : '已保存 ${appState.searchHistory.entries.length} 条',
+          ),
+          trailing: Icon(Icons.chevron_right, size: 20),
+          onTap: () => _openSearchHistory(appState),
+        ),
+        Divider(),
+        
+        // 在线播放（实验性功能）
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Row(
+            children: [
+              Text('在线播放'),
+              SizedBox(width: 8),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text('实验', style: TextStyle(fontSize: 10, color: Colors.orange)),
+              ),
+            ],
+          ),
+          subtitle: Text('列表模式时点击封面直接在线播放'),
+          value: appState.streamingMode,
+          onChanged: appState.toggleStreamingMode,
+        ),
+        Divider(),
+        
+        // 回顶部按钮设置
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('显示回顶部按钮'),
+          subtitle: Text('滚动时显示快速回顶部按钮'),
+          value: appState.showBackToTop,
+          onChanged: (v) {
+            appState.setShowBackToTop(v);
+          },
+        ),
+        if (appState.showBackToTop)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text('按钮位置'),
+            trailing: SegmentedButton<String>(
+              segments: [
+                ButtonSegment(value: 'left', label: Text('左下')),
+                ButtonSegment(value: 'right', label: Text('右下')),
+              ],
+              selected: {appState.backToTopPosition},
+              onSelectionChanged: (s) {
+                appState.setBackToTopPosition(s.first);
+              },
+            ),
+          ),
+        Divider(),
+        
+        // 外部播放器设置
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('使用外部播放器'),
+          subtitle: Text('点击视频时使用系统播放器打开'),
+          value: appState.useExternalPlayer,
+          onChanged: (v) {
+            appState.setExternalPlayer(v);
+          },
+        ),
+        Divider(),
+
+        // 隐私模式：列表封面加模糊，避免公共场合被看到内容
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('隐私模式'),
+          subtitle: Text('列表封面加模糊，长按封面可临时看清'),
+          value: appState.privacyMode,
+          onChanged: (v) async {
+            await appState.togglePrivacyMode();
+          },
+        ),
+        Divider(),
+
+        // 作者更新自动检查开关
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('自动检查作者更新'),
+          subtitle: Text('每 6 小时在后台检查一次已关注作者的新视频'),
+          value: _followedAutoCheck,
+          onChanged: (v) async {
+            await appState.followedAuthorsService
+                .setAutoCheckEnabled(v);
+            if (mounted) setState(() => _followedAutoCheck = v);
+          },
+        ),
+      ],
     );
   }
 
   /// 4. 主题模式设置区域
-  Widget _buildThemeSection(AppState appState) {
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: false,  // 默认折叠
-          leading: Icon(Icons.palette, size: 20, color: Colors.purple),
-          title: Text('主题模式', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 跟随系统开关
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('跟随系统'),
-                    subtitle: Text('自动切换日间/夜间模式'),
-                    value: appState.themeMode == 2,
-                    onChanged: (v) {
-                      if (v) {
-                        appState.setAutoTheme();
-                      } else {
-                        // 关闭跟随系统时，切换到日间模式
-                        appState.setLightMode();
-                      }
-                    },
-                  ),
-                  Divider(),
-                  
-                  // 主题选择（跟随系统关闭时才可操作）
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('选择主题'),
-                    subtitle: Text(
-                      appState.themeMode == 2 
-                          ? '当前跟随系统' 
-                          : (appState.themeMode == 0 ? '日间模式' : '夜间模式')
-                    ),
-                    trailing: SegmentedButton<int>(
-                      segments: [
-                        ButtonSegment(
-                          value: 0,
-                          icon: Icon(Icons.light_mode, size: 18),
-                          label: Text('日'),
-                        ),
-                        ButtonSegment(
-                          value: 1,
-                          icon: Icon(Icons.dark_mode, size: 18),
-                          label: Text('夜'),
-                        ),
-                        ButtonSegment(
-                          value: 2,
-                          icon: Icon(Icons.settings_suggest, size: 18),
-                          label: Text('自动'),
-                        ),
-                      ],
-                      selected: {appState.themeMode},
-                      onSelectionChanged: (s) {
-                        final mode = s.first;
-                        switch (mode) {
-                          case 0:
-                            appState.setLightMode();
-                            break;
-                          case 1:
-                            appState.setDarkMode();
-                            break;
-                          case 2:
-                            appState.setAutoTheme();
-                            break;
-                        }
-                      },
-                    ),
-                  ),
-                  
-                  // 当前主题预览
-                  SizedBox(height: 8),
-                  Container(
-                    padding: EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceVariant,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          appState.isDarkMode ? Icons.dark_mode : Icons.light_mode,
-                          size: 20,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          '当前: ${appState.isDarkMode ? "夜间模式" : "日间模式"}',
-                          style: TextStyle(
-                            color: Theme.of(context).textTheme.bodyMedium?.color,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 24),
-                  _buildGlassStyleBlock(),
-                ],
-              ),
-            ),
-          ],
+  Widget _buildThemeContent(AppState appState) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 跟随系统开关
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('跟随系统'),
+          subtitle: Text('自动切换日间/夜间模式'),
+          value: appState.themeMode == 2,
+          onChanged: (v) {
+            if (v) {
+              appState.setAutoTheme();
+            } else {
+              // 关闭跟随系统时，切换到日间模式
+              appState.setLightMode();
+            }
+          },
         ),
-      ),
+        Divider(),
+        
+        // 主题选择（跟随系统关闭时才可操作）
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('选择主题'),
+          subtitle: Text(
+            appState.themeMode == 2 
+                ? '当前跟随系统' 
+                : (appState.themeMode == 0 ? '日间模式' : '夜间模式')
+          ),
+          trailing: SegmentedButton<int>(
+            segments: [
+              ButtonSegment(
+                value: 0,
+                icon: Icon(Icons.light_mode, size: 18),
+                label: Text('日'),
+              ),
+              ButtonSegment(
+                value: 1,
+                icon: Icon(Icons.dark_mode, size: 18),
+                label: Text('夜'),
+              ),
+              ButtonSegment(
+                value: 2,
+                icon: Icon(Icons.settings_suggest, size: 18),
+                label: Text('自动'),
+              ),
+            ],
+            selected: {appState.themeMode},
+            onSelectionChanged: (s) {
+              final mode = s.first;
+              switch (mode) {
+                case 0:
+                  appState.setLightMode();
+                  break;
+                case 1:
+                  appState.setDarkMode();
+                  break;
+                case 2:
+                  appState.setAutoTheme();
+                  break;
+              }
+            },
+          ),
+        ),
+        
+        // 当前主题预览
+        SizedBox(height: 8),
+        Container(
+          padding: EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceVariant,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                appState.isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                size: 20,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              SizedBox(width: 8),
+              Text(
+                '当前: ${appState.isDarkMode ? "夜间模式" : "日间模式"}',
+                style: TextStyle(
+                  color: Theme.of(context).textTheme.bodyMedium?.color,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 24),
+        _buildGlassStyleBlock(),
+      ],
     );
   }
 
@@ -1838,12 +2145,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
 
   /// 5. 应用锁设置区域
-  Widget _buildAppLockSection(AppState appState) {
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
+  Widget _buildAppLockContent(AppState appState) {
+    return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -1883,8 +2186,6 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               ),
             ],
           ],
-        ),
-      ),
     );
   }
   
@@ -2002,180 +2303,144 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   }
 
   /// 6. 权限状态展示区域
-  Widget _buildPermissionSection(AppState appState) {
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: false,  // 默认折叠
-          leading: Icon(Icons.security, size: 20, color: Colors.green),
-          title: Text('权限状态', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      appState.permissionGranted ? Icons.check_circle : Icons.error,
-                      color: appState.permissionGranted ? Colors.green : Colors.red,
-                    ),
-                    title: Text('存储权限'),
-                    subtitle: Text(
-                      appState.permissionGranted
-                          ? '已授权'
-                          : (appState.storagePermissionPermanentlyDenied
-                              ? '已被拒绝，请到系统设置中手动开启'
-                              : '未授权'),
-                    ),
-                    trailing: !appState.permissionGranted
-                      ? TextButton(
-                          onPressed: () async {
-                            final granted = await appState.requestPermissions();
-                            if (!mounted || granted) return;
-                            // 永久拒绝时 request() 不会弹窗，
-                            // 必须明确引导去系统设置，否则按钮看着像坏了
-                            if (appState.storagePermissionPermanentlyDenied) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('权限已被拒绝，请在系统设置中开启'),
-                                  action: SnackBarAction(
-                                    label: '去设置',
-                                    onPressed: () =>
-                                        appState.openAppSettingsPage(),
-                                  ),
-                                ),
-                              );
-                            }
-                          },
-                          child: Text('授权'),
-                        )
-                      : null,
-                  ),
-                  // 悬浮窗权限
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      appState.overlayPermissionGranted ? Icons.check_circle : Icons.error,
-                      color: appState.overlayPermissionGranted ? Colors.green : Colors.orange,
-                    ),
-                    title: Text('悬浮窗权限'),
-                    subtitle: Text(appState.overlayPermissionGranted ? '已授权' : '未授权（悬浮播放需要）'),
-                    trailing: TextButton.icon(
-                      onPressed: () async {
-                        await appState.requestOverlayPermission();
-                      },
-                      icon: Icon(Icons.settings_outlined, size: 16),
-                      label: Text(appState.overlayPermissionGranted ? '设置' : '去授权'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+  Widget _buildPermissionContent(AppState appState) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            appState.permissionGranted ? Icons.check_circle : Icons.error,
+            color: appState.permissionGranted ? Colors.green : Colors.red,
+          ),
+          title: Text('存储权限'),
+          subtitle: Text(
+            appState.permissionGranted
+                ? '已授权'
+                : (appState.storagePermissionPermanentlyDenied
+                    ? '已被拒绝，请到系统设置中手动开启'
+                    : '未授权'),
+          ),
+          trailing: !appState.permissionGranted
+            ? TextButton(
+                onPressed: () async {
+                  final granted = await appState.requestPermissions();
+                  if (!mounted || granted) return;
+                  // 永久拒绝时 request() 不会弹窗，
+                  // 必须明确引导去系统设置，否则按钮看着像坏了
+                  if (appState.storagePermissionPermanentlyDenied) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('权限已被拒绝，请在系统设置中开启'),
+                        action: SnackBarAction(
+                          label: '去设置',
+                          onPressed: () =>
+                              appState.openAppSettingsPage(),
+                        ),
+                      ),
+                    );
+                  }
+                },
+                child: Text('授权'),
+              )
+            : null,
         ),
-      ),
+        // 悬浮窗权限
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            appState.overlayPermissionGranted ? Icons.check_circle : Icons.error,
+            color: appState.overlayPermissionGranted ? Colors.green : Colors.orange,
+          ),
+          title: Text('悬浮窗权限'),
+          subtitle: Text(appState.overlayPermissionGranted ? '已授权' : '未授权（悬浮播放需要）'),
+          trailing: TextButton.icon(
+            onPressed: () async {
+              await appState.requestOverlayPermission();
+            },
+            icon: Icon(Icons.settings_outlined, size: 16),
+            label: Text(appState.overlayPermissionGranted ? '设置' : '去授权'),
+          ),
+        ),
+      ],
     );
   }
 
   /// 7. 调试设置区域（默认折叠）
-  Widget _buildDebugSection(AppState appState) {
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: false,  // 默认折叠
-          leading: Icon(Icons.bug_report, size: 20, color: Colors.purple),
-          title: Text('调试设置', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('Debug模式'),
-                    subtitle: Text('开启后将记录运行日志'),
-                    value: appState.debugMode,
-                    onChanged: (v) async {
-                      await appState.toggleDebug(v);
-                    },
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('保存HTML'),
-                    subtitle: Text('保存请求的HTML到文件，用于调试'),
-                    value: appState.saveDebugHtml,
-                    onChanged: (v) {
-                      appState.toggleSaveDebugHtml(v);
-                    },
-                  ),
-                  if (appState.debugMode) ...[
-                    SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _exportLog,
-                            icon: Icon(Icons.share, size: 18),
-                            label: Text('分享日志'),
-                          ),
-                        ),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => _saveLog(appState.downloadDir),
-                            icon: Icon(Icons.save, size: 18),
-                            label: Text('保存日志'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _manageLogs,
-                            icon: Icon(Icons.folder_open, size: 18),
-                            label: Text('管理日志'),
-                          ),
-                        ),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _clearLog,
-                            icon: Icon(Icons.delete_sweep, size: 18, color: Colors.red),
-                            label: Text('清空日志', style: TextStyle(color: Colors.red)),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.red,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
+  Widget _buildDebugContent(AppState appState) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('Debug模式'),
+          subtitle: Text('开启后将记录运行日志'),
+          value: appState.debugMode,
+          onChanged: (v) async {
+            await appState.toggleDebug(v);
+          },
         ),
-      ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('保存HTML'),
+          subtitle: Text('保存请求的HTML到文件，用于调试'),
+          value: appState.saveDebugHtml,
+          onChanged: (v) {
+            appState.toggleSaveDebugHtml(v);
+          },
+        ),
+        if (appState.debugMode) ...[
+          SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _exportLog,
+                  icon: Icon(Icons.share, size: 18),
+                  label: Text('分享日志'),
+                ),
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _saveLog(appState.downloadDir),
+                  icon: Icon(Icons.save, size: 18),
+                  label: Text('保存日志'),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _manageLogs,
+                  icon: Icon(Icons.folder_open, size: 18),
+                  label: Text('管理日志'),
+                ),
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _clearLog,
+                  icon: Icon(Icons.delete_sweep, size: 18, color: Colors.red),
+                  label: Text('清空日志', style: TextStyle(color: Colors.red)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 
   /// 8. 关于页面区域
-  Widget _buildAboutSection() {
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
+  Widget _buildAboutContent() {
+    return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -2207,8 +2472,6 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
               ),
             ),
           ],
-        ),
-      ),
     );
   }
   
@@ -2965,3 +3228,100 @@ class _LogManagerDialogState extends State<_LogManagerDialog> {
     return '${dt.month}/${dt.day} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }
+
+
+/// 设置项的二级页面：统一顶栏（返回 + 标题 + 可选右侧动作）+ 内容区
+///
+/// [plain] 为 true 时内容自己带卡片（站点与线路按原型排成大卡 + 分组），
+/// 外面再套一层白卡会变成「卡中卡」。
+class _SettingsSubPage extends StatelessWidget {
+  final String title;
+  final WidgetBuilder body;
+  final List<Widget> Function(BuildContext context)? actions;
+  final bool plain;
+  final Listenable? listenable;
+
+  const _SettingsSubPage({
+    required this.title,
+    required this.body,
+    this.actions,
+    this.plain = false,
+    this.listenable,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final l = listenable;
+    if (l == null) return _build(context);
+    // 二级页是 push 出来的独立路由，父 State 的 setState 建不到它；
+    // 站点延迟这类异步结果只能靠 ValueNotifier 主动触发重建。
+    return AnimatedBuilder(
+      animation: l,
+      builder: (context, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
+    final t = AppTokens.of(context);
+    final act = actions;
+    return Scaffold(
+      backgroundColor: t.bg,
+      appBar: AppBar(
+        backgroundColor: t.surface,
+        centerTitle: false,
+        toolbarHeight: 58,
+        titleSpacing: 0,
+        elevation: 0,
+        leadingWidth: 52,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 12),
+          child: AppIconBtn(
+            icon: Icons.arrow_back_rounded,
+            tooltip: '返回',
+            onTap: () => Navigator.pop(context),
+          ),
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: t.text1,
+          ),
+        ),
+        actions: act == null
+            ? null
+            : [
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: act(context),
+                  ),
+                ),
+              ],
+        shape: Border(bottom: BorderSide(color: t.line)),
+      ),
+      body: ListView(
+        padding: EdgeInsets.fromLTRB(
+            12, 12, 12, MediaQuery.of(context).padding.bottom + 24),
+        children: [
+          if (plain)
+            body(context)
+          else
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
+              decoration: BoxDecoration(
+                color: t.surface,
+                borderRadius: BorderRadius.circular(AppRadius.xl),
+                border: Border.all(color: t.line),
+                boxShadow: t.cardShadow,
+              ),
+              child: body(context),
+            ),
+        ],
+      ),
+    );
+  }
+}
+

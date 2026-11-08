@@ -6,12 +6,15 @@ import '../crawler/config.dart';
 import '../models/video_info.dart';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
-import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 import '../utils/logger.dart';
 import '../components/player_glass.dart';
 import 'author_detail_page.dart';
 
 /// 在线播放页（实验性功能）
+///
+/// 视觉对齐新版设计：上方深色播放区（顶栏标题 + 返回 + 下载入口），
+/// 下方浅色信息卡（标题、元数据、作者、下载按钮）。
 class StreamingPage extends StatefulWidget {
   final VideoInfo video;
 
@@ -87,7 +90,10 @@ class _StreamingPageState extends State<StreamingPage> {
       final appState = context.read<AppState>();
       final crawler = appState.crawler;
       if (crawler == null) {
-        setState(() { _error = '请先在设置中选择站点'; _isLoading = false; });
+        setState(() {
+          _error = '请先在设置中选择站点';
+          _isLoading = false;
+        });
         return;
       }
 
@@ -127,12 +133,17 @@ class _StreamingPageState extends State<StreamingPage> {
       // 现改为只用 video_player 渲染画面 + 自绘玻璃控件，两个播放页保持统一。
       _videoController!.setLooping(false);
 
-      setState(() { _isLoading = false; });
+      setState(() {
+        _isLoading = false;
+      });
       // 自动开播后启动控件自动隐藏
       _startHideControlsTimer();
     } catch (e) {
       logger.log('Streaming', 'Error: $e');
-      setState(() { _error = '播放加载失败: $e'; _isLoading = false; });
+      setState(() {
+        _error = '播放加载失败: $e';
+        _isLoading = false;
+      });
     }
   }
 
@@ -156,7 +167,11 @@ class _StreamingPageState extends State<StreamingPage> {
       msg = '已覆盖并重新下载';
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), duration: const Duration(seconds: 2), behavior: SnackBarBehavior.floating),
+      SnackBar(
+        content: Text(msg),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
@@ -185,48 +200,134 @@ class _StreamingPageState extends State<StreamingPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bgColor = isDark ? AppTheme.darkBackground : AppTheme.scaffoldBackground;
-    final cardColor = isDark ? AppTheme.darkSurface : AppTheme.cardBackground;
-    final textColor = isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary;
-    final subColor = isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary;
+    final t = AppTokens.of(context);
     final screenHeight = MediaQuery.of(context).size.height;
+    final statusBarH = MediaQuery.of(context).padding.top;
+
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            const Center(
+              child: CircularProgressIndicator(color: Colors.white70, strokeWidth: 2.5),
+            ),
+            _buildTopBar(t, statusBarH, overlay: true),
+          ],
+        ),
+      );
+    }
+
+    if (_error != null) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            _buildErrorView(t),
+            _buildTopBar(t, statusBarH, overlay: true),
+          ],
+        ),
+      );
+    }
+
+    // 播放区高度：状态栏 + 顶栏 + 画面（16:9），不超过屏幕 46%
+    final playerHeight =
+        (screenHeight * 0.46).clamp(200.0, screenHeight * 0.46);
 
     return Scaffold(
-      backgroundColor: bgColor,
-      appBar: AppBar(
-        title: Text(widget.video.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16)),
-        centerTitle: true,
-        backgroundColor: cardColor,
-        foregroundColor: textColor,
-        actions: [
-          if (!_isLoading && _error == null)
-            IconButton(
-              icon: _isDownloading
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.download),
-              tooltip: '下载此视频',
-              onPressed: _isDownloading ? null : _downloadVideo,
+      backgroundColor: t.bg,
+      body: Column(
+        children: [
+          // ── 深色播放区 ──
+          Container(
+            color: Colors.black,
+            child: Column(
+              children: [
+                _buildTopBar(t, statusBarH, overlay: false),
+                SizedBox(
+                  height: playerHeight - statusBarH - 46,
+                  child: _buildPlayer(),
+                ),
+              ],
             ),
+          ),
+          // ── 浅色内容区 ──
+          Expanded(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                  12, 14, 12, MediaQuery.of(context).padding.bottom + 24),
+              child: _buildVideoInfo(t),
+            ),
+          ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? _buildErrorView()
-              : SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      // 播放器：屏幕上半区域（自绘玻璃控件）
-                      SizedBox(
-                        height: screenHeight * 0.42,
-                        child: _buildPlayer(),
-                      ),
-                      // 视频信息
-                      _buildVideoInfo(cardColor, textColor, subColor),
-                    ],
-                  ),
+    );
+  }
+
+  /// 播放区顶栏：返回 + 标题 + 下载
+  Widget _buildTopBar(AppTokens t, double statusBarH, {required bool overlay}) {
+    return Container(
+      color: overlay ? Colors.transparent : Colors.black,
+      padding: EdgeInsets.only(top: statusBarH),
+      child: SizedBox(
+        height: 46,
+        child: Row(
+          children: [
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => Navigator.of(context).maybePop(),
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(10),
                 ),
+                alignment: Alignment.center,
+                child: const Icon(Icons.arrow_back_rounded,
+                    size: 19, color: Colors.white),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                widget.video.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            GestureDetector(
+              onTap: _isDownloading ? null : _downloadVideo,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                width: 32,
+                height: 32,
+                margin: const EdgeInsets.only(right: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                alignment: Alignment.center,
+                child: _isDownloading
+                    ? const SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.download_rounded,
+                        size: 19, color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -284,9 +385,7 @@ class _StreamingPageState extends State<StreamingPage> {
               valueListenable: controller,
               builder: (context, value, child) {
                 return GlassIconButton(
-                  icon: value.isPlaying
-                      ? Icons.pause
-                      : Icons.play_arrow,
+                  icon: value.isPlaying ? Icons.pause : Icons.play_arrow,
                   onPressed: _togglePlayPause,
                   size: 52,
                   filled: true,
@@ -309,7 +408,8 @@ class _StreamingPageState extends State<StreamingPage> {
                   builder: (context, value, child) {
                     return Text(
                       formatPlayerDuration(value.position),
-                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 11),
                     );
                   },
                 ),
@@ -321,7 +421,8 @@ class _StreamingPageState extends State<StreamingPage> {
                   builder: (context, value, child) {
                     return Text(
                       formatPlayerDuration(value.duration),
-                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 11),
                     );
                   },
                 ),
@@ -338,7 +439,8 @@ class _StreamingPageState extends State<StreamingPage> {
                   ),
                   child: Text(
                     '${_playbackSpeed}x',
-                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w600),
                   ),
                 ),
               ],
@@ -382,12 +484,14 @@ class _StreamingPageState extends State<StreamingPage> {
                       color: selected
                           ? Theme.of(context).colorScheme.primary
                           : Colors.white,
-                      fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                      fontWeight:
+                          selected ? FontWeight.bold : FontWeight.normal,
                     ),
                   ),
                   trailing: selected
                       ? Icon(Icons.check,
-                          color: Theme.of(context).colorScheme.primary, size: 20)
+                          color: Theme.of(context).colorScheme.primary,
+                          size: 20)
                       : null,
                   onTap: () {
                     setState(() => _playbackSpeed = speed);
@@ -474,24 +578,57 @@ class _StreamingPageState extends State<StreamingPage> {
     );
   }
 
-  Widget _buildErrorView() {
+  Widget _buildErrorView(AppTokens t) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline, size: 64, color: Colors.red),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(AppRadius.xxl),
+              ),
+              alignment: Alignment.center,
+              child: const Icon(Icons.error_outline_rounded,
+                  size: 30, color: Colors.white70),
+            ),
             const SizedBox(height: 16),
-            Text(_error!, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: () {
-                setState(() { _isLoading = true; _error = null; });
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14, height: 1.5, color: Colors.white70),
+            ),
+            const SizedBox(height: 22),
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  _isLoading = true;
+                  _error = null;
+                });
                 _loadVideo();
               },
-              icon: const Icon(Icons.refresh),
-              label: const Text('重试'),
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 22),
+                decoration: BoxDecoration(
+                  color: AppTokens.blue,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                alignment: Alignment.center,
+                child: const Text(
+                  '重试',
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -499,97 +636,188 @@ class _StreamingPageState extends State<StreamingPage> {
     );
   }
 
-  Widget _buildVideoInfo(Color cardColor, Color textColor, Color subColor) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.all(AppTheme.spacingMd),
-      padding: const EdgeInsets.all(AppTheme.spacingLg),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-        boxShadow: AppTheme.cardShadow,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 标题
-          Text(widget.video.title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: textColor)),
-          const Divider(height: 24),
-
-          // 元数据行
-          _buildInfoRow('时长', _durationText, textColor, subColor),
-          _buildInfoRow('上传', _uploadDateText, textColor, subColor),
-          _buildInfoRow('观看', _viewsText, textColor, subColor),
-
-          // 作者 — 可点击跳转
-          if (_authorId != null && _authorId!.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            GestureDetector(
-              onTap: _navigateToAuthor,
-              behavior: HitTestBehavior.opaque,
-              child: Row(
-                children: [
-                  SizedBox(width: 48, child: Text('作者', style: TextStyle(fontSize: 13, color: subColor))),
-                  Expanded(
-                    child: Text(
-                      _author ?? _authorId!,
-                      style: TextStyle(fontSize: 13, color: AppTheme.primaryColor, fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                  Icon(Icons.chevron_right, size: 18, color: AppTheme.primaryColor),
-                ],
-              ),
-            ),
-          ],
-
-          const SizedBox(height: 16),
-          // 下载按钮
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _isDownloading ? null : _downloadVideo,
-              icon: _isDownloading
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.download),
-              label: Text(_isDownloading ? '添加中...' : '下载此视频'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryColor,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
+  /// 下方信息卡：标题 + 元数据 + 作者 + 下载按钮 + 实验性标识
+  Widget _buildVideoInfo(AppTokens t) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: t.surface,
+            borderRadius: BorderRadius.circular(AppRadius.xxl),
+            border: t.cardBorder,
+            boxShadow: t.cardShadow,
           ),
-
-          const SizedBox(height: 12),
-          // 实验性标识
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.video.title,
+                style: TextStyle(
+                  fontSize: 14.5,
+                  height: 1.45,
+                  fontWeight: FontWeight.w700,
+                  color: t.text1,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _buildMetaChips(t),
+              const SizedBox(height: 14),
+              Divider(height: 1, thickness: 1, color: t.line),
+              const SizedBox(height: 6),
+              if (_authorId != null && _authorId!.isNotEmpty)
+                _buildAuthorRow(t),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        GestureDetector(
+          onTap: _isDownloading ? null : _downloadVideo,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            height: 46,
             decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(6),
+              color: _isDownloading ? t.surface3 : AppTokens.blue,
+              borderRadius: BorderRadius.circular(AppRadius.lg),
             ),
-            child: const Row(
+            alignment: Alignment.center,
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.science, size: 14, color: Colors.orange),
-                SizedBox(width: 6),
-                Text('实验性功能', style: TextStyle(fontSize: 12, color: Colors.orange)),
+                if (_isDownloading)
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: t.text3),
+                  )
+                else
+                  const Icon(Icons.download_rounded,
+                      size: 18, color: Colors.white),
+                const SizedBox(width: 7),
+                Text(
+                  _isDownloading ? '添加中...' : '下载此视频',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: _isDownloading ? t.text3 : Colors.white,
+                  ),
+                ),
               ],
             ),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 12),
+        Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: t.warningSoft,
+              borderRadius: BorderRadius.circular(AppRadius.pill),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.science_rounded, size: 12, color: t.warning),
+                const SizedBox(width: 5),
+                Text(
+                  '实验性功能',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: t.warning,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildInfoRow(String label, String? value, Color textColor, Color subColor) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppTheme.spacingSm),
-      child: Row(
-        children: [
-          SizedBox(width: 48, child: Text(label, style: TextStyle(fontSize: 13, color: subColor))),
-          Expanded(child: Text(value ?? '-', style: TextStyle(fontSize: 13, color: textColor))),
-        ],
+  /// 元数据胶囊行：时长 / 上传 / 观看
+  Widget _buildMetaChips(AppTokens t) {
+    final items = <Widget>[];
+    void add(IconData icon, String? text) {
+      if (text == null || text.isEmpty) return;
+      items.add(
+        Container(
+          margin: const EdgeInsets.only(right: 7, bottom: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          decoration: BoxDecoration(
+            color: t.surface2,
+            borderRadius: BorderRadius.circular(AppRadius.pill),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 11, color: t.text3),
+              const SizedBox(width: 4),
+              Text(
+                text,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                  color: t.text2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    add(Icons.schedule_rounded, _durationText);
+    add(Icons.calendar_today_rounded, _uploadDateText);
+    add(Icons.visibility_rounded, _viewsText);
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Wrap(children: items);
+  }
+
+  Widget _buildAuthorRow(AppTokens t) {
+    return InkWell(
+      onTap: _navigateToAuthor,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: t.accentSoft,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+              alignment: Alignment.center,
+              child: Icon(Icons.person_rounded, size: 16, color: t.accent),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _author ?? _authorId!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: t.text1,
+                ),
+              ),
+            ),
+            Text(
+              '查看主页',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: t.accent,
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, size: 18, color: t.accent),
+          ],
+        ),
       ),
     );
   }

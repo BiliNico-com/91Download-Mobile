@@ -9,6 +9,7 @@ import 'dart:io';
 import '../services/app_state.dart';
 import '../services/download_manager.dart';
 import '../services/brightness_service.dart';
+import '../theme/app_theme.dart';
 import '../components/empty_state.dart';
 import '../components/cover_image.dart';
 import '../components/player_glass.dart';
@@ -30,56 +31,169 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   Set<String> _selectedIds = {};  // 已选择的任务ID
   bool _isCompletedSelectMode = false;  // 已下载tab的选择模式
   bool _isSelectMode = false;     // 选择模式（已下载tab）
-  
+
+  /// 页签索引镜像：分段控件靠它重绘高亮。
+  ///
+  /// 直接监听 TabController 每帧 setState 会重建整页，
+  /// 这里只在索引真的变了才刷新。
+  int _tabIndex = 0;
+
   @override
   bool get wantKeepAlive => true;
-  
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(_handleTabChanged);
   }
-  
+
+  void _handleTabChanged() {
+    if (!mounted || _tabIndex == _tabController.index) return;
+    setState(() => _tabIndex = _tabController.index);
+  }
+
   @override
   void dispose() {
+    _tabController.removeListener(_handleTabChanged);
     _tabController.dispose();
     super.dispose();
   }
+
+  // ── 配色 ────────────────────────────────────────────────
+  // 深浅两套统一取自 AppTheme，避免行内散落硬编码色值。
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+  Color get _t1 => _isDark ? AppTheme.darkTextPrimary : AppTheme.textPrimary;
+  Color get _t2 => _isDark ? AppTheme.darkTextSecondary : AppTheme.textSecondary;
+  Color get _t3 => _isDark ? const Color(0xFF8C8C8C) : AppTheme.textHint;
+  Color get _surface => _isDark ? AppTheme.darkSurface : Colors.white;
+  Color get _surface2 => _isDark ? AppTheme.darkInputFill : const Color(0xFFF0F0F3);
+  Color get _line => _isDark ? AppTheme.darkCardBorder : const Color(0xFFE8E8EC);
+
+  /// 列表底部给毛玻璃底栏预留的高度
+  ///
+  /// main_page 用了 extendBody，body 一直铺到屏幕底部，
+  /// MediaQuery 里的 bottom 恰好是底栏总高，直接拿它当内边距。
+  double get _bottomInset => MediaQuery.of(context).padding.bottom + 12;
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        // 原型把"下载中 / 已下载"从 AppBar 挪进内容区，
+        // 顶栏只留大标题 + 两个计数徽章。
+        centerTitle: false,
+        toolbarHeight: 62,
+        titleSpacing: 16,
+        title: Row(
           children: [
-            Text('下载管理'),
+            Text(
+              '下载',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.3,
+                color: _t1,
+              ),
+            ),
+            const Spacer(),
             Consumer<AppState>(
               builder: (context, appState, _) {
                 final dm = appState.downloadManager;
-                return Text(
-                  '下载中: ${dm.downloadingCount} | 已完成: ${dm.completedCount}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildCountPill('下载中 ${dm.downloadingCount}', AppTheme.infoColor),
+                    const SizedBox(width: 7),
+                    _buildCountPill('已完成 ${dm.completedCount}', AppTheme.successColor),
+                  ],
                 );
               },
             ),
           ],
         ),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: [
-            Tab(text: '下载中'),
-            Tab(text: '已下载'),
-          ],
+      ),
+      body: Column(
+        children: [
+          _buildSegmentedHeader(),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildDownloadingTab(),
+                _buildCompletedTab(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 顶栏计数徽章
+  Widget _buildCountPill(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withOpacity(_isDark ? 0.18 : 0.10),
+        borderRadius: AppTheme.brPill,
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: color,
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
+    );
+  }
+
+  /// 页签分段控件（替代原来的 AppBar TabBar）
+  Widget _buildSegmentedHeader() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(14, 6, 14, 4),
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: _surface2,
+        borderRadius: BorderRadius.circular(11),
+      ),
+      child: Row(
         children: [
-          _buildDownloadingTab(),
-          _buildCompletedTab(),
+          _buildSegmentButton(0, '下载中'),
+          _buildSegmentButton(1, '已下载'),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSegmentButton(int index, String label) {
+    final on = _tabIndex == index;
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (_tabIndex != index) _tabController.animateTo(index);
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          height: 32,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: on ? _surface : Colors.transparent,
+            borderRadius: BorderRadius.circular(9),
+            boxShadow: on ? AppTheme.cardShadow : null,
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              color: on ? Theme.of(context).colorScheme.primary : _t2,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -98,7 +212,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
     return Consumer<AppState>(
       builder: (context, appState, _) {
         final tasks = appState.downloadManager.downloadingTasks;
-        
+
         if (tasks.isEmpty) {
           return EmptyState(
             icon: Icons.download_outlined,
@@ -106,137 +220,146 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             subtitle: '在搜索页面选择视频后点击下载',
           );
         }
-        
+
+        final active =
+            tasks.where((t) => t.status != DownloadStatus.failed).toList();
+        final failed =
+            tasks.where((t) => t.status == DownloadStatus.failed).toList();
+        final allSelected = _selectedIds.length == tasks.length;
+
         return Column(
           children: [
-            // 全选操作栏
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
-                  TextButton(
-                    onPressed: () {
-                      setState(() {
-                        // 本标签页中的任务全部可选（含失败待重试的）
-                        final ids = tasks.map((t) => t.id).toSet();
-                        if (_selectedIds.length == ids.length) {
-                          _selectedIds.clear();
-                        } else {
-                          _selectedIds = ids;
-                        }
-                      });
-                    },
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _selectedIds.length == tasks.length 
-                            ? Icons.check_box 
-                            : Icons.check_box_outline_blank,
-                          size: 18,
-                        ),
-                        SizedBox(width: 4),
-                        Text(_selectedIds.length == tasks.length ? '取消全选' : '全选'),
-                      ],
-                    ),
-                  ),
-                  Spacer(),
-                  if (_selectedIds.isNotEmpty)
-                    Text(
-                      '已选择 ${_selectedIds.length} 个',
-                      style: TextStyle(color: Colors.blue),
-                    ),
-                ],
-              ),
+            _buildSelectBar(
+              allSelected: allSelected,
+              onToggleAll: () {
+                setState(() {
+                  // 本页签里的任务全部可选（含失败待重试的）
+                  final ids = tasks.map((t) => t.id).toSet();
+                  if (_selectedIds.length == ids.length) {
+                    _selectedIds.clear();
+                  } else {
+                    _selectedIds = ids;
+                  }
+                });
+              },
+              trailing: _selectedIds.isEmpty
+                  ? null
+                  : _buildCountPill('已选 ${_selectedIds.length}', AppTheme.infoColor),
             ),
             // 任务列表（进行中在前，失败项单独分组沉底）
             Expanded(
               child: RefreshIndicator(
                 onRefresh: _onRefresh,
-                child: Builder(
-                  builder: (context) {
-                    // 拆成两段，便于在失败组前插入分组标题
-                    final active =
-                        tasks.where((t) => t.status != DownloadStatus.failed).toList();
-                    final failed =
-                        tasks.where((t) => t.status == DownloadStatus.failed).toList();
+                child: ListView.builder(
+                  padding: EdgeInsets.only(top: 4, bottom: _bottomInset),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  // 行数 = 进行中 + (失败组标题 + 失败项)
+                  itemCount:
+                      active.length + (failed.isEmpty ? 0 : failed.length + 1),
+                  itemBuilder: (context, index) {
+                    if (index < active.length) {
+                      final task = active[index];
+                      return _buildSlidableDownloadItem(
+                          task, _selectedIds.contains(task.id), appState);
+                    }
 
-                    // 行数 = 进行中 + (失败组标题 + 失败项)
-                    final rowCount =
-                        active.length + (failed.isEmpty ? 0 : failed.length + 1);
-
-                    return ListView.builder(
-                      itemCount: rowCount,
-                      itemBuilder: (context, index) {
-                        if (index < active.length) {
-                          final task = active[index];
-                          return _buildSlidableDownloadItem(
-                              task, _selectedIds.contains(task.id), appState);
-                        }
-
-                        // 失败组
-                        final fi = index - active.length;
-                        if (fi == 0) {
-                          return _buildFailedGroupHeader(failed.length);
-                        }
-                        final task = failed[fi - 1];
-                        return _buildSlidableDownloadItem(
-                            task, _selectedIds.contains(task.id), appState);
-                      },
-                    );
+                    // 失败组
+                    final fi = index - active.length;
+                    if (fi == 0) {
+                      return _buildFailedGroupHeader(failed.length);
+                    }
+                    final task = failed[fi - 1];
+                    return _buildSlidableDownloadItem(
+                        task, _selectedIds.contains(task.id), appState);
                   },
                 ),
               ),
             ),
-            // 底部批量操作栏（与搜索页一致）
+            // 底部批量操作栏：浮在内容之上，压在毛玻璃底栏上方
             if (_selectedIds.isNotEmpty)
               Container(
-                padding: const EdgeInsets.all(16),
+                margin: EdgeInsets.fromLTRB(
+                    12, 0, 12, MediaQuery.of(context).padding.bottom + 8),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).cardColor,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black12,
-                      blurRadius: 4,
-                      offset: Offset(0, -2),
+                  color: _surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: _line),
+                  boxShadow: _isDark ? null : AppTheme.elevatedShadow,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildActionButton(
+                      icon: Icons.play_arrow_rounded,
+                      label: '开始',
+                      color: AppTheme.successColor,
+                      onPressed: () => _batchStart(appState),
+                    ),
+                    _buildActionButton(
+                      icon: Icons.pause_rounded,
+                      label: '暂停',
+                      color: AppTheme.warningColor,
+                      onPressed: () => _batchPause(appState),
+                    ),
+                    _buildActionButton(
+                      icon: Icons.stop_rounded,
+                      label: '停止',
+                      color: AppTheme.errorColor,
+                      onPressed: () => _batchStop(appState),
+                    ),
+                    _buildActionButton(
+                      icon: Icons.delete_outline_rounded,
+                      label: '删除',
+                      color: AppTheme.errorColor,
+                      onPressed: () => _batchDeleteWithConfirm(appState),
                     ),
                   ],
-                ),
-                child: SafeArea(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _buildActionButton(
-                        icon: Icons.play_arrow,
-                        label: '开始',
-                        color: Colors.green,
-                        onPressed: () => _batchStart(appState),
-                      ),
-                      _buildActionButton(
-                        icon: Icons.pause,
-                        label: '暂停',
-                        color: Colors.orange,
-                        onPressed: () => _batchPause(appState),
-                      ),
-                      _buildActionButton(
-                        icon: Icons.stop,
-                        label: '停止',
-                        color: Colors.red,
-                        onPressed: () => _batchStop(appState),
-                      ),
-                      _buildActionButton(
-                        icon: Icons.delete,
-                        label: '删除',
-                        color: Colors.red,
-                        onPressed: () => _batchDeleteWithConfirm(appState),
-                      ),
-                    ],
-                  ),
                 ),
               ),
           ],
         );
       },
+    );
+  }
+
+  /// 全选条：左侧"全选 / 取消全选"，右侧可挂计数或删除按钮
+  Widget _buildSelectBar({
+    required bool allSelected,
+    required VoidCallback onToggleAll,
+    Widget? trailing,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 0, 12, 0),
+      child: Row(
+        children: [
+          TextButton.icon(
+            onPressed: onToggleAll,
+            icon: Icon(
+              allSelected
+                  ? Icons.check_box_rounded
+                  : Icons.check_box_outline_blank_rounded,
+              size: 17,
+              color: _t2,
+            ),
+            label: Text(
+              allSelected ? '取消全选' : '全选',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: _t2,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              minimumSize: const Size(0, 36),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          const Spacer(),
+          if (trailing != null) trailing,
+        ],
+      ),
     );
   }
   
@@ -388,7 +511,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
       builder: (context, appState, _) {
         // 只展示真正下载完成的任务；失败项归"下载中"标签页（可重试）
         final tasks = appState.downloadManager.completedTasks;
-        
+
         if (tasks.isEmpty) {
           return EmptyState(
             icon: Icons.folder_outlined,
@@ -396,62 +519,59 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
             subtitle: '已完成的下载会显示在这里',
           );
         }
-        
-        return RefreshIndicator(
-          onRefresh: _onRefresh,
-          child: Column(
-            children: [
-              // 全选/删除操作栏
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Row(
-                  children: [
-                    TextButton(
-                      onPressed: () {
-                        setState(() {
-                          if (_selectedIds.length == tasks.length) {
-                            _selectedIds.clear();
-                            _isCompletedSelectMode = false;
-                          } else {
-                            _selectedIds = tasks.map((t) => t.id).toSet();
-                            _isCompletedSelectMode = true;
-                          }
-                        });
+
+        final allSelected = _selectedIds.length == tasks.length;
+
+        return Column(
+          children: [
+            _buildSelectBar(
+              allSelected: allSelected,
+              onToggleAll: () {
+                setState(() {
+                  if (_selectedIds.length == tasks.length) {
+                    _selectedIds.clear();
+                    _isCompletedSelectMode = false;
+                  } else {
+                    _selectedIds = tasks.map((t) => t.id).toSet();
+                    _isCompletedSelectMode = true;
+                  }
+                });
+              },
+              trailing: _selectedIds.isEmpty
+                  ? Text(
+                      '长按多选',
+                      style: TextStyle(fontSize: 11, color: _t3),
+                    )
+                  : TextButton.icon(
+                      onPressed: () async {
+                        await _deleteSelectedWithConfirm(appState);
                       },
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _selectedIds.length == tasks.length 
-                              ? Icons.check_box 
-                              : Icons.check_box_outline_blank,
-                            size: 18,
-                          ),
-                          SizedBox(width: 4),
-                          Text(_selectedIds.length == tasks.length ? '取消全选' : '全选'),
-                        ],
+                      icon: const Icon(
+                        Icons.delete_outline_rounded,
+                        size: 16,
+                        color: AppTheme.errorColor,
                       ),
-                    ),
-                    Spacer(),
-                    if (_selectedIds.isNotEmpty)
-                      TextButton(
-                        onPressed: () async {
-                          await _deleteSelectedWithConfirm(appState);
-                        },
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.delete, size: 18, color: Colors.red),
-                            SizedBox(width: 4),
-                            Text('删除 (${_selectedIds.length})', style: TextStyle(color: Colors.red)),
-                          ],
+                      label: Text(
+                        '删除 (${_selectedIds.length})',
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.errorColor,
                         ),
                       ),
-                  ],
-                ),
-              ),
-              Expanded(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        minimumSize: const Size(0, 36),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+            ),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _onRefresh,
                 child: ListView.builder(
+                  padding: EdgeInsets.only(top: 4, bottom: _bottomInset),
+                  physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: tasks.length,
                   itemBuilder: (context, index) {
                     final task = tasks[index];
@@ -460,33 +580,45 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
                   },
                 ),
               ),
-              // 底部操作栏
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          appState.downloadManager.clearCompleted();
-                          setState(() {
-                            _selectedIds.clear();
-                          });
-                        },
-                        icon: Icon(Icons.delete_sweep, color: Colors.orange),
-                        label: Text('清空记录', style: TextStyle(color: Colors.orange)),
-                      ),
+            ),
+            // 清空记录：抬到毛玻璃底栏之上，不再被底栏压住
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                  16, 8, 16, MediaQuery.of(context).padding.bottom + 8),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    appState.downloadManager.clearCompleted();
+                    setState(() {
+                      _selectedIds.clear();
+                      _isCompletedSelectMode = false;
+                    });
+                  },
+                  icon: const Icon(
+                    Icons.delete_sweep_outlined,
+                    size: 18,
+                    color: AppTheme.warningColor,
+                  ),
+                  label: const Text(
+                    '清空记录',
+                    style: TextStyle(color: AppTheme.warningColor),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: _line),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: AppTheme.brLg,
                     ),
-                  ],
+                  ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );
   }
-  
   /// 删除选中任务（带确认对话框，询问是否删除本地文件）
   Future<void> _deleteSelectedWithConfirm(AppState appState) async {
     final count = _selectedIds.length;
@@ -640,6 +772,16 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   Widget _buildDownloadTaskItem(DownloadTask task, bool selected, AppState appState) {
     final isFailed = task.status == DownloadStatus.failed;
 
+    // 只要这条任务有过进度，就一直显示进度条：下载中、已暂停、
+    // 排队等待中都要保留。以前只在 downloading 时渲染，
+    // 一按暂停（状态变 paused）或任务因并发上限转入等待（pending），
+    // 整块 UI 会瞬间消失——用户看到的就是"进度条丢了"，
+    // 连已经下到百分之多少都无从得知。
+    final showProgress = task.status == DownloadStatus.downloading ||
+        ((task.status == DownloadStatus.paused ||
+                task.status == DownloadStatus.pending) &&
+            task.progress > 0);
+
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -650,175 +792,223 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
           }
         });
       },
-      child: Card(
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        // 失败项给一层淡红底 + 左侧红条，滑动列表时也能一眼认出
-        color: selected
-            ? Colors.blue.withOpacity(0.1)
-            : (isFailed ? Colors.red.withOpacity(0.06) : null),
-        shape: isFailed && !selected
-            ? RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: Colors.red, width: 1),
-              )
-            : null,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        padding: const EdgeInsets.all(11),
+        decoration: BoxDecoration(
+          color: selected
+              ? Theme.of(context)
+                  .colorScheme
+                  .primary
+                  .withOpacity(_isDark ? 0.16 : 0.06)
+              : _surface,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(
+            color: selected
+                ? Theme.of(context).colorScheme.primary
+                : (isFailed
+                    ? (_isDark
+                        ? const Color(0xFF6B5730)
+                        : const Color(0xFFF3DDB7))
+                    : _line),
+            width: selected ? 1.4 : 1,
+          ),
+          boxShadow: _isDark ? null : AppTheme.cardShadow,
+        ),
+        child: Row(
+          children: [
+            _buildTaskCover(task, 62, 62, checked: selected ? true : null),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 封面 + 选中标记
-                  Stack(
-                    children: [
-                      // 封面走磁盘缓存，避免每次进入下载页重新下载
-                      CoverImage(
-                        url: task.video.cover,
-                        width: 80,
-                        height: 60,
-                        borderRadius: BorderRadius.circular(4),
-                        fallbackIconSize: 20,
-                      ),
-                      // 选中标记（左上角）
-                      if (selected)
-                        Positioned(
-                          top: 2,
-                          left: 2,
-                          child: Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: BoxDecoration(
-                              color: Colors.blue,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(Icons.check, size: 12, color: Colors.white),
-                          ),
-                        ),
-                    ],
-                  ),
-                  SizedBox(width: 12),
-                  // 信息
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _formatTitle(task.video),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          task.statusText,
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // 控制按钮
-                  _buildTaskControls(task, appState),
-                ],
-              ),
-            
-            // 进度条
-            // 只要这条任务有过进度，就一直显示进度条：下载中、已暂停、
-            // 排队等待中都要保留。以前只在 downloading 时渲染，
-            // 一按暂停（状态变 paused）或任务因并发上限转入等待（pending），
-            // 整块 UI 会瞬间消失——用户看到的就是「进度条丢了」，
-            // 连已经下到百分之多少都无从得知。
-            if (task.status == DownloadStatus.downloading ||
-                ((task.status == DownloadStatus.paused ||
-                        task.status == DownloadStatus.pending) &&
-                    task.progress > 0)) ...[
-              SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: task.progress,
-                // 非下载中的状态用弱化配色，和「正在跑」区分开
-                valueColor: task.status == DownloadStatus.downloading
-                    ? null
-                    : AlwaysStoppedAnimation<Color>(Colors.grey.shade400),
-              ),
-              SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // 百分比常驻：暂停/等待时 progressText 会变成「已暂停」
-                  // 「等待中」，只剩一个停住的进度条看不出下到了多少。
                   Text(
-                    [
-                      '${(task.progress * 100).toStringAsFixed(1)}%',
-                      if (task.progressText.isNotEmpty) task.progressText,
-                    ].join('  '),
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                    _formatTitle(task.video),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      height: 1.35,
+                      color: _t1,
+                    ),
                   ),
-                  // 速度只在此处展示一次，避免与上方文本重复
-                  if (task.speedText.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.speed, size: 12, color: Colors.green),
-                          SizedBox(width: 4),
-                          Text(
-                            task.speedText,
-                            style: TextStyle(fontSize: 11, color: Colors.green),
-                          ),
-                        ],
+                  const SizedBox(height: 6),
+                  if (showProgress) ...[
+                    ClipRRect(
+                      borderRadius: AppTheme.brPill,
+                      child: LinearProgressIndicator(
+                        value: task.progress,
+                        minHeight: 5,
+                        backgroundColor: _surface2,
+                        // 非下载中的状态用弱化配色，和"正在跑"区分开
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          task.status == DownloadStatus.downloading
+                              ? Theme.of(context).colorScheme.primary
+                              : _t3,
+                        ),
                       ),
                     ),
+                    const SizedBox(height: 6),
+                    _buildTaskMetaRow(task),
+                  ] else if (isFailed) ...[
+                    Text(
+                      task.error ?? '下载失败',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.warningColor,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    _buildTaskMetaRow(task, leftOverride: task.statusText),
+                  ] else
+                    _buildTaskMetaRow(task, leftOverride: task.statusText),
                 ],
               ),
-            ],
-            
-            // 错误信息
-            if (task.status == DownloadStatus.failed && task.error != null) ...[
-              SizedBox(height: 4),
-              Text(
-                '错误: ${task.error}',
-                style: TextStyle(fontSize: 11, color: Colors.red),
-              ),
-            ],
+            ),
+            const SizedBox(width: 8),
+            _buildTaskControls(task, appState),
           ],
         ),
       ),
-    ),
-  );
+    );
   }
-  
-  /// 失败任务分组标题
-  ///
-  /// 失败项与进行中的任务同处"下载中"标签页，用一条带颜色的小标题区分，
-  /// 避免混在一起看不清哪些需要重试。
-  Widget _buildFailedGroupHeader(int count) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.red.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.error_outline, size: 16, color: Colors.red),
+
+  /// 任务行末行：左侧进度文本，右侧速率
+  Widget _buildTaskMetaRow(DownloadTask task, {String? leftOverride}) {
+    final left = leftOverride ??
+        [
+          '${(task.progress * 100).toStringAsFixed(1)}%',
+          if (task.progressText.isNotEmpty) task.progressText,
+        ].join('  ');
+
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            left,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              color: _t3,
+            ),
+          ),
+        ),
+        if (task.speedText.isNotEmpty) ...[
           const SizedBox(width: 6),
           Text(
-            '下载失败 ($count)',
+            task.speedText,
+            style: const TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.successColor,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 任务封面：右下角时长角标，左上角可选勾选圈
+  ///
+  /// [checked] 为 null 表示不显示勾选圈（浏览态）。
+  Widget _buildTaskCover(
+    DownloadTask task,
+    double width,
+    double height, {
+    bool? checked,
+    double radius = 11,
+  }) {
+    final duration = task.video.duration;
+    final primary = Theme.of(context).colorScheme.primary;
+    return Stack(
+      children: [
+        CoverImage(
+          url: task.video.cover,
+          width: width,
+          height: height,
+          borderRadius: BorderRadius.circular(radius),
+          fallbackIconSize: 20,
+        ),
+        if (duration != null && duration.isNotEmpty)
+          Positioned(
+            right: 4,
+            bottom: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.62),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                duration,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        if (checked != null)
+          Positioned(
+            left: 3,
+            top: 3,
+            child: Container(
+              padding: const EdgeInsets.all(1),
+              decoration: BoxDecoration(
+                color: checked ? primary : Colors.white.withOpacity(0.9),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: checked ? primary : Colors.grey.shade400,
+                  width: 1.4,
+                ),
+              ),
+              child: Icon(
+                checked ? Icons.check : null,
+                size: 11,
+                color: Colors.white,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+  /// 失败任务分组标题
+  ///
+  /// 失败项与进行中的任务同处"下载中"标签页，用一条小标题区分，
+  /// 避免混在一起看不清哪些需要重试。颜色用琥珀而不是红，
+  /// 免得和"停止 / 删除"这些红色操作按钮抢注意力。
+  Widget _buildFailedGroupHeader(int count) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            size: 15,
+            color: AppTheme.warningColor,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '下载失败 ${count}',
             style: const TextStyle(
               fontSize: 12,
-              color: Colors.red,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.warningColor,
             ),
           ),
           const Spacer(),
-          const Text(
+          Text(
             '可重试或删除',
-            style: TextStyle(fontSize: 11, color: Colors.grey),
+            style: TextStyle(fontSize: 11, color: _t3),
           ),
         ],
       ),
@@ -826,74 +1016,78 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
 
   Widget _buildTaskControls(DownloadTask task, AppState appState) {
+    final buttons = <Widget>[];
+
+    void add(IconData icon, Color color, String tooltip, VoidCallback onTap) {
+      buttons.add(_buildTaskIconButton(icon, color, tooltip, onTap));
+    }
+
     switch (task.status) {
       case DownloadStatus.pending:
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: Icon(Icons.play_arrow, color: Colors.green),
-              onPressed: () => appState.downloadManager.startTask(task.id),
-              tooltip: '开始',
-            ),
-            IconButton(
-              icon: Icon(Icons.delete, color: Colors.red),
-              onPressed: () => _deleteTaskWithConfirm(task, appState),
-              tooltip: '删除',
-            ),
-          ],
-        );
+        add(Icons.play_arrow_rounded, AppTheme.successColor, '开始',
+            () => appState.downloadManager.startTask(task.id));
+        add(Icons.delete_outline_rounded, AppTheme.errorColor, '删除',
+            () => _deleteTaskWithConfirm(task, appState));
+        break;
       case DownloadStatus.downloading:
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: Icon(Icons.pause, color: Colors.orange),
-              onPressed: () => appState.downloadManager.pauseTask(task.id),
-              tooltip: '暂停',
-            ),
-            IconButton(
-              icon: Icon(Icons.stop, color: Colors.red),
-              onPressed: () => appState.downloadManager.cancelTask(task.id),
-              tooltip: '停止',
-            ),
-          ],
-        );
+        add(Icons.pause_rounded, AppTheme.warningColor, '暂停',
+            () => appState.downloadManager.pauseTask(task.id));
+        add(Icons.stop_rounded, AppTheme.errorColor, '停止',
+            () => appState.downloadManager.cancelTask(task.id));
+        break;
       case DownloadStatus.paused:
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: Icon(Icons.play_arrow, color: Colors.green),
-              onPressed: () => appState.downloadManager.resumeTask(task.id),
-              tooltip: '继续',
-            ),
-            IconButton(
-              icon: Icon(Icons.delete, color: Colors.red),
-              onPressed: () => _deleteTaskWithConfirm(task, appState),
-              tooltip: '删除',
-            ),
-          ],
-        );
+        add(Icons.play_arrow_rounded, AppTheme.successColor, '继续',
+            () => appState.downloadManager.resumeTask(task.id));
+        add(Icons.delete_outline_rounded, AppTheme.errorColor, '删除',
+            () => _deleteTaskWithConfirm(task, appState));
+        break;
       case DownloadStatus.failed:
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: Icon(Icons.refresh, color: Colors.blue),
-              onPressed: () => appState.downloadManager.retryTask(task.id),
-              tooltip: '重试',
-            ),
-            IconButton(
-              icon: Icon(Icons.delete, color: Colors.red),
-              onPressed: () => _deleteTaskWithConfirm(task, appState),
-              tooltip: '删除',
-            ),
-          ],
-        );
-      default:
-        return SizedBox.shrink();
+        add(Icons.refresh_rounded, AppTheme.infoColor, '重试',
+            () => appState.downloadManager.retryTask(task.id));
+        add(Icons.delete_outline_rounded, AppTheme.errorColor, '删除',
+            () => _deleteTaskWithConfirm(task, appState));
+        break;
+      case DownloadStatus.completed:
+        break;
     }
+
+    if (buttons.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        buttons.first,
+        if (buttons.length > 1) ...[
+          const SizedBox(height: 6),
+          buttons[1],
+        ],
+      ],
+    );
+  }
+
+  /// 任务行右侧的方形操作按钮
+  Widget _buildTaskIconButton(
+    IconData icon,
+    Color color,
+    String tooltip,
+    VoidCallback onTap,
+  ) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: _surface2,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 18, color: color),
+        ),
+      ),
+    );
   }
   
   /// 单个任务删除（带确认对话框）
@@ -943,157 +1137,7 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
   }
   
   Widget _buildCompletedTaskItem(DownloadTask task, bool selected, AppState appState) {
-    if (!_isCompletedSelectMode) {
-      return Dismissible(
-        key: ValueKey('completed_${task.id}'),
-        direction: DismissDirection.endToStart,
-        background: Container(
-          alignment: Alignment.centerRight,
-          padding: const EdgeInsets.only(right: 20),
-          color: Colors.red,
-          child: const Icon(Icons.delete, color: Colors.white),
-        ),
-        confirmDismiss: (_) async {
-          return await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('确认删除'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(task.status == DownloadStatus.failed
-                      ? '确定要删除这个失败的下载任务吗？'
-                      : '确定要删除这个下载记录吗？'),
-                  const SizedBox(height: 12),
-                  const Text(
-                    '记录会被移除；若还想删除磁盘上的视频文件，'
-                    '请长按进入多选后批量删除。',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-                TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('删除', style: TextStyle(color: Colors.red))),
-              ],
-            ),
-          );
-        },
-        // 注意：confirmDismiss 里已经问过一次，onDismissed 不能再调
-        // _deleteTaskWithConfirm —— 那会弹第二个确认框，且用户确认后无任何反馈。
-        // 这里直接执行删除。
-        onDismissed: (_) => _deleteTaskDirect(task, appState),
-        child: GestureDetector(
-          onLongPress: () {
-            setState(() {
-              _isCompletedSelectMode = true;
-              _selectedIds.add(task.id);
-            });
-          },
-          onTap: task.status == DownloadStatus.failed
-            ? () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('下载失败：${task.error ?? '未知错误'}'),
-                    duration: const Duration(seconds: 3),
-                    action: SnackBarAction(
-                      label: '重试',
-                      onPressed: () => _retryDownload(task, appState),
-                    ),
-                  ),
-                );
-              }
-            : () => _playVideo(task, appState),
-          child: Card(
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        color: selected ? Colors.blue.withOpacity(0.1) : null,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
-            children: [
-                  // 预览图（磁盘缓存 + 右下角时长 + 选中标记）
-                  Stack(
-                    children: [
-                      CoverImage(
-                        url: task.video.cover,
-                        width: 96,
-                        height: 64,
-                        borderRadius: BorderRadius.circular(6),
-                        fallbackIconSize: 24,
-                      ),
-                  // 时长标签（右下角）
-                  if (task.video.duration != null && task.video.duration!.isNotEmpty)
-                    Positioned(
-                      right: 4,
-                      bottom: 4,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: Colors.black87,
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Text(
-                          task.video.duration!,
-                          style: TextStyle(color: Colors.white, fontSize: 10),
-                        ),
-                      ),
-                    ),
-                  // 选择模式下显示勾选框
-                  if (_isCompletedSelectMode)
-                    Positioned(
-                      top: 2,
-                      left: 2,
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: selected ? Colors.blue : Colors.white,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: selected ? Colors.blue : Colors.grey, width: 2),
-                        ),
-                        child: Icon(selected ? Icons.check : null, size: 12, color: Colors.white),
-                      ),
-                    ),
-                ],
-              ),
-              SizedBox(width: 12),
-              // 信息区域
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _formatTitle(task.video),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      '下载于 ${_formatTime(task.endTime ?? task.startTime)}',
-                      style: TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                  ],
-                ),
-              ),
-              // 分享按钮（移除播放按钮，只保留分享）
-              if (!_isCompletedSelectMode)
-                IconButton(
-                  icon: Icon(Icons.share, color: Colors.blue, size: 22),
-                  onPressed: () => _shareVideo(task),
-                  tooltip: '分享',
-                  padding: const EdgeInsets.only(left: 4),
-                  constraints: BoxConstraints(minWidth: 36, minHeight: 36),
-                ),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-    }
-    // 选择模式：返回普通卡片（不允许滑动删除）
-    return GestureDetector(
+    final row = GestureDetector(
       onLongPress: () {
         setState(() {
           _isCompletedSelectMode = true;
@@ -1101,91 +1145,157 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
         });
       },
       onTap: () {
-        setState(() {
-          if (selected) {
-            _selectedIds.remove(task.id);
-            if (_selectedIds.isEmpty) {
-              _isCompletedSelectMode = false;
+        // 选择模式：点一下切换勾选，全取消后自动退出
+        if (_isCompletedSelectMode) {
+          setState(() {
+            if (_selectedIds.contains(task.id)) {
+              _selectedIds.remove(task.id);
+              if (_selectedIds.isEmpty) {
+                _isCompletedSelectMode = false;
+              }
+            } else {
+              _selectedIds.add(task.id);
             }
-          } else {
-            _selectedIds.add(task.id);
-          }
-        });
+          });
+          return;
+        }
+        // 浏览模式：失败项弹重试提示，其余直接播放
+        if (task.status == DownloadStatus.failed) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('下载失败：${task.error ?? '未知错误'}'),
+              duration: const Duration(seconds: 3),
+              action: SnackBarAction(
+                label: '重试',
+                onPressed: () => _retryDownload(task, appState),
+              ),
+            ),
+          );
+          return;
+        }
+        _playVideo(task, appState);
       },
-      child: Card(
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        color: selected ? Colors.blue.withOpacity(0.1) : null,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
-            children: [
-              Stack(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: selected
+              ? Theme.of(context)
+                  .colorScheme
+                  .primary
+                  .withOpacity(_isDark ? 0.16 : 0.06)
+              : _surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected
+                ? Theme.of(context).colorScheme.primary
+                : _line,
+            width: selected ? 1.4 : 1,
+          ),
+          boxShadow: _isDark ? null : AppTheme.cardShadow,
+        ),
+        child: Row(
+          children: [
+            _buildTaskCover(
+              task,
+              88,
+              60,
+              radius: 11,
+              checked: _isCompletedSelectMode ? selected : null,
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  CoverImage(
-                    url: task.video.cover,
-                    width: 96,
-                    height: 64,
-                    borderRadius: BorderRadius.circular(6),
-                    fallbackIconSize: 24,
+                  Text(
+                    _formatTitle(task.video),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                      color: _t1,
+                    ),
                   ),
-                  if (task.video.duration != null && task.video.duration!.isNotEmpty)
-                    Positioned(
-                      right: 4,
-                      bottom: 4,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: Colors.black87,
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Text(
-                          task.video.duration!,
-                          style: TextStyle(color: Colors.white, fontSize: 10),
-                        ),
-                      ),
-                    ),
-                  if (_isCompletedSelectMode)
-                    Positioned(
-                      top: 2,
-                      left: 2,
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: selected ? Colors.blue : Colors.white,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: selected ? Colors.blue : Colors.grey, width: 2),
-                        ),
-                        child: Icon(selected ? Icons.check : null, size: 12, color: Colors.white),
-                      ),
-                    ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '下载于 ${_formatTime(task.endTime ?? task.startTime)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: _t3),
+                  ),
                 ],
               ),
-              SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _formatTitle(task.video),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      '下载于 ${_formatTime(task.endTime ?? task.startTime)}',
-                      style: TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                  ],
-                ),
+            ),
+            if (!_isCompletedSelectMode) ...[
+              const SizedBox(width: 4),
+              _buildTaskIconButton(
+                Icons.share_outlined,
+                AppTheme.infoColor,
+                '分享',
+                () => _shareVideo(task),
               ),
             ],
-          ),
+          ],
         ),
       ),
     );
+
+    // 选择模式下不允许滑动删除（会和点选冲突）
+    if (_isCompletedSelectMode) return row;
+
+    return Dismissible(
+      key: ValueKey('completed_${task.id}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.only(right: 20),
+        decoration: BoxDecoration(
+          color: AppTheme.errorColor,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: const Icon(Icons.delete, color: Colors.white),
+      ),
+      confirmDismiss: (_) async {
+        return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('确认删除'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(task.status == DownloadStatus.failed
+                    ? '确定要删除这个失败的下载任务吗？'
+                    : '确定要删除这个下载记录吗？'),
+                const SizedBox(height: 12),
+                const Text(
+                  '记录会被移除；若还想删除磁盘上的视频文件，'
+                  '请长按进入多选后批量删除。',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('取消')),
+              TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('删除', style: TextStyle(color: Colors.red))),
+            ],
+          ),
+        );
+      },
+      // confirmDismiss 里已经问过一次，onDismissed 不能再弹第二个确认框
+      onDismissed: (_) => _deleteTaskDirect(task, appState),
+      child: row,
+    );
   }
-  
   /// 构建下载中列表项（使用 Dismissible 滑动删除）
   Widget _buildSlidableDownloadItem(DownloadTask task, bool selected, AppState appState) {
     return Dismissible(

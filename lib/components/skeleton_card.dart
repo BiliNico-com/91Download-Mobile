@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 
 /// 骨架屏 shimmer 效果组件
-/// 
+///
 /// 用于列表加载时的占位，减少用户感知的加载时间
 class ShimmerVideoCard extends StatefulWidget {
   final bool isListMode;
@@ -28,7 +28,7 @@ class _ShimmerVideoCardState extends State<ShimmerVideoCard>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
-    _animation = Tween<double>(begin: 0.3, end: 0.7).animate(
+    _animation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
   }
@@ -41,111 +41,113 @@ class _ShimmerVideoCardState extends State<ShimmerVideoCard>
 
   @override
   Widget build(BuildContext context) {
+    final t = AppTokens.of(context);
     return AnimatedBuilder(
       animation: _animation,
       builder: (context, child) {
-        final isDark = Theme.of(context).brightness == Brightness.dark;
-        final baseColor = isDark ? const Color(0xFF2C2C2C) : const Color(0xFFE0E0E0);
-        final shimmerColor = isDark
-            ? Color.lerp(const Color(0xFF2C2C2C), const Color(0xFF3C3C3C), _animation.value)!
-            : Color.lerp(const Color(0xFFE0E0E0), const Color(0xFFF5F5F5), _animation.value)!;
+        // 深色下把 surface2 → surface3 之间插值，浅色同理，
+        // 保证占位块与卡片底色始终有可见但柔和的对比
+        final shimmer = Color.lerp(t.surface2, t.surface3, _animation.value)!;
 
         return widget.isListMode
-            ? _buildListSkeleton(shimmerColor, baseColor)
-            : _buildGridSkeleton(shimmerColor, baseColor);
+            ? _buildListSkeleton(t, shimmer)
+            : _buildGridSkeleton(t, shimmer);
       },
     );
   }
 
-  Widget _buildListSkeleton(Color shimmerColor, Color baseColor) {
-    return Card(
-      margin: const EdgeInsets.symmetric(
-        horizontal: AppTheme.spacingSm,
-        vertical: AppTheme.spacingXs,
+  Widget _buildListSkeleton(AppTokens t, Color shimmer) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 9),
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        border: t.cardBorder,
+        boxShadow: t.cardShadow,
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppTheme.spacingMd),
-        child: Row(
-          children: [
-            Container(
-              width: 120,
-              height: 68,
-              decoration: BoxDecoration(
-                color: shimmerColor,
-                borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-              ),
-            ),
-            const SizedBox(width: AppTheme.spacingMd),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    height: 16,
-                    decoration: BoxDecoration(
-                      color: shimmerColor,
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                    ),
-                  ),
-                  const SizedBox(height: AppTheme.spacingSm),
-                  Container(
-                    width: 120,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: baseColor,
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                    ),
-                  ),
-                  const SizedBox(height: AppTheme.spacingSm),
-                  Container(
-                    width: 80,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: baseColor,
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGridSkeleton(Color shimmerColor, Color baseColor) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Expanded(
-            child: Container(
-              color: shimmerColor,
+          Container(
+            width: 108,
+            height: 70,
+            decoration: BoxDecoration(
+              color: shimmer,
+              borderRadius: BorderRadius.circular(AppRadius.md),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(AppTheme.spacingSm),
+          const SizedBox(width: 11),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
                   width: double.infinity,
-                  height: 14,
+                  height: 13,
                   decoration: BoxDecoration(
-                    color: shimmerColor,
-                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                    color: shimmer,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
                   ),
                 ),
-                const SizedBox(height: AppTheme.spacingXs),
+                const SizedBox(height: 8),
                 Container(
-                  width: 60,
+                  width: 120,
                   height: 10,
                   decoration: BoxDecoration(
-                    color: baseColor,
-                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                    color: t.surface2,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Container(
+                  width: 74,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: t.surface2,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGridSkeleton(AppTokens t, Color shimmer) {
+    return Container(
+      decoration: BoxDecoration(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        border: t.cardBorder,
+        boxShadow: t.cardShadow,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: Container(color: shimmer)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(9, 9, 9, 11),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: shimmer,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Container(
+                  width: 60,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: t.surface2,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
                   ),
                 ),
               ],
@@ -172,20 +174,61 @@ class ShimmerVideoList extends StatelessWidget {
   Widget build(BuildContext context) {
     return isListMode
         ? ListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: AppTheme.spacingSm),
+            padding: const EdgeInsets.symmetric(vertical: 2),
             itemCount: count,
             itemBuilder: (_, __) => const ShimmerVideoCard(isListMode: true),
           )
         : GridView.builder(
-            padding: const EdgeInsets.all(AppTheme.spacingSm),
+            padding: const EdgeInsets.all(2),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
               childAspectRatio: 16 / 14,
-              crossAxisSpacing: AppTheme.spacingSm,
-              mainAxisSpacing: AppTheme.spacingSm,
+              crossAxisSpacing: 9,
+              mainAxisSpacing: 9,
             ),
             itemCount: count,
             itemBuilder: (_, __) => const ShimmerVideoCard(isListMode: false),
           );
+  }
+}
+
+/// 骨架屏内容块（不滚动，直接嵌在已有 ListView/Column 里）
+///
+/// author_detail / search 等页面已经自带滚动容器，
+/// 再塞一个 ListView 会报 "Vertical viewport was given unbounded height"，
+/// 所以另提供一个纯 Column 版本。
+class ShimmerVideoInline extends StatelessWidget {
+  final bool isListMode;
+  final int count;
+
+  const ShimmerVideoInline({
+    super.key,
+    this.isListMode = true,
+    this.count = 6,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isListMode) {
+      return Column(
+        children: List.generate(
+          count,
+          (_) => const ShimmerVideoCard(isListMode: true),
+        ),
+      );
+    }
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 16 / 14,
+        crossAxisSpacing: 9,
+        mainAxisSpacing: 9,
+      ),
+      itemCount: count,
+      itemBuilder: (_, __) => const ShimmerVideoCard(isListMode: false),
+    );
   }
 }

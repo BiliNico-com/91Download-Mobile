@@ -8,6 +8,7 @@ import 'download_page.dart';
 import 'settings_page.dart';
 import 'followed_page.dart';
 import '../services/app_state.dart';
+import '../theme/app_tokens.dart';
 import '../theme/ui_style.dart';
 import '../utils/logger.dart';
 
@@ -135,34 +136,57 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  /// 底部导航栏：跟随「毛玻璃效果」开关切换观感
+  /// 底部导航栏
   ///
-  /// NavigationBar 自身的背景由 Scaffold 绘制，做不了背景模糊，
-  /// 所以这里用 ClipRect + BackdropFilter 包住它并把背景设成透明，
-  /// 让下方页面内容透上来形成玻璃质感。
-  /// 关闭开关时退回主题默认的实心 NavigationBar，零额外开销。
+  /// 由 Material 的 NavigationBar 换成自绘的一行胶囊：选中项图标底下铺一块
+  /// 两侧半圆的浅蓝底（原型 .icw），文字由 12 缩到 10 —— 原来 80 高的
+  /// NavigationBar 换成 62，内容区能多出 18px。
+  ///
+  /// 「毛玻璃效果」开关仍然生效：开启时用 ClipRect + BackdropFilter 让下方
+  /// 内容透上来，关闭时退回实心背景，两种模式下布局完全一致。
   Widget _buildGlassNavBar() {
-    // 同时监听「是否开启」与「浓度」两个开关，
-    // 拖动透明度滑块时底栏实时跟随。
     return ValueListenableBuilder<bool>(
       valueListenable: UiStyle.glassEnabled,
       builder: (context, glass, _) {
         return ValueListenableBuilder<double>(
           valueListenable: UiStyle.glassOpacity,
           builder: (context, _, __) {
-            final theme = Theme.of(context);
-            final isDark = theme.brightness == Brightness.dark;
+            final t = AppTokens.of(context);
+            final isDark = t.dark;
+            final bottomInset = MediaQuery.of(context).padding.bottom;
 
-            final bar = NavigationBar(
-              selectedIndex: _currentIndex,
-              onDestinationSelected: (index) {
-                goToPage(index);
-              },
-              backgroundColor: glass
-                  ? Colors.transparent
-                  : theme.navigationBarTheme.backgroundColor ??
-                      theme.colorScheme.surface,
-              destinations: _navDestinations(),
+            final bar = Container(
+              height: 62 + bottomInset,
+              padding: EdgeInsets.only(bottom: bottomInset),
+              decoration: BoxDecoration(
+                color: glass ? Colors.transparent : t.surface,
+                border: Border(
+                  top: BorderSide(
+                    color: glass
+                        ? UiStyle.glassBorderColor(isDark)
+                        : t.line,
+                    width: 0.8,
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  _buildNavItem(t, 0, Icons.download_rounded, Icons.download, '批量'),
+                  _buildNavItem(t, 1, Icons.search_rounded, Icons.search, '搜索'),
+                  _buildNavItem(
+                    t,
+                    2,
+                    Icons.favorite_border_rounded,
+                    Icons.favorite,
+                    '已关注',
+                    badge: context.watch<AppState>()
+                        .followedAuthorsService
+                        .newContentCount,
+                  ),
+                  _buildNavItem(t, 3, Icons.history_rounded, Icons.history, '已下载'),
+                  _buildNavItem(t, 4, Icons.settings_rounded, Icons.settings, '设置'),
+                ],
+              ),
             );
 
             if (!glass) return bar;
@@ -172,15 +196,7 @@ class _MainPageState extends State<MainPage> {
                 filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    // 与顶栏同源：UiStyle 里统一取色，
-                    // 避免以前顶栏 0.55/底栏 0.72 这种各写各的不一致。
                     color: UiStyle.navBarGlassFill(isDark),
-                    border: Border(
-                      top: BorderSide(
-                        color: UiStyle.glassBorderColor(isDark),
-                        width: 0.8,
-                      ),
-                    ),
                   ),
                   child: bar,
                 ),
@@ -192,43 +208,80 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  List<NavigationDestination> _navDestinations() {
-    final appState = context.watch<AppState>();
-    final newCount = appState.followedAuthorsService.newContentCount;
-    return [
-      const NavigationDestination(
-        icon: Icon(Icons.download_rounded),
-        selectedIcon: Icon(Icons.download),
-        label: '批量',
-      ),
-      const NavigationDestination(
-        icon: Icon(Icons.search_rounded),
-        selectedIcon: Icon(Icons.search),
-        label: '搜索',
-      ),
-      NavigationDestination(
-        icon: Badge(
-          isLabelVisible: newCount > 0,
-          label: Text(newCount > 99 ? '99+' : '$newCount'),
-          child: const Icon(Icons.favorite_border_rounded),
+  /// 单个底栏项：54x26 胶囊底 + 22 图标 + 10px 文字
+  Widget _buildNavItem(
+    AppTokens t,
+    int index,
+    IconData icon,
+    IconData activeIcon,
+    String label, {
+    int badge = 0,
+  }) {
+    final on = _currentIndex == index;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => goToPage(index),
+        behavior: HitTestBehavior.opaque,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOut,
+                  width: 54,
+                  height: 26,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: on ? t.accentSoft : Colors.transparent,
+                    borderRadius: BorderRadius.circular(AppRadius.pill),
+                  ),
+                  child: Icon(
+                    on ? activeIcon : icon,
+                    size: 22,
+                    color: on ? t.accent : t.text3,
+                  ),
+                ),
+                if (badge > 0)
+                  Positioned(
+                    right: 6,
+                    top: -3,
+                    child: Container(
+                      height: 15,
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: t.danger,
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                      child: Text(
+                        badge > 99 ? '99+' : '$badge',
+                        style: const TextStyle(
+                          fontSize: 9,
+                          height: 1,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                height: 1,
+                fontWeight: FontWeight.w600,
+                color: on ? t.accent : t.text3,
+              ),
+            ),
+          ],
         ),
-        selectedIcon: Badge(
-          isLabelVisible: newCount > 0,
-          label: Text(newCount > 99 ? '99+' : '$newCount'),
-          child: const Icon(Icons.favorite),
-        ),
-        label: '已关注',
       ),
-      const NavigationDestination(
-        icon: Icon(Icons.history_rounded),
-        selectedIcon: Icon(Icons.history),
-        label: '已下载',
-      ),
-      const NavigationDestination(
-        icon: Icon(Icons.settings_rounded),
-        selectedIcon: Icon(Icons.settings),
-        label: '设置',
-      ),
-    ];
+    );
   }
 }

@@ -1,18 +1,13 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import '../services/app_state.dart';
-import '../services/followed_authors_service.dart';
 import '../models/video_info.dart';
-import '../utils/logger.dart';
-import '../components/video_card.dart';
-import '../components/empty_state.dart';
 import '../components/video_list_items.dart';
-import '../components/skeleton_card.dart';
+import '../components/app_shell.dart';
+import '../components/empty_state.dart';
+import '../components/cover_image.dart';
 import '../utils/debouncer.dart';
-import '../theme/app_theme.dart';
-import '../theme/ui_style.dart';
+import '../theme/app_tokens.dart';
 import 'streaming_page.dart';
 
 class SearchPage extends StatefulWidget {
@@ -363,9 +358,11 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   @override
   Widget build(BuildContext context) {
     super.build(context);  // 必须调用
-    
+
     return Consumer<AppState>(
       builder: (context, appState, _) {
+        final t = AppTokens.of(context);
+
         // ── 更换网址处理 ──
         // 本页被 KeepAlive 保活，换站后旧站的搜索结果会一直留在这里，
         // 用户看到的是"另一个网站的内容"。以网址为准清空一次。
@@ -393,195 +390,197 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         }
 
         return Scaffold(
-            extendBodyBehindAppBar: true,
-            // 与批量页一致：跟随主题而非写死白色。
-            // 列表区只有卡片的 Card.margin 露底，写死白会在
-            // 顶栏下沿和首张卡片之间留下一条突兀的白带。
-            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-            body: Stack(
-              children: [
-                RefreshIndicator(
-                  onRefresh: _onRefresh,
-                  color: Colors.blue,
-                  backgroundColor: Theme.of(context).cardColor,
-                  displacement: 40,
-                  child: CustomScrollView(
+          // 顶栏改为普通 AppBar（不再折叠），内容从顶栏下方开始，
+          // 因此不再需要 extendBodyBehindAppBar。
+          backgroundColor: t.bg,
+          appBar: _buildAppBar(appState, t),
+          body: Stack(
+            children: [
+              RefreshIndicator(
+                onRefresh: _onRefresh,
+                color: t.accent,
+                backgroundColor: t.surface,
+                displacement: 40,
+                child: CustomScrollView(
                   controller: _scrollController,
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
-                    // SliverAppBar：标题区域（滚动时隐藏）+ 搜索区域（始终可见）
-                    SliverAppBar(
-                      pinned: true,
-                      floating: true,
-                      snap: false,
-                      expandedHeight: 112 + MediaQuery.of(context).padding.top, // 状态栏 + 标题区(56) + 搜索区(56)
-                      backgroundColor: Colors.transparent,
-                      elevation: 0,
-                      scrolledUnderElevation: 0,
-                      flexibleSpace: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final statusBarHeight = MediaQuery.of(context).padding.top;
-                          final expandRatio = ((constraints.maxHeight - 56 - statusBarHeight) / 56).clamp(0.0, 1.0);
-                          final isExpanded = expandRatio > 0.5;
-                      
-                      return ValueListenableBuilder<bool>(
-                        valueListenable: UiStyle.glassEnabled,
-                        builder: (context, glass, _) {
-                          final isDark =
-                              Theme.of(context).brightness == Brightness.dark;
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                      sliver: _isAuthorMode && !_isAuthorPageMode
+                          ? _buildAuthorResultsSliver()
+                          : _buildVideoResultsSliver(appState),
+                    ),
+                    // 底部留白给翻页控件和浮动按钮
+                    const SliverToBoxAdapter(child: SizedBox(height: 110)),
+                  ],
+                ),
+              ),
+              // 覆盖层：翻页控件 + 浮动按钮
+              ..._buildOverlays(appState),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
-                          // 关闭玻璃 → 完全不透明，内容被挡住；
-                          // 开启 → 半透明，列表从栏下穿过时可见模糊。
-                          //
-                          // 底色统一由 UiStyle 计算，与批量页顶栏、底部导航栏
-                          // 共用一套公式，避免以前深色下 0.45/0.65 与
-                          // 底栏 0.72 各写各的导致上下颜色不一致。
-                          //
-                          // 注意 expandRatio 是「1=完全展开」，而
-                          // UiStyle.headerGlassFill 要的是「1=完全收起」，
-                          // 所以这里传 1 - expandRatio。
-                          final barColor = !glass
-                              ? (isDark
-                                  ? Theme.of(context).colorScheme.surface
-                                  : Colors.white)
-                              : UiStyle.headerGlassFill(
-                                  isDark, 1.0 - expandRatio);
-
-                          final bar = Container(
-                            color: barColor,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // 状态栏占位
-                                SizedBox(height: statusBarHeight),
-                                // 标题区域（滚动时标题文字淡出，右侧按钮常显）
-                                // 与批量页一致：状态/隐私按钮留在标题行右侧，
-                                // 只让标题文字随折叠淡出，按钮不受 AnimatedOpacity 影响。
-                                Container(
-                                  height: 56,
-                                  padding: EdgeInsets.only(left: 16, right: 8),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: AnimatedOpacity(
-                                          opacity: isExpanded ? 1.0 : 0.0,
-                                          duration: const Duration(milliseconds: 150),
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              _isAuthorPageMode
-                                                ? Row(
-                                                    children: [
-                                                      Flexible(
-                                                        child: Text('作者: $_currentAuthorName', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87)),
-                                                      ),
-                                                      SizedBox(width: 12),
-                                                      // 关注按钮
-                                                      _buildFollowButton(appState),
-                                                    ],
-                                                  )
-                                                : Text('搜索', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black87)),
-                                              Text(
-                                                _isAuthorPageMode 
-                                                  ? '点击作者主页查看视频' 
-                                                  : '通过关键词搜索并下载视频',
-                                                style: TextStyle(fontSize: 12, color: Theme.of(context).brightness == Brightness.dark ? Colors.grey : Colors.black54)),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                      ..._buildAppBarActions(appState),
-                                    ],
-                                  ),
-                                ),
-                                // 搜索区域（始终可见，吸附到顶部）
-                                Container(
-                                  height: 56,
-                                  color: glass
-                                      ? Theme.of(context)
-                                          .scaffoldBackgroundColor
-                                          .withOpacity(0.95)
-                                      : (isDark
-                                          ? const Color(0xFF242424)
-                                          : Colors.white),
-                                  child: _buildSearchBar(appState),
-                                ),
-                              ],
-                            ),
-                          );
-
-                          if (!glass) return bar;
-
-                          return ClipRect(
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                              child: bar,
-                            ),
-                          );
-                        },
-                      );
-                    },
+  /// 顶栏：标题 + 站点胶囊 + 搜索框 + 视频/作者分段
+  PreferredSizeWidget _buildAppBar(AppState appState, AppTokens t) {
+    return AppBar(
+      backgroundColor: t.surface,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      centerTitle: false,
+      toolbarHeight: _isAuthorPageMode ? 58 : 86,
+      titleSpacing: 0,
+      shape: Border(bottom: BorderSide(color: t.line, width: 1)),
+      title: Padding(
+        padding: const EdgeInsets.only(left: 14, right: 12),
+        child: _isAuthorPageMode
+            ? _buildAuthorModeTitle(appState, t)
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '搜索',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 23,
+                            height: 1.15,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.4,
+                            color: t.text1,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ..._buildAppBarActions(appState),
+                    ],
                   ),
-                ),
-                // 视频/作者搜索结果
-                SliverPadding(
-                  // 顶部不再额外留 8：贴搜索栏更紧凑，间距交给 Card 自带 margin
-                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                  sliver: _isAuthorMode && !_isAuthorPageMode
-                    ? _buildAuthorResultsSliver()
-                    : _buildVideoResultsSliver(appState),
-                ),
-                // 底部留白给翻页控件和浮动按钮
-                SliverToBoxAdapter(
-                  child: SizedBox(height: 100),
-                ),
-              ],
+                  const SizedBox(height: 7),
+                  Row(
+                    children: [
+                      Flexible(child: SitePill(appState: appState)),
+                      const Spacer(),
+                      // 视频 / 作者 分段
+                      AppSegmented(
+                        labels: const ['视频', '作者'],
+                        selectedIndex: _isAuthorMode ? 1 : 0,
+                        height: 28,
+                        onChanged: (i) => _onSearchTypeChanged(i == 1),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              ),
-            // 覆盖层：翻页控件 + 浮动按钮
-            ..._buildOverlays(appState),
-          ],
+      ),
+      bottom: PreferredSize(
+        preferredSize: Size.fromHeight(
+            _isAuthorPageMode ? 0 : 58),
+        child: _isAuthorPageMode
+            ? const SizedBox.shrink()
+            : _buildSearchBar(appState, t),
+      ),
+    );
+  }
+
+  /// 作者主页模式下的标题行：返回 + 作者名 + 关注
+  Widget _buildAuthorModeTitle(AppState appState, AppTokens t) {
+    return Row(
+      children: [
+        AppIconBtn(
+          icon: Icons.arrow_back_rounded,
+          tooltip: '返回',
+          onTap: _exitAuthorPageMode,
         ),
-      );
-    },
-  );
-}
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            '作者: $_currentAuthorName',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.3,
+              color: t.text1,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        _buildFollowButton(appState, t),
+      ],
+    );
+  }
   
   /// 覆盖层：翻页控件 + 浮动按钮
+  /// 覆盖层：翻页控件 + 浮动按钮
   List<Widget> _buildOverlays(AppState appState) {
+    final t = AppTokens.of(context);
+    final navInset = MediaQuery.of(context).padding.bottom;
+    final hasSelection = _selectedIds.isNotEmpty;
+
     return [
       // 搜索历史下拉：必须是 Stack 里的独立一层。
       // 早前它挂在 SliverAppBar.flexibleSpace 内部，而 expandedHeight
-      // 只算到「标题区 56 + 搜索框 56」，下拉撑开的部分落在 sliver 的
+      // 只算到「标题区 + 搜索框」，下拉撑开的部分落在 sliver 的
       // ClipRect 之外 —— 那块区域不属于任何控件，点击会直接穿到下层
       // 视频卡片上。移到 Stack 里作为独立层后命中测试才正确。
       if (_showHistory && appState.searchHistory.isNotEmpty && !_isAuthorPageMode)
-        _buildHistoryOverlay(appState),
+        _buildHistoryOverlay(appState, t),
       // 页码跳转悬浮胶囊（仅视频搜索模式显示，作者主页模式隐藏）
-      if (!_isAuthorMode && !_isAuthorPageMode) _buildBottomPageNavigation(appState),
+      if (!_isAuthorMode && !_isAuthorPageMode && !hasSelection)
+        _buildBottomPageNavigation(appState, t),
       // 回顶部按钮
       if (_showBackToTop && appState.showBackToTop)
         Positioned(
-          bottom: (_selectedIds.isNotEmpty) ? 160.0 : 80.0,
-          left: appState.backToTopPosition == 'left' ? 16 : null,
-          right: appState.backToTopPosition == 'right' ? 16 : null,
-          child: FloatingActionButton(
-            mini: true,
-            heroTag: 'search_back_to_top',
-            onPressed: _scrollToTop,
-            child: Icon(Icons.arrow_upward),
+          bottom: hasSelection
+              ? navInset + 84
+              : (appState.backToTopPosition == 'right'
+                  ? navInset + 16
+                  : navInset + 74),
+          left: appState.backToTopPosition == 'left' ? 12 : null,
+          right: appState.backToTopPosition == 'right' ? 12 : null,
+          child: GestureDetector(
+            onTap: _scrollToTop,
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: t.surface,
+                shape: BoxShape.circle,
+                border: Border.all(color: t.line),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(t.dark ? 0.4 : 0.12),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Icon(Icons.arrow_upward_rounded, size: 19, color: t.text2),
+            ),
           ),
         ),
-      // 下载按钮
-      if (_selectedIds.isNotEmpty)
+      // 选中浮条
+      if (hasSelection)
         Positioned(
-          bottom: 80,
-          right: 16,
-          child: FloatingActionButton.extended(
-            onPressed: _download,
-            icon: Icon(Icons.download),
-            label: Text('下载 (${_selectedIds.length})'),
+          left: 12,
+          right: 12,
+          bottom: navInset + 12,
+          child: AppFloatBar(
+            selectedCount: _selectedIds.length,
+            actionLabel: '开始下载',
+            onAction: _download,
+            onCancel: () => setState(() => _selectedIds.clear()),
           ),
         ),
     ];
@@ -591,12 +590,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   ///
   /// 用 GestureDetector(behavior: opaque) 铺满全屏来截住所有落在列表上的点击，
   /// 点空白处收起历史，点条目则应用关键词 —— 不再穿透到下层视频卡片。
-  Widget _buildHistoryOverlay(AppState appState) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final statusBarHeight = MediaQuery.of(context).padding.top;
-    // 搜索栏下沿：状态栏 + 标题区(56) + 搜索框(56)
-    final double top = statusBarHeight + 112;
-
+  Widget _buildHistoryOverlay(AppState appState, AppTokens t) {
     return Positioned.fill(
       child: GestureDetector(
         // 拦截整层命中，避免点到下方列表
@@ -605,14 +599,18 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         child: Stack(
           children: [
             Positioned(
-              top: top,
+              top: 0,
+              bottom: 0,
               left: 0,
               right: 0,
-              child: GestureDetector(
-                // 下拉本体自己消费点击，不让它冒泡到收起逻辑
-                behavior: HitTestBehavior.opaque,
-                onTap: () {},
-                child: _buildSearchHistoryDropdown(appState, isDark),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: GestureDetector(
+                  // 下拉本体自己消费点击，不让它冒泡到收起逻辑
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {},
+                  child: _buildSearchHistoryDropdown(appState, t),
+                ),
               ),
             ),
           ],
@@ -622,43 +620,42 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   }
 
   /// 构建关注按钮
-  Widget _buildFollowButton(AppState appState) {
+  Widget _buildFollowButton(AppState appState, AppTokens t) {
     final isFollowed = appState.followedAuthorsService.followedList
         .any((a) => a.authorId == _currentAuthorId);
-    
+
     return GestureDetector(
       onTap: () async {
         if (isFollowed) {
           await appState.followedAuthorsService.unfollow(_currentAuthorId);
         } else {
-          await appState.followedAuthorsService.follow(_currentAuthorId, _currentAuthorName);
+          await appState.followedAuthorsService
+              .follow(_currentAuthorId, _currentAuthorName);
         }
         if (mounted) setState(() {});
       },
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        height: 26,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
         decoration: BoxDecoration(
-          color: isFollowed ? Colors.red.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isFollowed ? Colors.red : Colors.blue,
-            width: 1,
-          ),
+          color: isFollowed ? t.dangerSoft : t.accentSoft,
+          borderRadius: BorderRadius.circular(AppRadius.pill),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              isFollowed ? Icons.favorite : Icons.favorite_border,
-              size: 16,
-              color: isFollowed ? Colors.red : Colors.blue,
+              isFollowed ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+              size: 13,
+              color: isFollowed ? t.danger : t.accent,
             ),
-            SizedBox(width: 4),
+            const SizedBox(width: 4),
             Text(
               isFollowed ? '已关注' : '关注',
               style: TextStyle(
-                fontSize: 13,
-                color: isFollowed ? Colors.red : Colors.blue,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: isFollowed ? t.danger : t.accent,
               ),
             ),
           ],
@@ -667,152 +664,61 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     );
   }
 
-  /// AppBar右侧操作按钮
+  /// 顶栏右侧操作：已选数量 / 全选 / 状态 / 隐私
   List<Widget> _buildAppBarActions(AppState appState) {
+    final t = AppTokens.of(context);
+    final total = _isAuthorPageMode ? _authorVideos.length : _results.length;
+    final allSelected = _selectedIds.isNotEmpty && _selectedIds.length == total;
+    final statusColor = _status == '就绪'
+        ? t.success
+        : (_status == '无结果' ? t.text3 : t.warning);
+
     return [
-      // 已选数量
-      if (_selectedIds.isNotEmpty)
-        Container(
-          margin: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.blue.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            '已选 ${_selectedIds.length} 个',
-            style: TextStyle(color: Colors.blue, fontSize: 12),
-          ),
-        ),
-      // 全选勾选框
-      if (_selectedIds.isNotEmpty)
+      if (_selectedIds.isNotEmpty) ...[
+        AppCountPill(text: '已选 ${_selectedIds.length}', color: t.accent),
+        const SizedBox(width: 6),
         GestureDetector(
           onTap: _toggleAll,
           child: Container(
-            margin: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-            padding: EdgeInsets.all(4),
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
-              color: _selectedIds.length == (_isAuthorPageMode ? _authorVideos.length : _results.length) 
-                  ? Colors.blue 
-                  : Theme.of(context).scaffoldBackgroundColor.withOpacity(0.85),
-              borderRadius: BorderRadius.circular(8),
-              border: _selectedIds.length == (_isAuthorPageMode ? _authorVideos.length : _results.length) 
-                  ? null 
-                  : Border.all(color: Colors.blue, width: 2),
+              color: allSelected ? AppTokens.blue : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppRadius.sm + 1),
+              border: allSelected
+                  ? null
+                  : Border.all(color: AppTokens.blue, width: 1.6),
             ),
             child: Icon(
-              Icons.check,
-              color: _selectedIds.length == (_isAuthorPageMode ? _authorVideos.length : _results.length) 
-                  ? Colors.white 
-                  : Colors.blue,
-              size: 20,
+              Icons.check_rounded,
+              size: 18,
+              color: allSelected ? Colors.white : AppTokens.blue,
             ),
           ),
         ),
-      // 就绪按钮
-      Container(
-        margin: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(
-          color: _status == '就绪' ? Colors.green.withOpacity(0.2) : Colors.orange.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          _status,
-          style: TextStyle(
-            color: _status == '就绪' ? Colors.green : Colors.orange,
-            fontSize: 12,
-          ),
-        ),
-      ),
-      SizedBox(width: 4),
-      // 隐私按钮
-      IconButton(
-        icon: Icon(
-          appState.privacyMode ? Icons.visibility_off : Icons.visibility,
-          color: appState.privacyMode ? Colors.red : Colors.grey,
-        ),
-        onPressed: () {
-          appState.togglePrivacyMode();
-        },
+        const SizedBox(width: 6),
+      ],
+      if (!_isAuthorPageMode)
+        AppCountPill(text: _status, color: statusColor),
+      const SizedBox(width: 6),
+      AppIconBtn(
+        icon: appState.privacyMode
+            ? Icons.visibility_off_rounded
+            : Icons.visibility_rounded,
         tooltip: appState.privacyMode ? '取消模糊' : '模糊预览图',
+        color: appState.privacyMode ? t.danger : t.text2,
+        background: appState.privacyMode ? t.dangerSoft : t.surface2,
+        onTap: () => appState.togglePrivacyMode(),
       ),
     ];
   }
 
-  /// 搜索栏（吸顶内容）- 深色模式优化风格
-  Widget _buildSearchBar(AppState appState) {
+  /// 搜索框（顶栏底部固定一行）
+  Widget _buildSearchBar(AppState appState, AppTokens t) {
     final siteType = appState.crawler?.siteType ?? 'original';
     final showSort = !_isAuthorMode && siteType != 'porn91';
-    // 用实际渲染主题判断深浅色，避免与「跟随系统」设置不一致
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
-    // 作者主页模式下，隐藏下拉菜单，只显示返回按钮和搜索框
-    if (_isAuthorPageMode) {
-      return Container(
-        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        color: Theme.of(context).scaffoldBackgroundColor,
-        child: Container(
-          height: 44,
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-            borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-            border: Border.all(
-              color: isDark ? Colors.white.withOpacity(0.08) : Colors.grey.shade300,
-              width: 0.5,
-            ),
-            boxShadow: isDark
-                ? [BoxShadow(color: Colors.white.withOpacity(0.03), blurRadius: 1, spreadRadius: 0.5)]
-                : [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 8, offset: const Offset(0, 2))],
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 14),
-                  child: Text(
-                    '$_currentAuthorName 的视频',
-                    style: TextStyle(
-                      color: isDark ? Colors.white.withOpacity(0.9) : Colors.black87,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-              ),
-              // 蓝色搜索按钮（刷新）
-              GestureDetector(
-                onTap: _onRefresh,
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  margin: const EdgeInsets.only(right: 4),
-                  decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF2E7AE6) : const Color(0xFF3A7BF7),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.refresh, color: Colors.white, size: 20),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildSearchBarRow(isDark, showSort),
-      ],
-    );
-  }
 
-  /// 搜索栏本体（胶囊输入框 + 分段控件 + 搜索按钮）
-  Widget _buildSearchBarRow(bool isDark, bool showSort) {
-    // Container(color:) 只负责绘制，不参与命中测试。
-    // 包一层 opaque 的 GestureDetector，让搜索栏自己吃掉点击，
-    // 避免落在栏空白处的点击穿透到下面的视频列表。
+    // 搜索栏本体用 opaque 的 GestureDetector 包住，避免点空白穿透到列表
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
@@ -820,53 +726,40 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         if (_showHistory) setState(() => _showHistory = false);
       },
       child: Container(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Theme.of(context).scaffoldBackgroundColor,
-      child: Container(
-        height: 44,
-        decoration: BoxDecoration(
-          // 去线化：与胶囊翻页器风格统一，取消外边框
-          color: isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-          // 使用弥散阴影建立悬浮感，替代边框
-          boxShadow: isDark
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.25),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : [
-                  BoxShadow(
-                    color: Colors.grey.shade400.withOpacity(0.2),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-        ),
-        child: Row(
-          children: [
-            // 输入框
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(left: 14),
+        color: t.surface,
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+        child: Container(
+          height: 42,
+          decoration: BoxDecoration(
+            color: t.surface2,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: t.line),
+          ),
+          child: Row(
+            children: [
+              const SizedBox(width: 12),
+              Icon(Icons.search_rounded, size: 17, color: t.text3),
+              const SizedBox(width: 7),
+              // 输入框
+              Expanded(
                 child: TextField(
                   controller: _keywordController,
                   focusNode: _keywordFocusNode,
                   style: TextStyle(
-                    color: isDark ? Colors.white.withOpacity(0.9) : Colors.black87,
-                    fontSize: 14,
+                    color: t.text1,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
                   ),
                   decoration: InputDecoration(
                     border: InputBorder.none,
-                    hintText: '输入关键词...',
-                    hintStyle: TextStyle(
-                      color: isDark ? Colors.white.withOpacity(0.3) : Colors.grey.shade500,
-                      fontSize: 14,
-                    ),
                     isDense: true,
                     contentPadding: EdgeInsets.zero,
+                    hintText: '输入关键词搜索',
+                    hintStyle: TextStyle(
+                      color: t.text3,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                   onChanged: (value) {
                     if (value.trim().isNotEmpty) {
@@ -884,60 +777,26 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                   textInputAction: TextInputAction.search,
                 ),
               ),
-            ),
-            // 分隔线 — 深色模式下更淡
-            Container(
-              width: 1,
-              height: 18,
-              color: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade300,
-            ),
-            // 搜索类型：分段控件（只有两个选项，同时可见、一次点击）
-            // 原来用下拉，需要"点开→选"两步，且看不出另一个选项是什么。
-            _buildSearchTypeSegmented(isDark),
-            // 排序下拉（仅视频搜索模式 + original CMS）
-            if (showSort) ...[
-              Container(
-                width: 1,
-                height: 18,
-                color: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade300,
-              ),
-              _buildSearchDropdown(
-                value: _sortBy,
-                items: [
-                  DropdownMenuItem(value: 'default', child: Text('默认')),
-                  DropdownMenuItem(value: 'new', child: Text('最新')),
-                  DropdownMenuItem(value: 'hot', child: Text('最热')),
-                ],
-                onChanged: (v) {
-                  if (v != null && v != _sortBy) {
-                    setState(() => _sortBy = v);
-                    // 切换排序必然重置到第 1 页，明确告知避免"我明明在第 5 页"的困惑
-                    const labels = {'default': '默认', 'new': '最新', 'hot': '最热'};
-                    _showSearchToast('已按「${labels[v] ?? v}」排序，已回到第 1 页');
-                    if (_lastKeyword.isNotEmpty) _search();
-                  }
-                },
-                isDark: isDark,
+              // 排序下拉（仅视频搜索模式 + original CMS）
+              if (showSort) _buildSearchDropdown(t),
+              // 搜索按钮
+              GestureDetector(
+                onTap: _search,
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  margin: const EdgeInsets.only(right: 5),
+                  decoration: BoxDecoration(
+                    color: AppTokens.blue,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: const Icon(Icons.search_rounded,
+                      color: Colors.white, size: 18),
+                ),
               ),
             ],
-            const SizedBox(width: 4),
-            // 蓝色搜索按钮 — 深色模式下稍微暗一点
-            GestureDetector(
-              onTap: _search,
-              child: Container(
-                width: 36,
-                height: 36,
-                margin: const EdgeInsets.only(right: 4),
-                decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF2E7AE6) : const Color(0xFF3A7BF7),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.search, color: Colors.white, size: 20),
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
       ),
     );
   }
@@ -945,19 +804,21 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   /// 搜索历史下拉
   ///
   /// 展示在搜索栏下方，点击条目直接搜索；右侧 × 删除单条；右上角清空全部。
-  Widget _buildSearchHistoryDropdown(AppState appState, bool isDark) {
+  Widget _buildSearchHistoryDropdown(AppState appState, AppTokens t) {
     final entries = appState.searchHistory.entries;
+    final radius = BorderRadius.circular(AppRadius.xl);
 
     return Container(
-      margin: EdgeInsets.fromLTRB(16, 0, 16, 8),
+      margin: const EdgeInsets.fromLTRB(14, 0, 14, 8),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        color: t.surface,
+        borderRadius: radius,
+        border: Border.all(color: t.line),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.35 : 0.12),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
+            color: Colors.black.withOpacity(t.dark ? 0.45 : 0.12),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
@@ -967,17 +828,18 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         children: [
           // 标题行 + 清空
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 6, 4),
+            padding: const EdgeInsets.fromLTRB(14, 10, 6, 2),
             child: Row(
               children: [
-                Icon(Icons.history, size: 14,
-                    color: isDark ? Colors.white.withOpacity(0.45) : Colors.grey),
+                Icon(Icons.history_rounded, size: 13, color: t.text3),
                 const SizedBox(width: 6),
                 Text(
                   '搜索历史',
                   style: TextStyle(
-                    fontSize: 12,
-                    color: isDark ? Colors.white.withOpacity(0.45) : Colors.grey,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                    color: t.text3,
                   ),
                 ),
                 const Spacer(),
@@ -989,10 +851,17 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                   },
                   style: TextButton.styleFrom(
                     minimumSize: Size.zero,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
-                  child: const Text('清空', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  child: Text(
+                    '清空',
+                    style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: t.text3),
+                  ),
                 ),
               ],
             ),
@@ -1001,7 +870,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
           ...entries.take(8).map((keyword) => InkWell(
                 onTap: () => _applyHistory(appState, keyword),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
                   child: Row(
                     children: [
                       Expanded(
@@ -1009,10 +879,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                           keyword,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: isDark ? Colors.white.withOpacity(0.85) : Colors.black87,
-                          ),
+                          style: TextStyle(fontSize: 13.5, color: t.text1),
                         ),
                       ),
                       // 单条删除
@@ -1021,123 +888,51 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                         behavior: HitTestBehavior.opaque,
                         child: Padding(
                           padding: const EdgeInsets.only(left: 8),
-                          child: Icon(
-                            Icons.close,
-                            size: 16,
-                            color: isDark ? Colors.white.withOpacity(0.3) : Colors.grey.shade400,
-                          ),
+                          child: Icon(Icons.close_rounded,
+                              size: 15, color: t.text3),
                         ),
                       ),
                     ],
                   ),
                 ),
               )),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
         ],
       ),
     );
   }
 
-  /// 搜索栏下拉菜单
-  Widget _buildSearchDropdown<T>({
-    required T value,
-    required List<DropdownMenuItem<T>> items,
-    required ValueChanged<T?> onChanged,
-    required bool isDark,
-  }) {
+  /// 排序下拉菜单
+  Widget _buildSearchDropdown(AppTokens t) {
     return Theme(
-      data: Theme.of(context).copyWith(
-        canvasColor: isDark ? const Color(0xFF2C2C2E) : Colors.white,
-      ),
+      data: Theme.of(context).copyWith(canvasColor: t.surface),
       child: DropdownButtonHideUnderline(
-        child: DropdownButton<T>(
-          value: value,
+        child: DropdownButton<String>(
+          value: _sortBy,
           isDense: true,
-          icon: Icon(
-            Icons.keyboard_arrow_down,
-            size: 16,
-            color: isDark ? Colors.white.withOpacity(0.5) : Colors.grey.shade600,
-          ),
+          icon: Icon(Icons.keyboard_arrow_down_rounded,
+              size: 15, color: t.text3),
           style: TextStyle(
-            color: isDark ? Colors.white.withOpacity(0.85) : Colors.black87,
+            color: t.text2,
             fontSize: 12,
+            fontWeight: FontWeight.w600,
           ),
-          items: items.map((e) => DropdownMenuItem(
-            value: e.value,
-            child: Text(
-              (e.child as Text).data ?? '',
-              style: TextStyle(
-                color: isDark ? Colors.white.withOpacity(0.85) : Colors.black87,
-                fontSize: 12,
-              ),
-            ),
-          )).toList(),
-          onChanged: onChanged,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          items: const [
+            DropdownMenuItem(value: 'default', child: Text('默认')),
+            DropdownMenuItem(value: 'new', child: Text('最新')),
+            DropdownMenuItem(value: 'hot', child: Text('最热')),
+          ],
+          onChanged: (v) {
+            if (v != null && v != _sortBy) {
+              setState(() => _sortBy = v);
+              // 切换排序必然重置到第 1 页，明确告知避免"我明明在第 5 页"的困惑
+              const labels = {'default': '默认', 'new': '最新', 'hot': '最热'};
+              _showSearchToast('已按「${labels[v] ?? v}」排序，已回到第 1 页');
+              if (_lastKeyword.isNotEmpty) _search();
+            }
+          },
         ),
-      ),
-    );
-  }
-
-  /// 搜索类型分段控件（视频 / 作者）
-  ///
-  /// 只有两个选项，用分段控件让两者**同时可见、一次点击**即可切换；
-  /// 原来用下拉需要"点开 → 选"两步，且看不出另一个选项是什么。
-  ///
-  /// 切换后会：
-  ///   · 若已有搜索关键词，自动用该关键词重新搜索（避免状态与结果不一致）
-  ///   · 若没有关键词，清空结果并提示输入
-  Widget _buildSearchTypeSegmented(bool isDark) {
-    final trackBg = isDark ? const Color(0xFF2C2C2E) : const Color(0xFFECEFF3);
-    final unselectedFg = isDark ? Colors.white70 : const Color(0xFF5F6368);
-
-    Widget item(String label, bool value) {
-      final on = _isAuthorMode == value;
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: on ? null : () => _onSearchTypeChanged(value),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 170),
-          height: 26,
-          padding: const EdgeInsets.symmetric(horizontal: 11),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: on ? (isDark ? const Color(0xFF3A3A3C) : Colors.white) : null,
-            borderRadius: BorderRadius.circular(AppTheme.radiusMd - 1),
-            boxShadow: on
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.13),
-                      blurRadius: 3,
-                      offset: const Offset(0, 1),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: on ? AppTheme.primaryColor : unselectedFg,
-              fontWeight: on ? FontWeight.w600 : FontWeight.normal,
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(
-        color: trackBg,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          item('视频', false),
-          item('作者', true),
-        ],
       ),
     );
   }
@@ -1192,72 +987,63 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
   }
 
   /// 底部页码跳转区域（悬浮胶囊）
-  Widget _buildBottomPageNavigation(AppState appState) {
-    // 用实际渲染主题判断深浅色，避免与「跟随系统」设置不一致
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+  Widget _buildBottomPageNavigation(AppState appState, AppTokens t) {
     // 底栏被遮住的原因：main_page 的 Scaffold 用了 extendBody: true
-    // （底栏做毛玻璃需要内容透上来），body 的坐标系会延伸到屏幕底部，
-    // 页码胶囊停在 bottom: 16 就被 80 高的 NavigationBar 压住了。
-    //
+    // （底栏做毛玻璃需要内容透上来），body 的坐标系会延伸到屏幕底部。
     // extendBody 为 true 时，body 内的 MediaQuery.padding.bottom 恰好等于
-    // 底栏总高（实测：无安全区 80、有安全区 80+34=114），
-    // 直接拿它当偏移量即可，不用硬编码 80 也不用自己加安全区。
-    final navBarHeight = MediaQuery.of(context).padding.bottom;
+    // 底栏总高，直接拿它当偏移量即可。
+    final navInset = MediaQuery.of(context).padding.bottom;
+    final canPrev = !_isLoading && !_isLoadingMore && _currentPage > 1;
+    final canNext = !_isLoading && !_isLoadingMore;
+
+    Widget arrow(IconData icon, bool enabled, VoidCallback onTap) {
+      return GestureDetector(
+        onTap: enabled ? onTap : null,
+        child: Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: enabled ? t.accentSoft : t.surface2,
+            borderRadius: BorderRadius.circular(AppRadius.sm + 1),
+          ),
+          child: Icon(icon,
+              size: 18, color: enabled ? t.accent : t.text3),
+        ),
+      );
+    }
+
     return Positioned(
-      bottom: navBarHeight + 16,
+      bottom: navInset + 16,
       left: 0,
       right: 0,
       child: Center(
-        // 通过 AdaptiveSurface 统一风格：开启毛玻璃时为半透明模糊，
-        // 关闭时回落为实心色（设置页可实时切换）。
-        child: AdaptiveSurface(
-          borderRadius: AppTheme.brPill,
-          solid: true,
-          fallbackColor:
-              isDark ? Colors.grey[850] : Colors.white.withOpacity(0.95),
-          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+          decoration: BoxDecoration(
+            color: t.surface,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: t.line),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(t.dark ? 0.4 : 0.1),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 上一页按钮
-              GestureDetector(
-                onTap: (_isLoading || _isLoadingMore || _currentPage <= 1)
-                  ? null
-                  : () => _goToPage(_currentPage - 1),
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: (_currentPage <= 1)
-                      ? (isDark ? Colors.grey[700] : Colors.grey[300])
-                      : (isDark ? Colors.blue[900] : Colors.blue[100]),
-                    borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-                  ),
-                  child: Icon(
-                    Icons.arrow_left,
-                    size: 18,
-                    color: (_currentPage <= 1)
-                      ? (isDark ? Colors.grey[500] : Colors.grey[500])
-                      : (isDark ? Colors.blue[300] : Colors.blue[700]),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              // 当前页码输入框 — 既是页码显示器也是跳转输入器
+              arrow(Icons.chevron_left_rounded, canPrev,
+                  () => _goToPage(_currentPage - 1)),
+              const SizedBox(width: 8),
+              // 当前页码输入框 —— 既是页码显示器也是跳转输入器
               Container(
-                width: 64,
-                height: 32,
+                width: 58,
+                height: 30,
                 decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: isDark
-                          ? Colors.black.withOpacity(0.3)
-                          : Colors.grey.shade300.withOpacity(0.5),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
+                  color: t.surface2,
+                  borderRadius: BorderRadius.circular(AppRadius.sm + 1),
                 ),
                 child: Center(
                   child: TextField(
@@ -1267,12 +1053,13 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: isDark ? Colors.white : Colors.black87,
+                      fontWeight: FontWeight.w700,
+                      color: t.text1,
                     ),
                     decoration: const InputDecoration(
                       hintText: '',
-                      contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 4, vertical: 6),
                       border: InputBorder.none,
                       isDense: true,
                     ),
@@ -1286,25 +1073,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-              // 下一页按钮
-              GestureDetector(
-                onTap: (_isLoading || _isLoadingMore)
-                  ? null
-                  : () => _goToPage(_currentPage + 1),
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: isDark ? Colors.blue[900] : Colors.blue[100],
-                    borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-                  ),
-                  child: Icon(
-                    Icons.arrow_right,
-                    size: 18,
-                    color: isDark ? Colors.blue[300] : Colors.blue[700],
-                  ),
-                ),
-              ),
+              const SizedBox(width: 8),
+              arrow(Icons.chevron_right_rounded, canNext,
+                  () => _goToPage(_currentPage + 1)),
             ],
           ),
         ),
@@ -1421,60 +1192,66 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
 
   /// 构建视频搜索结果的 Sliver 版本
   Widget _buildVideoResultsSliver(AppState appState) {
+    final t = AppTokens.of(context);
     final isListMode = appState.videoDisplayMode == 'list';
-    
+
     // 作者主页模式使用 _authorVideos，普通模式使用 _results
     final videos = _isAuthorPageMode ? _authorVideos : _results;
-    final hasMore = _isAuthorPageMode ? _authorHasMore : _hasMore;
-    
+
     // 加载中
     if (_isLoading && videos.isEmpty) {
       return SliverToBoxAdapter(
-        child: Center(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 120),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              SizedBox(height: 100),
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('搜索中...', style: TextStyle(color: Colors.grey)),
+              CircularProgressIndicator(color: t.accent, strokeWidth: 2.5),
+              const SizedBox(height: 16),
+              Text('搜索中...',
+                  style: TextStyle(fontSize: 13, color: t.text3)),
             ],
           ),
         ),
       );
     }
-    
+
     // 无数据
     if (videos.isEmpty) {
       return SliverToBoxAdapter(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SizedBox(height: 100),
-              Icon(Icons.search, size: 64, color: Colors.grey),
-              SizedBox(height: 16),
-              Text('输入关键词搜索', style: TextStyle(color: Colors.grey)),
-            ],
-          ),
+        child: Padding(
+          padding: const EdgeInsets.only(top: 80),
+          child: _lastKeyword.isEmpty
+              ? EmptyState(
+                  icon: Icons.search_rounded,
+                  title: '输入关键词开始搜索',
+                  subtitle: '支持搜索视频标题与作者名',
+                  iconSize: 56,
+                )
+              : EmptyState(
+                  icon: Icons.search_off_rounded,
+                  title: '未找到“${_lastKeyword}”相关结果',
+                  subtitle: '换个关键词试试',
+                  iconSize: 56,
+                ),
         ),
       );
     }
-    
+
     if (isListMode) {
       return SliverList(
         delegate: SliverChildBuilderDelegate(
-          (context, index) => _buildVideoListItem(videos[index], appState, videos.length),
+          (context, index) =>
+              _buildVideoListItem(videos[index], appState, videos.length),
           childCount: videos.length,
         ),
       );
     } else {
       return SliverGrid(
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          childAspectRatio: 0.85,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
+          childAspectRatio: 0.82,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
         ),
         delegate: SliverChildBuilderDelegate(
           (context, index) => _buildVideoGridItem(videos[index], appState),
@@ -1486,36 +1263,88 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
 
   /// 作者搜索结果的 Sliver 版本
   Widget _buildAuthorResultsSliver() {
+    final t = AppTokens.of(context);
+
     if (_authorResults.isEmpty) {
       return SliverToBoxAdapter(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SizedBox(height: 100),
-              Icon(Icons.person_search, size: 64, color: Colors.grey),
-              SizedBox(height: 16),
-              Text('输入作者名搜索', style: TextStyle(color: Colors.grey)),
-            ],
+        child: Padding(
+          padding: const EdgeInsets.only(top: 80),
+          child: EmptyState(
+            icon: Icons.person_search_rounded,
+            title: '输入作者名搜索',
+            subtitle: '搜索后可进入作者主页批量下载',
+            iconSize: 56,
           ),
         ),
       );
     }
-    
+
     return SliverList(
       delegate: SliverChildBuilderDelegate(
         (context, index) {
           final author = _authorResults[index];
-          return Card(
-            child: ListTile(
-              leading: CircleAvatar(
-                backgroundImage: author.avatar != null ? NetworkImage(author.avatar!) : null,
-                child: author.avatar == null ? Icon(Icons.person) : null,
+          final radius = BorderRadius.circular(AppRadius.lg);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 9),
+            child: Material(
+              color: t.surface,
+              borderRadius: radius,
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: () => _enterAuthorPageMode(author),
+                child: Container(
+                  padding: const EdgeInsets.all(11),
+                  decoration: BoxDecoration(
+                    borderRadius: radius,
+                    border: Border.all(color: t.line),
+                  ),
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                        child: SizedBox(
+                          width: 42,
+                          height: 42,
+                          child: CoverImage(
+                            url: author.avatar,
+                            borderRadius: BorderRadius.zero,
+                            fallbackIcon: Icons.person_rounded,
+                            blur: false,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              author.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w700,
+                                color: t.text1,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              author.videoCount > 0
+                                  ? '${author.videoCount} 个视频'
+                                  : '点击查看视频',
+                              style: TextStyle(fontSize: 11, color: t.text3),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded,
+                          size: 20, color: t.text3),
+                    ],
+                  ),
+                ),
               ),
-              title: Text(author.name),
-              subtitle: Text(author.videoCount > 0 ? '视频数: ${author.videoCount}' : '点击查看视频'),
-              trailing: Icon(Icons.chevron_right),
-              onTap: () => _enterAuthorPageMode(author),
             ),
           );
         },
@@ -1523,7 +1352,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       ),
     );
   }
-  
+
   void _toggleSelection(String id) {
     setState(() {
       if (_selectedIds.contains(id)) {
