@@ -127,6 +127,21 @@ class CrawlerCore {
     if (uri == null || uri.host.isEmpty) return url;
     if (!CrawlerConfig.hostsFor(_siteType).contains(uri.host)) return url;
     if (uri.host == cdnHost) return url;
+    // 九色系带 token 的 /s/<token>/ 路径只认 jiuse3 系，
+    // 改写去 jiuse2 系一定 403——宁可让原地址继续用，也别把能放的地址改坏。
+    if (CrawlerConfig.jiuseTokenPath(url) &&
+        CrawlerConfig.jiuseHostSwapBlocked(uri.host, cdnHost)) {
+      return url;
+    }
+    // porn91 的直链带 st/e/k/f 签名，签名与签发它的主机绑定。
+    // 把 la.btc620.com 改写到别的线路后，路径和 query 原样送过去，
+    // 服务器校验签名对不上，一律回 403——用户看到的就是「下到一半失败」
+    // 或「存了个网页当视频」。这类地址只能原样使用。
+    if (CrawlerConfig.isSignedMediaUrl(url)) {
+      Logger().logSync('Cdn',
+          '跳过 CDN 改写（地址带站点签名，换主机必然 403）: ' + uri.host);
+      return url;
+    }
     return uri.replace(host: cdnHost).toString();
   }
   
@@ -351,6 +366,29 @@ class CrawlerCore {
           'jiuse 无分页控件，按条数与重复内容判断：${videos.length} 条', hasMore);
       return;
     }
+    if (_siteType == 'hifuli') {
+      // 嗨碰只有 /hot、/recommend、/tag、/s 带分页控件，且它的
+      // data-last-page 数字并不可信（/hot 标 15307，实际 page/15124 仍有内容），
+      // 唯一可靠的判据是 data-next-url 是否为空。
+      final hasMore = CrawlerConfig.hifuliHasNextPage(html);
+      if (hasMore == null) {
+        // 首页 / 最新视频：没有分页控件，且每次请求内容都会随机重排，
+        // 条数兜底在这里恒为真，会让无限滚动永远停不下来 —— 直接当单页。
+        _lastPaginationParsed = true;
+        _lastRequestHasMore = false;
+        _logPagination('hifuli 页面无分页控件，按单页信息流处理', false);
+        return;
+      }
+      _lastPaginationParsed = true;
+      _lastRequestHasMore = hasMore;
+      _logPagination(
+        hasMore
+            ? 'hifuli 分页控件命中：data-next-url 不为空，还有下一页'
+            : 'hifuli 分页控件命中：data-next-url 为空，已是最后一页',
+        hasMore,
+      );
+      return;
+    }
     _lastRequestHasMore = _detectHasNextPage(html, page, videos.length);
   }
 
@@ -511,6 +549,9 @@ class CrawlerCore {
     String url;
     if (_siteType == 'jiuse') {
       url = CrawlerConfig.buildJiuseListUrl(baseUrl, urlPattern, page);
+    } else if (_siteType == 'hifuli') {
+      // 首页与「最新视频」是无页码的单页信息流，其余分区走 /xxx/page/N
+      url = CrawlerConfig.buildHifuliListUrl(baseUrl, urlPattern, page);
     } else {
       url = '$baseUrl/${urlPattern.replaceAll('{page}', page.toString())}';
     }
@@ -604,6 +645,8 @@ class CrawlerCore {
       List<VideoInfo> videos;
       if (_siteType == "jiuse") {
         videos = _parseVideoListJiuse(html);
+      } else if (_siteType == "hifuli") {
+        videos = _parseVideoListHifuli(html);
       } else if (_siteType == "porn91") {
         videos = _parseVideoListPorn91(html);
       } else {
@@ -630,6 +673,11 @@ class CrawlerCore {
   List<VideoInfo> parseJiuseListForTest(String html) =>
       _parseVideoListJiuse(html);
 
+  /// 供测试直接调用嗨碰列表解析
+  @visibleForTesting
+  List<VideoInfo> parseHifuliListForTest(String html) =>
+      _parseVideoListHifuli(html);
+
   /// 供测试直接调用分页判据（jiuse 无分页控件，走条数 + 重复内容比对）
   @visibleForTesting
   void applyPaginationForTest(String html, int page, List<VideoInfo> videos) =>
@@ -650,6 +698,7 @@ class CrawlerCore {
   List<VideoInfo> _parseVideoListJiuse(String html) {
     final videos = <VideoInfo>[];
     final seenIds = <String>{};
+    var hdSkipped = 0;
     Logger().logSync('Parse', '解析 jiuse HTML, 长度: ${html.length}');
 
     for (final m in CrawlerConfig.jiuseCardPattern.allMatches(html)) {
@@ -660,6 +709,14 @@ class CrawlerCore {
           CrawlerConfig.jiuseVideoHrefPattern.firstMatch(card);
       if (hrefMatch == null) continue;
       final href = hrefMatch.group(1)!;
+
+      // 高清（/video/viewhd/）整条跳过：未登录时该路径恒返回 12 秒样片，
+      // 所有视频共用同一段画面，下载下来必是同一个文件；同一 id 改走
+      // /video/view/ 又只给 6 秒 VIP 占位。所以高清不进列表。
+      if (CrawlerConfig.jiuseIsHdPath(href)) {
+        hdSkipped++;
+        continue;
+      }
 
       // 取详情 id 作为唯一键：
       //   /vod/view/SxeO                              -> SxeO
@@ -747,7 +804,99 @@ class CrawlerCore {
       ));
     }
 
-    Logger().logSync('Parse', 'jiuse 解析完成: ${videos.length} 个视频');
+    Logger().logSync('Parse',
+        'jiuse 解析完成: ${videos.length} 个视频（跳过高清 $hdSkipped 条）');
+    return videos;
+  }
+
+  /// 解析嗨碰（hifuli.com / hiporn.net）的视频列表
+  ///
+  /// 首页与列表页是两套 DOM（首页卡片直接挂在 grid 下，列表页外面多一层
+  /// article.hiporn-list-card 和 meta 行），但卡片本身的 class 一致，
+  /// 所以统一按卡片切片取字段：
+  ///   a.hiporn-video-card[href=/video/{数字id}-{slug}]
+  ///     ├ div.hiporn-video-card-thumb > img[data-original=封面] + span.…duration
+  ///     └ h3.hiporn-video-card-title 标题
+  ///
+  /// 注意：封面只在 data-original，src 恒为占位图 /dist/notfound.jpg。
+  List<VideoInfo> _parseVideoListHifuli(String html) {
+    final videos = <VideoInfo>[];
+    final seenIds = <String>{};
+    Logger().logSync('Parse', '解析 hifuli HTML, 长度: ${html.length}');
+
+    for (final m in CrawlerConfig.hifuliCardPattern.allMatches(html)) {
+      final card = m.group(0)!;
+
+      final hrefMatch = CrawlerConfig.hifuliHrefPattern.firstMatch(card);
+      if (hrefMatch == null) continue;
+      final href = hrefMatch.group(1)!;
+      final id = hrefMatch.group(2)!;
+      if (seenIds.contains(id)) continue;
+      seenIds.add(id);
+
+      // 标题：卡片标题节点优先，取不到退回图片 alt
+      String? title;
+      final titleMatch = CrawlerConfig.hifuliTitlePattern.firstMatch(card);
+      if (titleMatch != null) title = titleMatch.group(1);
+      if (title == null || title.trim().isEmpty) {
+        final alt = RegExp(r'alt="([^"]*)"', caseSensitive: false)
+            .firstMatch(card)
+            ?.group(1);
+        if (alt != null && alt.trim().isNotEmpty) title = alt;
+      }
+      if (title == null || title.trim().isEmpty) continue;
+      title = CrawlerConfig.stripInvisible(
+              CrawlerConfig.unescapeHtml(title))
+          .trim();
+
+      // 封面：只认 data-original，src 是占位图
+      String? cover;
+      final coverMatch =
+          CrawlerConfig.hifuliCoverPattern.firstMatch(card);
+      if (coverMatch != null) {
+        cover = CrawlerConfig.resolveAbsoluteUrl(
+            baseUrl, coverMatch.group(1)!.trim());
+      }
+
+      // 时长：span.hiporn-video-card-duration（形如 41:11）
+      String? duration;
+      final durMatch =
+          CrawlerConfig.hifuliDurationPattern.firstMatch(card);
+      if (durMatch != null) {
+        final d = durMatch.group(1)!.trim();
+        if (d.isNotEmpty && d != '--:--') duration = d;
+      }
+
+      // 作者：列表页 meta 行里 a.hiporn-list-card-author > span 名字，
+      // 同时作者主页是 /u/{urlencode 名字}，把名字本身编码后当作者 id。
+      String? author;
+      String? authorId;
+      final authorMatch =
+          CrawlerConfig.hifuliCardAuthorPattern.firstMatch(card);
+      if (authorMatch != null) {
+        final name = CrawlerConfig.stripInvisible(
+                CrawlerConfig.unescapeHtml(authorMatch.group(1)!))
+            .trim();
+        if (name.isNotEmpty && name != '匿名') {
+          author = name;
+          authorId = Uri.encodeComponent(name);
+        } else if (name.isNotEmpty) {
+          author = name;
+        }
+      }
+
+      videos.add(VideoInfo(
+        id: id,
+        url: '$baseUrl$href',
+        title: title,
+        cover: cover,
+        author: author,
+        authorId: authorId,
+        duration: duration,
+      ));
+    }
+
+    Logger().logSync('Parse', 'hifuli 解析完成: ${videos.length} 个视频');
     return videos;
   }
 
@@ -1249,6 +1398,8 @@ class CrawlerCore {
       List<VideoInfo> videos;
       if (_siteType == "jiuse") {
         videos = _parseVideoListJiuse(html);
+      } else if (_siteType == "hifuli") {
+        videos = _parseVideoListHifuli(html);
       } else if (_siteType == "porn91") {
         videos = _parseVideoListPorn91(html);
       } else {
@@ -1280,6 +1431,11 @@ class CrawlerCore {
       // jiuse 没有独立的作者搜索接口：「搜索到用户」区块就在同一个
       // /search?keywords=xxx 结果页里（排在视频区块之前）
       url = CrawlerConfig.buildSearchUrl(baseUrl, _siteType, keyword);
+    } else if (_siteType == "hifuli") {
+      // 嗨碰没有作者搜索：/s/ 只返回视频，作者主页只能从卡片的
+      // a.hiporn-list-card-author（/u/{名字}）进入。
+      await logger.log('Crawler', 'hifuli 站点不提供作者搜索，直接返回空结果');
+      return <AuthorInfo>[];
     } else {
       // original 风格：使用 search.htm?search=xxx（和搜索视频一样的URL）
       url = '$baseUrl/search.htm?search=${Uri.encodeComponent(keyword)}';
@@ -1379,6 +1535,10 @@ class CrawlerCore {
       url = page <= 1
           ? '$baseUrl/$path'
           : '$baseUrl/$path?page=$page';
+    } else if (_siteType == "hifuli") {
+      // 嗨碰作者主页：/u/{urlencode 名字}，第 2 页起 /u/{名字}/page/{page}
+      final id = authorId.trim();
+      url = page <= 1 ? '$baseUrl/u/$id' : '$baseUrl/u/$id/page/$page';
     } else {
       // original CMS - 分页格式：user-N.htm?author=xxx
       url = '$baseUrl/user-$page.htm?author=$authorId';
@@ -1405,6 +1565,9 @@ class CrawlerCore {
         // 作者主页与列表页是同一套 colVideoList 卡片，此前落到 original
         // 解析器（找 video-item），必然 0 条
         videos = _parseVideoListJiuse(html);
+      } else if (_siteType == "hifuli") {
+        // 嗨碰作者页 /u/{名字} 与列表页共用 hiporn-video-card 卡片
+        videos = _parseVideoListHifuli(html);
       } else {
         videos = _parseVideoListOriginal(html);
       }
@@ -1428,6 +1591,7 @@ class CrawlerCore {
       // 每次请求前复位，避免上一次的失败标记残留到这一次
       lastDetailError = null;
       lastDetailBlockedByChallenge = false;
+      lastDetailSampleOnly = false;
       // ✅ 修复：使用更轻量的参数格式
       final ts = DateTime.now().millisecondsSinceEpoch;
       // original 站点对 _t 参数敏感（首页/搜索带 _t 会 404），仅 porn91 保留 _t 防缓存
@@ -1475,6 +1639,13 @@ class CrawlerCore {
       
       String? videoUrl;
       String? extractionMethod;
+
+      // 嗨碰详情页的标题/作者/时长/日期/播放数（在下面的专用分支里填）
+      String? hipornTitle;
+      String? hipornAuthor;
+      String? hipornDuration;
+      String? hipornDate;
+      String? hipornViews;
       
       // ===== porn91 专用策略 =====
       if (_siteType == "porn91") {
@@ -1514,6 +1685,12 @@ class CrawlerCore {
             if (srcMatch != null) {
               final src = srcMatch.group(1)?.replaceAll('&amp;', '&') ?? '';
               if (src.contains('.mp4') || src.contains('.m3u8')) {
+                // 广告片也可能被站点塞进 strencode2。取「首个」时若不排掉，
+                // 用户下到的就是那条几十秒的推广片（与正片完全无关）。
+                if (CrawlerConfig.knownAdVideoIds.any(src.contains)) {
+                  await logger.log('Debug', '跳过广告视频地址(strencode2): ${src.substring(0, 60)}...');
+                  continue;
+                }
                 // 提取视频URL中的ID
                 final urlIdMatch = RegExp(r'/(\d+)\.(?:mp4|m3u8)').firstMatch(src);
                 final urlVideoId = urlIdMatch?.group(1);
@@ -1640,19 +1817,96 @@ class CrawlerCore {
         }
 
         // data-src 有时指向站点内置的 12 秒样片（/hlsd/<名字>/index.m3u8），
-        // 直接下载/播放就只有 11 秒。真实地址藏在下载接口里，换掉它。
-        if (videoUrl != null && CrawlerConfig.isJiuseSampleUrl(videoUrl)) {
-          await logger.log('Debug',
-              'jiuse 命中站点样片地址，尝试从 /apiDownloadUrl 取真实地址');
-          final real = await _fetchJiuseRealUrl(baseUrl, html);
+        // 直接下载/播放就只有 11 秒，而且**所有视频都是同一段画面**——
+        // 用户下载多个视频得到相同文件就是这么来的。
+        // 真实地址有两条来路，按成功率依次尝试：
+        //   1) GET {baseUrl}/apiDownloadUrl/{data-id}（未登录常回 422）
+        //   2) GET {baseUrl}/video/embed/{id}（HTML 内联一条带 token 的地址）
+        if (videoUrl == null || CrawlerConfig.isJiuseSampleUrl(videoUrl)) {
+          if (videoUrl != null) {
+            await logger.log('Debug',
+                'jiuse 命中站点样片地址（所有视频共用），尝试换真实地址');
+          }
+          var real = await _fetchJiuseRealUrl(baseUrl, html);
           if (real != null) {
-            videoUrl = real;
             extractionMethod = 'jiuse-apiDownloadUrl';
           } else {
+            real = await _fetchJiuseEmbedUrl(baseUrl, video.id);
+            if (real != null) extractionMethod = 'jiuse-embed';
+          }
+          if (real != null) {
+            videoUrl = real;
+          } else {
+            // 换不到就退回样片，但必须让用户知道这是「12 秒预览」，
+            // 不能静默下成一段和别的视频一模一样的 11 秒画面。
+            lastDetailSampleOnly = true;
             await logger.log('Warning',
-                '未能从 /apiDownloadUrl 取到真实地址，仍使用样片地址（可能只有约 12 秒）');
+                'jiuse 未能换到真实地址，只能拿到站点样片（约 12 秒，所有视频相同）');
           }
         }
+      }
+
+      // ===== 嗨碰（hifuli.com / hiporn.net）=====
+      //
+      // 页面里既没有 <video> 也没有 <source>，播放地址写在前端配置对象上：
+      //   window.HIPORN_WATCH = { ..., player: { url: 'https://....m3u8?sign=...&t=...',
+      //                                          pic: '...', durationSec: 300, type: 'hls' } }
+      // 同一份地址在 JSON-LD 的 contentUrl 里也有一份，互为兜底。
+      //
+      // 注意 sign/t 是带时效的签名（每次请求都变），所以这个地址不能缓存，
+      // 每次播放/下载都必须重新抓详情页。
+      if (videoUrl == null && _siteType == "hifuli") {
+        final playerMatch =
+            CrawlerConfig.hifuliPlayerUrlPattern.firstMatch(html);
+        if (playerMatch != null) {
+          videoUrl = CrawlerConfig.resolveAbsoluteUrl(
+              baseUrl, playerMatch.group(1)!.replaceAll('&amp;', '&'));
+          extractionMethod = 'hifuli-HIPORN_WATCH';
+        }
+        if (videoUrl == null) {
+          final contentMatch =
+              CrawlerConfig.hifuliContentUrlPattern.firstMatch(html);
+          if (contentMatch != null) {
+            videoUrl = CrawlerConfig.resolveAbsoluteUrl(
+                baseUrl, contentMatch.group(1)!.replaceAll('&amp;', '&'));
+            extractionMethod = 'hifuli-jsonld';
+          }
+        }
+        if (videoUrl != null) {
+          await logger.log('Debug',
+              'hifuli 播放地址($extractionMethod): ${videoUrl.length > 120 ? videoUrl.substring(0, 120) + "..." : videoUrl}');
+        } else {
+          await logger.log('Warning', 'hifuli 详情页未找到 player.url / contentUrl');
+        }
+
+        final titleMatch =
+            CrawlerConfig.hifuliDetailTitlePattern.firstMatch(html);
+        if (titleMatch != null) {
+          final t = CrawlerConfig.stripInvisible(
+                  CrawlerConfig.unescapeHtml(titleMatch.group(1)!))
+              .trim();
+          if (t.isNotEmpty) hipornTitle = t;
+        }
+        final authorMatch =
+            CrawlerConfig.hifuliDetailAuthorPattern.firstMatch(html);
+        if (authorMatch != null) {
+          final a = CrawlerConfig.stripInvisible(
+                  CrawlerConfig.unescapeHtml(authorMatch.group(1)!))
+              .trim();
+          if (a.isNotEmpty) hipornAuthor = a;
+        }
+        final durMatch =
+            CrawlerConfig.hifuliIsoDurationPattern.firstMatch(html);
+        if (durMatch != null) {
+          hipornDuration =
+              CrawlerConfig.formatIsoDuration(durMatch.group(0));
+        }
+        final dateMatch =
+            CrawlerConfig.hifuliUploadDatePattern.firstMatch(html);
+        if (dateMatch != null) hipornDate = dateMatch.group(1)!.trim();
+        final viewsMatch =
+            CrawlerConfig.hifuliViewsPattern.firstMatch(html);
+        if (viewsMatch != null) hipornViews = viewsMatch.group(1)!.trim();
       }
 
       // ===== 通用策略 (original CMS) =====
@@ -1714,7 +1968,7 @@ class CrawlerCore {
         }
 
         // 提取作者信息
-        String? author = video.author;
+        String? author = hipornAuthor ?? video.author;
         if (author == null) {
           if (_siteType == "porn91") {
             final authorMatch = CrawlerConfig.authorPattern.firstMatch(html);
@@ -1731,7 +1985,7 @@ class CrawlerCore {
         }
         
         // 提取时长
-        String? duration = video.duration;
+        String? duration = hipornDuration ?? video.duration;
         if (duration == null) {
           if (_siteType == "porn91") {
             final durationMatch = CrawlerConfig.durationPattern.firstMatch(html);
@@ -1748,14 +2002,14 @@ class CrawlerCore {
         }
         
         // 提取上传日期 + 观看数（播放页可见，供在线播放页展示）
-        String? uploadDate = video.uploadDate;
+        String? uploadDate = hipornDate ?? video.uploadDate;
         if (uploadDate == null) {
           final dateMatch = RegExp(r'日期[：:]\s*(.+?)</div>').firstMatch(html);
           if (dateMatch != null) {
             uploadDate = dateMatch.group(1)!.trim();
           }
         }
-        String? views = video.views;
+        String? views = hipornViews ?? video.views;
         if (views == null) {
           final viewMatch = RegExp(r'观看[：:]\s*(\d+)').firstMatch(html);
           if (viewMatch != null) {
@@ -1770,7 +2024,7 @@ class CrawlerCore {
           // 直接用会让标题里凭空多出空格。
           title: (secret?.title?.isNotEmpty ?? false)
               ? secret!.title!
-              : video.title,
+              : (hipornTitle ?? video.title),
           cover: video.cover,
           author: (secret?.author?.isNotEmpty ?? false)
               ? secret!.author
@@ -1856,6 +2110,39 @@ class CrawlerCore {
     }
   }
 
+  /// 九色系：从 /video/embed/{id} 页面里挖一条真实播放地址。
+  ///
+  /// /apiDownloadUrl 对未登录一律 422，而 embed 页无需登录也会返回
+  /// 一条带 token 的 m3u8（形如 https://cdn3.jiuse3.cloud/s/<ts>/<token>/...）。
+  /// VIP 专属视频即使拿到这条地址，播放列表本身仍会是 6 秒占位，
+  /// 这一步只负责「换到不是样片的地址」，能不能播由下载阶段的
+  /// [CrawlerConfig.jiusePlaylistIsPlaceholder] 判定。
+  Future<String?> _fetchJiuseEmbedUrl(String baseUrl, String videoId) async {
+    try {
+      final embed = CrawlerConfig.jiuseEmbedUrl(baseUrl, videoId);
+      await logger.log('Debug', 'jiuse embed 兜底: $embed');
+      final resp = await _dio.get(embed, options: _noCacheOptions);
+      final html = resp.data.toString();
+      final direct = RegExp(r'''https?://[^\s"'<>]+\.m3u8[^\s"'<>]*''')
+          .firstMatch(html);
+      if (direct != null) {
+        final abs = CrawlerConfig.resolveAbsoluteUrl(baseUrl, direct.group(0)!);
+        await logger.log('Debug', 'jiuse embed 命中真实地址');
+        return abs;
+      }
+      final rel = RegExp(r'''["'](//[^\s"']+?/[^\s"']*\.m3u8[^\s"']*)["']''')
+          .firstMatch(html);
+      if (rel != null) {
+        return CrawlerConfig.resolveAbsoluteUrl(baseUrl, rel.group(1)!);
+      }
+      await logger.log('Debug', 'jiuse embed 页里没有 m3u8');
+      return null;
+    } catch (e) {
+      await logger.log('Debug', 'jiuse embed 兜底失败: $e');
+      return null;
+    }
+  }
+
   /// 最近一次 [getVideoDetail] 失败的原因，供 UI 展示更具体的提示。
   String? lastDetailError;
 
@@ -1863,6 +2150,13 @@ class CrawlerCore {
   ///
   /// 调用方据此避免无意义的重试，并给用户可操作的提示。
   bool lastDetailBlockedByChallenge = false;
+
+  /// 上次解析到的地址只是站点内置的 12 秒样片。
+  ///
+  /// 九色系的 VIP 视频未登录时换不到真实地址，退回样片地址时置位。
+  /// 调用方据此在下载前就给出「这是预览片段」的提示，
+  /// 而不是让用户下完一段和别的视频一模一样的 11 秒画面。
+  bool lastDetailSampleOnly = false;
 
   /// 判断异常是否为 Cloudflare 的浏览器完整性检查。
   ///
@@ -1976,6 +2270,27 @@ class CrawlerCore {
       );
       final m3u8Content = m3u8Resp.data.toString();
       
+      // 九色系：先看播放列表本身是不是「样片/占位」。
+      // 站点的 VIP 视频未登录时无论从哪条路拿地址，播放列表都只有同一段：
+      //   - 12 秒样片（12 个切片、总字节恒为 15,847,272）
+      //   - 6 秒占位（单片 index0.ts?__vnotice=1002、91,932 字节）
+      // 这两种下载下来对任何视频都一模一样，正是用户反馈的
+      //「下的两个视频点进去内容相同」。宁可明确失败，也不给一份假文件。
+      if (_siteType == 'jiuse') {
+        if (CrawlerConfig.jiusePlaylistIsPlaceholder(m3u8Content)) {
+          ctrl.onLog?.call('该视频为 VIP 专属，未登录只能拿到占位片段', 'error');
+          ctrl.failureReason = '该视频需要 VIP 登录才能下载（未登录只能拿到占位片段）';
+          ctrl.retryable = false;
+          return false;
+        }
+        if (CrawlerConfig.jiusePlaylistIsSample(m3u8Content)) {
+          ctrl.onLog?.call('只拿到站点公开的 12 秒试看片段，不是完整视频', 'error');
+          ctrl.failureReason = '只拿到 12 秒试看片段（所有视频都是同一段），完整地址需要 VIP 登录';
+          ctrl.retryable = false;
+          return false;
+        }
+      }
+
       // 解析 TS 切片列表
       // 加密流必须在动手下载前拦住：不做解密的拼接结果一定是坏文件，
       // 而失败要趁早，不能让用户等下载完才发现播不了。
@@ -2345,7 +2660,11 @@ class CrawlerCore {
       final existing = File(savePath);
       if (await existing.exists()) {
         final len = await existing.length();
-        if (len >= 188) {
+        // 复用的前提：长度是 188 的整数倍（TS 包长固定 188）且首字节是 0x47。
+        // 只看首字节不够：上一次下到一半被杀、或中间混进了一段 HTML 错误页，
+        // 文件同样以 0x47 开头，但长度不是 188 的整数倍，
+        // 复用它合并出来的成品就是整体错位的花屏文件。
+        if (len >= 188 && len % 188 == 0) {
           // 抽检首字节：解密后的 TS 必须以 0x47 同步字节开头
           final raf = await existing.open();
           final head = await raf.readByte();
@@ -2398,6 +2717,19 @@ class CrawlerCore {
           Logger().logSync('Download', 'TS文件过小: ${bytes.length} bytes, URL: $url');
           continue;
         }
+
+        // ✅ 完整性校验4：长度必须是 188 的整数倍
+        //
+        // TS 是定长包格式，一个完整切片的字节数必然是 188 的倍数。
+        // 站点被风控拦截时会把 HTML 报错页混进响应体（状态码仍是 200），
+        // 这种「首字节碰巧检查不到、中间却多出几字节」的数据如果被落盘并合并，
+        // 成品就会从该切片之后整体错位——用户看到的是能生成文件、
+        // 大小也正常，但播放器黑屏或花屏。宁可重试，也不写坏数据。
+        if (bytes.length % 188 != 0) {
+          Logger().logSync('Download',
+              'TS切片长度不是 188 的整数倍: ${bytes.length} bytes (余 ${bytes.length % 188}), URL: $url');
+          continue;
+        }
         
         // 校验通过后才计入字节统计：此前在验证之前累加，
         // 导致坏切片/重试的字节也被算进速度，显示值虚高
@@ -2418,126 +2750,260 @@ class CrawlerCore {
   }
 
   /// 直接下载 MP4 文件（用于 porn91 等提供直链的站点）
+  ///
+  /// 这里不用 dio.download，而是自己拿 ResponseType.stream 落盘，因为
+  /// download 有三个绕不过去的坑：
+  /// 1. 默认 FileAccessMode.write，续传时会把已下好的前半段截断；
+  /// 2. 拿到响应头就开始写盘，HTML / JSON 错误页会被存成 .mp4 还报「下载完成」；
+  /// 3. 没有 CancelToken，暂停 / 停止对已经开始的下载完全无效。
   Future<bool> _downloadDirectMp4(
       VideoInfo video, String mp4Url, String savePath,
       DownloadControl ctrl) async {
     ctrl.onLog?.call('开始下载 MP4: ${video.title}', 'info');
     ctrl.onLog?.call('MP4 URL: $mp4Url', 'debug');
 
-    // 直链下载同样需要把字节数上报给 onOverallProgress，
+    // 直链下载同样要把字节数上报给 onOverallProgress，
     // 否则 DownloadTask 拿不到速度（downloadSpeed 恒为 0 → 界面不显示速度）。
-    // TS 切片路径在收到每个切片时上报，这里在 onReceiveProgress 里上报。
     DateTime? lastSpeedReport;
-    const speedReportIntervalMs = 300;  // 节流，避免高频刷新界面
+    const speedReportIntervalMs = 300; // 节流，避免高频刷新界面
 
-    void reportBytes(int received, int total) {
+    void reportBytes(int downloaded, int total) {
       final now = DateTime.now();
       final due = lastSpeedReport == null ||
-          now.difference(lastSpeedReport!).inMilliseconds >= speedReportIntervalMs;
+          now.difference(lastSpeedReport!).inMilliseconds >=
+              speedReportIntervalMs;
       if (!due) return;
       lastSpeedReport = now;
-      ctrl.receivedBytes = received;
-      ctrl.onOverallProgress?.call(received, total);
+      ctrl.receivedBytes = downloaded;
+      ctrl.onOverallProgress?.call(downloaded, total);
     }
 
-    final partFile = File('$savePath.part');
+    // 直链视频往往几十上百 MB，且 CDN 首包慢，不能用全局的 30 秒超时。
+    final fileOptions = Options(
+      receiveTimeout: const Duration(minutes: 10),
+      sendTimeout: const Duration(seconds: 30),
+    );
+
+    // 先探一次文件大小；有些 CDN 不响应 HEAD，失败不影响下载。
+    int contentLength = 0;
     try {
-      // 直链视频（往往几十上百 MB，且 CDN 首包慢）不能用全局的 30 秒超时：
-      // 超过 30 秒还没开始吐数据就会被 abort，报 receive timeout。
-      // 这里单独放宽：连接 30 秒、接收 10 分钟，足够慢速链路下完一个文件。
-      final fileOptions = Options(
-        receiveTimeout: const Duration(minutes: 10),
-        sendTimeout: const Duration(seconds: 30),
-      );
+      final headResp = await _dio.head(mp4Url, options: fileOptions);
+      contentLength =
+          int.tryParse(headResp.headers.value('content-length') ?? '0') ?? 0;
+    } catch (e) {
+      ctrl.onLog?.call('获取文件大小失败（不影响下载）: $e', 'debug');
+    }
+    if (contentLength > 0) {
+      ctrl.onLog?.call(
+          '文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB',
+          'info');
+    }
 
-      // 获取文件大小
-      int contentLength = 0;
-      try {
-        final headResp = await _dio.head(mp4Url, options: fileOptions);
-        contentLength =
-            int.tryParse(headResp.headers.value('content-length') ?? '0') ?? 0;
-      } catch (e) {
-        // 有些 CDN 不响应 HEAD，或代理下超时；拿不到大小不影响下载，
-        // 后面会用 Range 续传 + 下载进度里回传的 total 兜底。
-        ctrl.onLog?.call('获取文件大小失败（不影响下载）: $e', 'debug');
+    // ── 断点续传 ──
+    // 先下到 .part，成功后原子改名；失败保留 .part 供下次续传。
+    final partFile = File('$savePath.part');
+    var alreadyBytes = 0;
+    if (await partFile.exists()) {
+      final len = await partFile.length();
+      if (contentLength > 0 && len >= contentLength) {
+        await partFile.rename(savePath);
+        await _saveToHistory(video, savePath);
+        ctrl.onLog?.call('检测到已完成的临时文件，直接使用', 'info');
+        return true;
       }
-
-      if (contentLength > 0) {
-        ctrl.onLog?.call('文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB', 'info');
+      alreadyBytes = len;
+      if (alreadyBytes > 0) {
+        ctrl.onLog?.call(
+            '断点续传：已下载 ${(alreadyBytes / 1024 / 1024).toStringAsFixed(1)} MB',
+            'info');
       }
+    }
 
-      // ── 断点续传 ──
-      // 直链此前用 _dio.download 一次拉完，无 Range 头、失败也不清半成品：
-      // 大文件重试要从 0 开始白下，目录里还会留下看似正常、实际播到一半就断的 mp4。
-      // 改为先下到 .part，带上 Range 头续传，成功后原子改名到最终路径。
-      int alreadyBytes = 0;
-      if (await partFile.exists()) {
-        final len = await partFile.length();
-        if (contentLength > 0 && len >= contentLength) {
-          // 上次其实已经下完，只是没改名
-          await partFile.rename(savePath);
-          await _saveToHistory(video, savePath);
-          ctrl.onLog?.call('检测到已完成的临时文件，直接使用', 'info');
-          return true;
-        }
-        if (contentLength <= 0 || len < contentLength) {
-          alreadyBytes = len;
-          if (alreadyBytes > 0) {
-            ctrl.onLog?.call(
-                '断点续传：已下载 ${(alreadyBytes / 1024 / 1024).toStringAsFixed(1)} MB',
-                'info');
-          }
-        }
-      }
+    RandomAccessFile? raf;
+    var received = 0;
+    var totalBytes = contentLength;
+    var interrupted = false;
 
-      final totalBytes = contentLength > 0 ? contentLength : 0;
-
-      await _dio.download(
+    try {
+      final resp = await _dio.get<ResponseBody>(
         mp4Url,
-        partFile.path,
         options: Options(
+          responseType: ResponseType.stream,
           headers: alreadyBytes > 0 ? {'Range': 'bytes=$alreadyBytes-'} : null,
           receiveTimeout: const Duration(minutes: 10),
           sendTimeout: const Duration(seconds: 30),
         ),
-        deleteOnError: false,
-        onReceiveProgress: (received, total) {
-          // 续传时 received 是本次的字节数，加上已存部分才是整体进度
-          final overall = alreadyBytes + received;
-          reportBytes(overall, totalBytes > 0 ? totalBytes : total);
-
-          final denom = totalBytes > 0 ? totalBytes : (total > 0 ? total : 0);
-          if (denom > 0) {
-            final progress = (overall / denom).clamp(0.0, 1.0);
-            final downloadedMB = (overall / 1024 / 1024).toStringAsFixed(1);
-            final totalMB = (denom / 1024 / 1024).toStringAsFixed(1);
-            ctrl.onProgress?.call(progress, '$downloadedMB/$totalMB MB');
-          }
-        },
       );
 
-      // 下载完成：原子改名到最终路径
-      if (await partFile.exists()) {
-        await partFile.rename(savePath);
+      final status = resp.statusCode ?? 0;
+      final lengthHeader =
+          int.tryParse(resp.headers.value('content-length') ?? '0') ?? 0;
+      final contentType =
+          (resp.headers.value('content-type') ?? '').toLowerCase();
+
+      // 只有服务器真的回 206（Partial Content）才算续传成功。
+      if (alreadyBytes > 0 && status != 206) {
+        // 服务器忽略了 Range，回的还是整个文件：必须从头写，
+        // 否则 append 会把整段内容接在半截文件后面（成品时长翻倍、播放器报错）。
+        ctrl.onLog?.call('服务器不支持断点续传，从头开始下载', 'warn');
+        alreadyBytes = 0;
       }
-      
-      // 保存到历史记录
+      final resumed = alreadyBytes > 0;
+      if (lengthHeader > 0) {
+        totalBytes = resumed ? alreadyBytes + lengthHeader : lengthHeader;
+      } else if (contentLength > 0 && !resumed) {
+        totalBytes = contentLength;
+      }
+
+      final file =
+          await partFile.open(mode: resumed ? FileMode.append : FileMode.write);
+      raf = file;
+
+      var headChecked = false;
+      await for (final chunk in resp.data!.stream) {
+        if (ctrl.isStopped) {
+          interrupted = true;
+          break;
+        }
+        if (ctrl.isPaused) {
+          final wantStop = await ctrl.awaitIfPaused();
+          if (wantStop) {
+            interrupted = true;
+            break;
+          }
+        }
+
+        if (!headChecked && chunk.isNotEmpty) {
+          headChecked = true;
+          // 拿到第一段就先判断这到底是不是视频：
+          // 签名过期或触发风控时站点会回 200 + 一个 HTML 页面，
+          // 旧实现会把它原样存成 .mp4，任务显示「下载完成」但文件放不出来。
+          //
+          // 判据必须是「像文本」而不是「首字符是 < 或 {」：视频头几个字节
+          // 完全可能是随机的 { 或 <，只看首字符会把正常片子误杀。
+          final head = chunk.take(512).toList();
+          var printable = 0;
+          for (final b in head) {
+            if ((b >= 32 && b < 127) || b == 9 || b == 10 || b == 13) {
+              printable++;
+            }
+          }
+          // 页面正文里只要有中文（UTF-8 三字节），可打印字符比例就会掉到
+          // 0.4 左右，所以不能只靠比例；再补一条「content-type 说是文本
+          // 且首字符是 < 或 {」的判定，两者取并集。
+          final looksText =
+              head.length >= 16 && printable / head.length > 0.9;
+          final textType = contentType.contains('text/html') ||
+              contentType.contains('application/json') ||
+              contentType.contains('text/plain');
+          final preview = String.fromCharCodes(
+              head.take(120).map((b) => (b >= 32 && b < 127) ? b : 32));
+          final lower = preview.toLowerCase().trimLeft();
+          final looksMarkup = lower.startsWith('<') || lower.startsWith('{');
+          if (looksText || (textType && looksMarkup)) {
+            ctrl.onLog?.call('服务器返回的是网页而不是视频: $preview', 'error');
+            ctrl.failureReason = '站点返回的是网页而不是视频文件（链接已失效或被风控拦截）。'
+                '请重试；若一直失败，到设置里把播放节点切回「自动（跟随站点）」。';
+            ctrl.retryable = false;
+            await file.close();
+            raf = null;
+            if (!resumed) {
+              try {
+                await partFile.delete();
+              } catch (_) {}
+            }
+            return false;
+          }
+        }
+
+        await file.writeFrom(chunk);
+        received += chunk.length;
+        final overall = alreadyBytes + received;
+        reportBytes(overall, totalBytes);
+        if (totalBytes > 0) {
+          final progress = (overall / totalBytes).clamp(0.0, 1.0);
+          final downloadedMB = (overall / 1024 / 1024).toStringAsFixed(1);
+          final totalMB = (totalBytes / 1024 / 1024).toStringAsFixed(1);
+          ctrl.onProgress?.call(progress, '$downloadedMB/$totalMB MB');
+        }
+      }
+
+      await file.close();
+      raf = null;
+
+      if (interrupted) {
+        final size = await partFile.length();
+        if (ctrl.isStopped) {
+          ctrl.onLog?.call('下载已停止', 'warn');
+          ctrl.failureReason = '下载已停止';
+          try {
+            await partFile.delete();
+          } catch (_) {}
+        } else {
+          ctrl.onLog?.call(
+              '已暂停，已保留 ${(size / 1024 / 1024).toStringAsFixed(1)} MB，恢复后可续传',
+              'info');
+          ctrl.failureReason = '已暂停';
+        }
+        return false;
+      }
+
+      final finalSize = await partFile.length();
+      if (totalBytes > 0 && finalSize < totalBytes) {
+        ctrl.onLog?.call(
+            '下载不完整: $finalSize/$totalBytes 字节，已保留断点', 'error');
+        ctrl.failureReason =
+            '下载中断（$finalSize/$totalBytes 字节），重试会从断点继续';
+        return false;
+      }
+
+      // 下载完成：原子改名到最终路径
+      await partFile.rename(savePath);
       await _saveToHistory(video, savePath);
-      
       ctrl.onLog?.call('下载完成: ${video.title}', 'info');
       return true;
-      
     } catch (e) {
+      if (raf != null) {
+        try {
+          await raf!.close();
+        } catch (_) {}
+        raf = null;
+      }
       // 保留 .part 供下次续传；只有明确被停止时才清掉
       if (ctrl.isStopped && await partFile.exists()) {
         try {
           await partFile.delete();
         } catch (_) {}
       }
-      ctrl.onLog?.call('下载失败: $e', 'error');
-      ctrl.failureReason = '下载失败: $e';
+      final msg = _describeDirectDownloadError(e);
+      ctrl.onLog?.call('下载失败: $msg', 'error');
+      ctrl.failureReason = msg;
       return false;
     }
+  }
+
+  /// 把直链下载的异常翻译成人能看懂的一句话
+  String _describeDirectDownloadError(Object e) {
+    if (e is DioException) {
+      final code = e.response?.statusCode;
+      if (code == 403) {
+        return '服务器拒绝访问（403）：porn91 的视频地址带时效签名，'
+            '签名只在签发它的那条线路上有效。请到设置里把播放节点切回'
+            '「自动（跟随站点）」后重试。';
+      }
+      if (code == 404) return '视频文件不存在（404），可能已被站点删除';
+      if (code != null) return '服务器返回 HTTP $code';
+      if (e.type == DioExceptionType.receiveTimeout) {
+        return '接收数据超时，线路太慢或被限速；重试会从断点继续';
+      }
+      if (e.type == DioExceptionType.connectionTimeout) {
+        return '连接服务器超时，请检查网络或更换播放节点';
+      }
+      if (e.type == DioExceptionType.connectionError) {
+        return '连接不上服务器（${e.message ?? e}），请检查网络或更换播放节点';
+      }
+    }
+    return '下载失败: $e';
   }
 
   /// 合并 TS 文件（带完整性校验）

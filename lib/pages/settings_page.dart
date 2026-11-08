@@ -64,12 +64,18 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   static const String _siteTestPath = '/';
 
   /// 站点家族的展示顺序
-  static const List<String> _siteFamilyOrder = ['porn91', 'jiuse', 'original'];
+  static const List<String> _siteFamilyOrder = [
+    'porn91',
+    'jiuse',
+    'hifuli',
+    'original',
+  ];
 
   /// 站点家族的中文名，键取自 CrawlerConfig.siteTypes 的值
   static const Map<String, String> _siteFamilyNames = {
     'porn91': '91porn 系',
     'jiuse': '九色系',
+    'hifuli': '嗨碰系',
     'original': '原创系',
   };
 
@@ -587,6 +593,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         return '91porn 风格，v.php?next=watch 列表，移动端请求头';
       case 'jiuse':
         return '九色风格，列表与详情解析单独一套';
+      case 'hifuli':
+        return '嗨碰风格，播放地址写在 window.HIPORN_WATCH 里';
       case 'original':
         return 'ml0987/hsex 风格，list-{page}.htm 列表';
       default:
@@ -1306,6 +1314,9 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
             '站点把地址发到 cdn2/cdn3.jiuse2.cloud 或 cdn2/cdn3.jiuse3.cloud，'
             '只换域名、路径与 token 原样保留，视频内容不变。'
             '带 /hlsd/ 的地址是站点内置样片，换线路也仍是样片。';
+      case 'hifuli':
+        return '嗨碰的播放页只提供一条线路（customer-hpnet.hlsdelivery.net），'
+            '站点本身没有节点切换，这里固定为「自动（跟随站点）」。';
       default:
         return '对应播放页的「切换播放节点」：只更换CDN域名，'
             '视频内容不变。某条线路慢或下载失败时，换一条再重试即可。';

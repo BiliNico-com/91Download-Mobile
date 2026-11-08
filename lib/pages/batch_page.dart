@@ -751,18 +751,21 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
   /// jiuse 站点（91porny / jiuse.icu）的分类
   ///
   /// 来源有两个，都要有：
-  ///   ① 顶部导航 /video(视频) /videos(蝌蚪) /vod(精品)
+  ///   ① 顶部导航 /videos(蝌蚪) /vod(精品)
   ///   ② 视频列表页的分区面板 —— 移动端「选择分类」折叠面板与桌面端
   ///      左侧栏是同一份 14 项 data-href，网页上两者内容完全一致。
   /// 之前只做了 ①，分类标签只有 3 个，用户看到网页上十几个分区却没有。
+  ///
+  /// 高清（/video 与 /video/category/hd）被有意剔除：这两个入口的卡片全是
+  /// /video/viewhd/，未登录下载只会拿到所有视频共用的 12 秒样片或 6 秒 VIP 占位。
+  /// 'list' 因此改指首页。
   static const _typeNamesJiuse = {
     // ① 顶部导航
-    'list': '视频',
+    'list': '首页',
     'videos': '蝌蚪',
     'vod': '精品',
-    // ② 分区面板（顺序与网页一致）
+    // ② 分区面板（顺序与网页一致，去掉「高清视频」）
     'latest': '最近更新',
-    'hd': '高清视频',
     'rf': '最近加精',
     'hot': '当前最热',
     'rating': '最近得分',
@@ -777,8 +780,22 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     'last': '上月最热',
   };
 
+  /// 嗨碰（hifuli.com）的分区
+  ///
+  /// 只列真正能翻页的 4 个入口：
+  /// 首页与 /video 每次请求内容都会随机重排、且没有分页控件，因此只取第 1 页。
+  /// 站点导航里的 /tag/guochan、/Aiface、/me/favorites 不是普通分区
+  /// （/Aiface 实测 0 条视频），不放进分类栏。
+  static const _typeNamesHifuli = {
+    'list': '首页',
+    'video': '最新视频',
+    'recommend': '推荐',
+    'hot': '热榜',
+  };
+
   Map<String, String> _getTypeNames(String siteType) {
     if (siteType == 'jiuse') return _typeNamesJiuse;
+    if (siteType == 'hifuli') return _typeNamesHifuli;
     return siteType == 'porn91' ? _typeNamesPorn91 : _typeNamesOriginal;
   }
 

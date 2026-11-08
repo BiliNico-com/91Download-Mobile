@@ -962,6 +962,9 @@ class AppState extends ChangeNotifier {
         return _cdnHostPorn91;
       case 'jiuse':
         return _cdnHostJiuse;
+      case 'hifuli':
+        // 嗨碰站点只有一条播放线路，没有可选的节点，恒为空
+        return '';
       default:
         return _cdnHostOriginal;
     }
@@ -984,6 +987,9 @@ class AppState extends ChangeNotifier {
       _cdnHostPorn91 = host;
     } else if (type == 'jiuse') {
       _cdnHostJiuse = host;
+    } else if (type == 'hifuli') {
+      // 嗨碰没有可切换的线路，不能落到 original 的槽位上把它清空
+      return;
     } else {
       _cdnHostOriginal = host;
     }

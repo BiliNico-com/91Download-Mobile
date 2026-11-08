@@ -44,10 +44,19 @@ class CrawlerConfig {
     "ml0987.xyz": "original",
     "hsex.icu": "original",
     "hsex.men": "original",
+    // 嗨碰（HiPorn）：bootstrap5 前端，播放地址写在 window.HIPORN_WATCH 里，
+    // 与上面三家的 DOM 结构都不兼容，单独一套模板。
+    "hifuli.com": "hifuli",
+    "hiporn.net": "hifuli",
   };
   
   /// 站点家族（界面分组顺序也按这个顺序）
-  static const List<String> siteFamilies = ['porn91', 'jiuse', 'original'];
+  static const List<String> siteFamilies = [
+    'porn91',
+    'jiuse',
+    'original',
+    'hifuli',
+  ];
 
   /// 检测站点类型
   static String detectSiteType(String url) {
@@ -133,22 +142,27 @@ class CrawlerConfig {
   ///
   /// 这套站用的是 9scdn/static 前端，分区有两处入口，必须都覆盖：
   ///
-  /// ① 顶部导航（只有 3 个内容入口）
-  ///      /video 视频，/videos 蝌蚪，/vod 精品
+  /// ① 顶部导航
+  ///      /videos 蝌蚪，/vod 精品；（/video 见下，已剔除）
   /// ② 视频列表页里的分区面板 —— 移动端「选择分类」折叠面板
   ///    （class mobileCateContainer）与桌面端左侧栏（class cateContainer）
   ///    同源，都是 14 个 data-href，只是渲染容器不同：
   ///      /video/category/{slug}
   ///
   /// 只做 ① 会让 App 里只剩 3 个分类，与网页上看到的十几个分类对不上。
+  ///
+  /// 高清（/video 与 /video/category/hd）整条入口被移除：
+  /// 这两个入口的卡片 100% 是 /video/viewhd/ 链接，未登录时详情页只给同一条
+  /// 12 秒样片（所有视频一模一样），走 /video/view/ 又是 6 秒 VIP 占位，
+  /// 下载必然失败。列表解析层也会按 [jiuseIsHdPath] 兜底过滤，
+  /// 首页因此余下 33 条非高清卡片（"list" 改指首页 /）。
   static const Map<String, String> listTypesJiuse = {
     // ① 顶部导航
-    "list": "video",
+    "list": "",
     "videos": "videos",
     "vod": "vod",
     // ② 分类面板（顺序与网页一致）
     "latest": "video/category/latest",
-    "hd": "video/category/hd",
     "rf": "video/category/recent-favorite",
     "hot": "video/category/hot-list",
     "rating": "video/category/recent-rating",
@@ -166,12 +180,11 @@ class CrawlerConfig {
   /// jiuse 中文名映射（顺序即分类标签的展示顺序）
   static const Map<String, String> listTypeAliasesJiuse = {
     // 顶部导航
-    "视频": "list",
+    "首页": "list",
     "蝌蚪": "videos",
     "精品": "vod",
     // 分类面板
     "最近更新": "latest",
-    "高清视频": "hd",
     "最近加精": "rf",
     "当前最热": "hot",
     "最近得分": "rating",
@@ -185,6 +198,48 @@ class CrawlerConfig {
     "本月最热": "top",
     "上月最热": "last",
   };
+
+  // ---- 嗨碰（hifuli.com / hiporn.net）----
+  //
+  // 站点列表分区只有 4 个入口，且分页行为各不相同（全部实测）：
+  //   /            首页信息流  —— 每次请求内容随机重排、HTML 里没有任何分页控件
+  //   /video       最新视频    —— 同上，且 /video/page/N 直接 500
+  //   /recommend   推荐        —— 有真分页控件，/recommend/page/N
+  //   /hot         热榜        —— 有真分页控件，/hot/{日期}/page/N（省略日期也认）
+  //
+  // 所以「是否存在下一页」不能靠条数兜底（上面的随机重排会让它永远为真），
+  // 只能读分页控件上的 data-next-url；首页与 /video 直接当单页信息流。
+  static const Map<String, String> listTypesHifuli = {
+    "list": "",
+    "video": "video",
+    "recommend": "recommend",
+    "hot": "hot",
+  };
+
+  static const Map<String, String> listTypeAliasesHifuli = {
+    "首页": "list",
+    "最新视频": "video",
+    "推荐": "recommend",
+    "热榜": "hot",
+  };
+
+  /// 嗨碰的哪些列表页是「单页信息流」（不翻页）
+  static bool hifuliIsSinglePage(String path) {
+    final p = path.startsWith("/") ? path.substring(1) : path;
+    return p.isEmpty || p == "video";
+  }
+
+  /// 构建嗨碰列表页 URL
+  ///
+  /// 第 1 页不带页码（/hot）；第 2 页起走路径式（/hot/page/2）。
+  /// 单页信息流无论第几页都只返回首页（站点也不认页码参数）。
+  static String buildHifuliListUrl(String baseUrl, String path, int page) {
+    final p = path.startsWith("/") ? path.substring(1) : path;
+    if (p.isEmpty) return "$baseUrl/";
+    final clean = p.endsWith("/") ? p.substring(0, p.length - 1) : p;
+    if (page <= 1 || hifuliIsSinglePage(clean)) return "$baseUrl/$clean";
+    return "$baseUrl/$clean/page/$page";
+  }
 
   /// jiuse 分类路径是否走「路径式分页」
   ///
@@ -211,12 +266,14 @@ class CrawlerConfig {
   /// 获取列表类型映射（根据站点类型）
   static Map<String, String> getListTypes(String siteType) {
     if (siteType == "jiuse") return listTypesJiuse;
+    if (siteType == "hifuli") return listTypesHifuli;
     return siteType == "porn91" ? listTypesV2 : listTypesOriginal;
   }
   
   /// 获取中文名映射（根据站点类型）
   static Map<String, String> getListTypeAliases(String siteType) {
     if (siteType == "jiuse") return listTypeAliasesJiuse;
+    if (siteType == "hifuli") return listTypeAliasesHifuli;
     return siteType == "porn91" ? listTypeAliasesV2 : listTypeAliasesOriginal;
   }
   
@@ -228,6 +285,14 @@ class CrawlerConfig {
       return page <= 1
           ? "$baseUrl/search?keywords=$kw"
           : "$baseUrl/search?keywords=$kw&page=$page";
+    }
+    if (siteType == "hifuli") {
+      // 嗨碰是 GET 表单，真实入口 http://host/s/{关键词}，
+      // 第 2 页起 http://host/s/{关键词}/page/{page}
+      final kw = Uri.encodeComponent(keyword);
+      return page <= 1
+          ? "$baseUrl/s/$kw"
+          : "$baseUrl/s/$kw/page/$page";
     }
     if (siteType == "porn91") {
       // porn91 风格搜索 URL（支持分页）
@@ -304,6 +369,7 @@ class CrawlerConfig {
     "https://ml0987.xyz",
     "https://hsex.icu",
     "https://hsex.men",
+    "https://hifuli.com",
   ];
 
   /// 图片 CDN 域名（仅 porn91 使用）
@@ -314,6 +380,19 @@ class CrawlerConfig {
   /// 91porn 播放页的 <source> 常常直接就是这条广告，
   /// 真实地址藏在 strencode2 里，必须避开。
   static const List<String> knownAdVideoIds = ['358999'];
+
+  /// 直链里是否带站点签发的时效签名。
+  ///
+  /// porn91 的真实地址形如
+  /// `https://la.btc620.com//mp43/1258149.mp4?st=xxx&e=1794035227&k=xxx&f=xxx`，
+  /// `st` 是按「主机 + 路径 + 过期时间」签出来的，改主机（换线路）
+  /// 签名立即失效，服务器一律回 403。这类地址不能做 CDN 改写。
+  static bool isSignedMediaUrl(String url) {
+    final u = Uri.tryParse(url);
+    if (u == null) return false;
+    final q = u.queryParameters;
+    return q.containsKey('st') && q.containsKey('e');
+  }
 
   // ==================== 播放节点（视频 CDN 线路）====================
 
@@ -397,6 +476,21 @@ class CrawlerConfig {
     'cdn3.jiuse3.cloud',
   };
 
+  /// 嗨碰（hifuli.com）的 CDN 线路
+  ///
+  /// 该站播放页的 routeOptions 只有一条：
+  ///   {key: 'core', domain: 'customer-hpnet.hlsdelivery.net', probe_url: '.../ping.txt'}
+  /// 站点本身不提供多线路，App 也就没有可替换的域名——留「自动」一项，
+  /// 保持设置页结构一致即可。
+  static const List<CdnNode> hifuliNodes = [
+    CdnNode(name: '自动（跟随站点）', host: ''),
+  ];
+
+  /// 嗨碰视频流域名集合（用于判断该不该改写）
+  static const Set<String> hifuliHosts = {
+    'customer-hpnet.hlsdelivery.net',
+  };
+
   /// 按站点类型取节点列表
   static List<CdnNode> nodesFor(String siteType) {
     switch (siteType) {
@@ -404,6 +498,8 @@ class CrawlerConfig {
         return porn91Nodes;
       case 'jiuse':
         return jiuseNodes;
+      case 'hifuli':
+        return hifuliNodes;
       default:
         return originalNodes;
     }
@@ -416,6 +512,8 @@ class CrawlerConfig {
         return porn91Hosts;
       case 'jiuse':
         return jiuseHosts;
+      case 'hifuli':
+        return hifuliHosts;
       default:
         return originalHosts;
     }
@@ -532,6 +630,24 @@ class CrawlerConfig {
     return input.replaceAll(invisibleCharsPattern, '');
   }
 
+  /// 常见 HTML 实体反转义（标题里 &amp; / &quot; / &#39; 之类）
+  ///
+  /// 只处理标题高频道出现的几个，够用且不会误伤正文里的 &xxx; 片段。
+  static String unescapeHtml(String input) {
+    if (!input.contains('&')) return input;
+    return input
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#0*39;', "'")
+        .replaceAll('&apos;', "'")
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&ldquo;', '“')
+        .replaceAll('&rdquo;', '”')
+        .replaceAll('&hellip;', '…');
+  }
+
   // ==================== 正则表达式 ====================
   
   // ---- jiuse 站点（91porny / jiuse.icu）----
@@ -563,9 +679,9 @@ class CrawlerConfig {
   ///   /videos/view/127663/410ed2e1f969cb2d31254a/  蝌蚪，数字 id + hash + 结尾斜杠
   ///   /video/viewhd/ef5152fe75b733995347            高清分区专用，viewhd 段
   ///
-  /// 最后一种是从 /video/category/* 分区页抓到的：该页 48 个详情链接全是
-  /// viewhd 形态、一个 /view/ 都没有。漏掉它会让新增的分类点开就是空列表。
-  /// 因此这里不再限制 id 字符集与段数，只要求是站内相对路径。
+  /// 最后一种（viewhd）仍要认得，否则卡片整段被判为广告丢弃、连标题都对不上；
+  /// 但列表解析时会被 [jiuseIsHdPath] 过滤掉（高清未登录下不了）。
+  /// 这里不限制 id 字符集与段数，只要求是站内相对路径。
   static final RegExp jiuseVideoHrefPattern = RegExp(
     r'href="(/(?:vod|video|videos|v)/view(?:hd)?/[^"#?\s]+)"',
     caseSensitive: false,
@@ -579,6 +695,18 @@ class CrawlerConfig {
 
   static String? jiuseVideoId(String href) =>
       jiuseVideoIdPattern.firstMatch(href)?.group(1);
+
+  /// 判断一条 jiuse 详情链接是不是「高清」路径（/video/viewhd/）
+  ///
+  /// 高清分区未登录时下载不了，列表层要整条过滤掉：
+  ///   /video/viewhd/{id}  未登录恒返回 12 秒样片（所有视频同一段）
+  ///   /video/view/{id}    同一 id 改走这里变 6 秒 VIP 占位
+  /// 所以高清卡片留着也只会下出一个假文件，直接在解析时跳过。
+  ///
+  /// 注意：不能用卡片上的 vip-layer「高清」徽标判断——线上首页实测有
+  /// 10 张带徽标却是 /video/view/ 的普通卡片，/vod/view/ 精品也带徽标。
+  static bool jiuseIsHdPath(String href) =>
+      href.toLowerCase().contains('/viewhd/');
 
   /// 把 jiuse 页面里出现的资源地址补全成绝对 URL
   ///
@@ -613,6 +741,74 @@ class CrawlerConfig {
   /// 判断一条播放地址是不是站点内置样片
   static bool isJiuseSampleUrl(String url) =>
       jiuseSamplePlaylistPattern.hasMatch(url);
+
+  /// 播放列表内容是不是站点内置样片
+  ///
+  /// 样片地址被换过域名也还是同一份内容，所以不能只看 URL，
+  /// 下载前要看一眼播放列表本身：
+  ///   #EXTINF 合计约 12 秒、切片名一律 index0.ts~index11.ts、
+  ///   且 12 段总字节恒为 15,847,272（与具体视频无关）。
+  /// 命中说明「这条地址对任何视频都一样」，下下来必然是同一段 12 秒画面。
+  static bool jiusePlaylistIsSample(String content) {
+    if (content.isEmpty) return false;
+    if (!content.contains('#EXTM3U')) return false;
+    // 切片名特征：index0.ts / index1.ts ... 而不是真实路径里的 seg-xxx 或数字长名字
+    final names = RegExp(r'\n(index\d+\.ts?)\s*$', multiLine: true)
+        .allMatches(content)
+        .map((m) => m.group(1))
+        .toSet();
+    if (names.isEmpty) return false;
+    final totalSeconds = RegExp(r'#EXTINF:\s*([0-9.]+)')
+        .allMatches(content)
+        .fold<double>(0, (s, m) => s + (double.tryParse(m.group(1)!) ?? 0));
+    // 站点样片是固定的一份：12 段 index0.ts~index11.ts、合计 11.995533 秒。
+    // 真实片源实测 27~60 段、单集 5~8 分钟，段数对不上。
+    // 用「段数正好 12 且总长落在 11~13 秒」双条件，避免把真实的
+    // 十几秒短视频误判成样片而拒绝下载。
+    return names.length == 12 && totalSeconds >= 11 && totalSeconds <= 13;
+  }
+
+  /// 播放列表内容是不是「未登录占位切片」
+  ///
+  /// 九色系对 VIP 专属视频会发一条只有单片段的播放列表，
+  /// 切片地址带 __vnotice 标记、时长 6 秒，所有视频返回同一份占位。
+  static bool jiusePlaylistIsPlaceholder(String content) {
+    if (content.isEmpty) return false;
+    if (content.contains('__vnotice')) return true;
+    final segments = RegExp(r'^[^#\s].*\.ts(?:\?.*)?$', multiLine: true)
+        .allMatches(content)
+        .length;
+    final totalSeconds = RegExp(r'#EXTINF:\s*([0-9.]+)')
+        .allMatches(content)
+        .fold<double>(0, (s, m) => s + (double.tryParse(m.group(1)!) ?? 0));
+    return segments <= 1 && totalSeconds <= 8;
+  }
+
+  /// 九色系免登录取真实地址的备用入口
+  ///
+  /// 详情页给的是 12 秒样片、而 /apiDownloadUrl 未登录直接 422 时，
+  /// /video/embed/{id} 仍会返回一条带 token 的真实播放地址（HTML 内联）。
+  static String jiuseEmbedUrl(String baseUrl, String videoId) =>
+      '$baseUrl/video/embed/$videoId';
+
+  /// 带 token 的路径（/s/<token>/...）只能在同代 CDN 之间换域名
+  ///
+  /// 实测：/s/token 路径在 cdn2/cdn3.jiuse3.cloud 上 200，
+  /// 在 cdn2/cdn3.jiuse2.cloud 上一律 403；而公开样片路径四台都通。
+  /// 用户选到 jiuse2 线路时若无脑改写，就会把能放的地址改成 403。
+  static bool jiuseTokenPath(String url) {
+    final path = Uri.tryParse(url)?.path ?? '';
+    return path.startsWith('/s/');
+  }
+
+  /// 判断把 [fromHost] 换成 [toHost] 会不会必然 403
+  static bool jiuseHostSwapBlocked(String fromHost, String toHost) {
+    if (fromHost == toHost) return false;
+    final from3 = fromHost.endsWith('.jiuse3.cloud');
+    final to3 = toHost.endsWith('.jiuse3.cloud');
+    // 3 代主机之间互换没有问题；跨代（3 → 2）必挂
+    return from3 && !to3;
+  }
 
   /// 详情页里点赞/收藏/下载共用的资源 id
   ///
@@ -905,6 +1101,153 @@ class CrawlerConfig {
 
   /// 空白字符规范化（含全角空格）
   static final RegExp whitespacePattern = RegExp(r'[\s　]+');
+
+  // ---- 站点：嗨碰 hifuli.com（细节见文件上方 listTypesHifuli）----
+
+  /// 列表卡片：首页与列表页两套 DOM 但共用同一组 class
+  ///
+  /// 列表页的作者行在卡片链接闭合之后（article 里的兄弟节点
+  /// div.hiporn-list-card-meta），不属于卡片本身，所以把紧随其后的
+  /// meta 块一并切进来（间隔最多 200 字符），否则作者永远解析不到。
+  /// 该分组可选：首页卡片没有 meta 行，匹配时为空即可。
+  static final RegExp hifuliCardPattern = RegExp(
+    r'<a\b[^>]*class="[^"]*hiporn-video-card[^"]*"[^>]*>[\s\S]*?</a>'
+    r'(?:[\s\S]{0,200}?<div class="hiporn-list-card-meta">[\s\S]{0,3000}?</div>)?',
+    caseSensitive: false,
+  );
+
+  /// 卡片链接：/video/{数字 id}-{slug}
+  static final RegExp hifuliHrefPattern = RegExp(
+    r'href="(/video/(\d+)-[^"]*)"',
+    caseSensitive: false,
+  );
+
+  /// 封面：lazyload 图片的真实地址
+  static final RegExp hifuliCoverPattern = RegExp(
+    r'data-original="([^"]+)"',
+    caseSensitive: false,
+  );
+
+  static final RegExp hifuliDurationPattern = RegExp(
+    r'hiporn-video-card-duration">\s*([^<]+?)\s*<',
+    caseSensitive: false,
+  );
+
+  static final RegExp hifuliTitlePattern = RegExp(
+    r'hiporn-video-card-title">\s*([^<]+?)\s*<',
+    caseSensitive: false,
+  );
+
+  /// 卡片作者（列表页专有；首页卡片没有作者行）
+  /// 注意窗口要留够：作者头像是一段内联 base64 PNG（约 600~1200 字符），
+  /// 窗口太窄会跨不过 img 拿不到后面的 <span>。
+  static final RegExp hifuliCardAuthorPattern = RegExp(
+    r'hiporn-list-card-author[^>]*>[\s\S]{0,4000}?<span>\s*([^<]+?)\s*</span>',
+    caseSensitive: false,
+  );
+
+  /// 分页控件容器
+  static final RegExp hifuliPagerPattern = RegExp(
+    r'<div[^>]*class="[^"]*hiporn-pager[^"]*"[^>]*>',
+    caseSensitive: false,
+  );
+
+  /// 分页控件上的「下一页地址」（空串 = 已经是最后一页）
+  static final RegExp hifuliNextUrlPattern = RegExp(
+    r'data-next-url="([^"]*)"',
+    caseSensitive: false,
+  );
+
+  /// 列表页是否还有下一页
+  ///
+  /// 返回 null 表示页面上根本没有分页控件（首页 / /video），
+  /// 这两个页面每次请求内容都会随机重排，条数判据也失效，
+  /// 调用方应当直接按「单页信息流」处理。
+  static bool? hifuliHasNextPage(String html) {
+    final pager = hifuliPagerPattern.firstMatch(html);
+    if (pager == null) return null;
+    final next = hifuliNextUrlPattern.firstMatch(pager.group(0)!);
+    if (next == null) return null;
+    return next.group(1)!.trim().isNotEmpty;
+  }
+
+  /// 详情页播放地址
+  ///
+  /// 站点把地址写在 window.HIPORN_WATCH.player.url 里（页面无 <video>），
+  /// 同一份 JSON-LD 的 contentUrl 是等价的兜底来源。
+  static final RegExp hifuliPlayerUrlPattern = RegExp(
+    r"player\s*:\s*\{[\s\S]{0,400}?url\s*:\s*'([^']+)'",
+    caseSensitive: false,
+  );
+
+  static final RegExp hifuliContentUrlPattern = RegExp(
+    r'"contentUrl"\s*:\s*"([^"]+)"',
+    caseSensitive: false,
+  );
+
+  /// 详情页标题：<h1 class="hiporn-page-title hiporn-watch-title">
+  static final RegExp hifuliDetailTitlePattern = RegExp(
+    r'hiporn-watch-title[^>]*>\s*([\s\S]{0,300}?)\s*</h1>',
+    caseSensitive: false,
+  );
+
+  /// 详情页作者
+  static final RegExp hifuliDetailAuthorPattern = RegExp(
+    r'hiporn-watch-author-name[^>]*>\s*([^<]+?)\s*<',
+    caseSensitive: false,
+  );
+
+  /// 详情页封面
+  static final RegExp hifuliDetailCoverPattern = RegExp(
+    r"player\s*:\s*\{[\s\S]{0,400}?pic\s*:\s*'([^']+)'",
+    caseSensitive: false,
+  );
+
+  /// JSON-LD 里的时长（ISO 8601，如 PT5M / PT1H2M3S）
+  ///
+  /// 这个正则在整页 HTML 上定位 "duration":"PT5M" 片段，
+  /// 纯解析交给 [formatIsoDuration]（它也接受裸的 PT5M）。
+  static final RegExp hifuliIsoDurationPattern = RegExp(
+    r'"duration"\s*:\s*"(PT(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+S)?)"',
+    caseSensitive: false,
+  );
+
+  /// 裸 ISO 8601 时长（不带 JSON 外壳）
+  static final RegExp isoDurationBodyPattern = RegExp(
+    r'^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$',
+    caseSensitive: false,
+  );
+
+  /// 详情页播放数
+  static final RegExp hifuliViewsPattern = RegExp(
+    r'"userInteractionCount"\s*:\s*(\d+)',
+    caseSensitive: false,
+  );
+
+  /// 详情页上传日期
+  static final RegExp hifuliUploadDatePattern = RegExp(
+    r'"uploadDate"\s*:\s*"([^"]+)"',
+    caseSensitive: false,
+  );
+
+  /// 把 ISO 8601 时长转成 mm:ss / hh:mm:ss，解析不出来返回 null
+  static String? formatIsoDuration(String? iso) {
+    if (iso == null) return null;
+    var v = iso.trim();
+    // 允许直接传整页 HTML 片段，也允许传裸的 PT5M
+    final wrapped = hifuliIsoDurationPattern.firstMatch(v);
+    if (wrapped != null) v = wrapped.group(1)!;
+    final m = isoDurationBodyPattern.firstMatch(v);
+    if (m == null) return null;
+    final h = int.tryParse(m.group(1) ?? '') ?? 0;
+    final mi = int.tryParse(m.group(2) ?? '') ?? 0;
+    final s = int.tryParse(m.group(3) ?? '') ?? 0;
+    if (h == 0 && mi == 0 && s == 0) return null;
+    final two = (int v) => v.toString().padLeft(2, '0');
+    return h > 0
+        ? '$h:${two(mi)}:${two(s)}'
+        : '${two(mi)}:${two(s)}';
+  }
 
   // ==================== 分页配置 ====================
 
