@@ -23,7 +23,7 @@ if (flutterVersionName == null) {
 }
 
 android {
-    namespace "com.example.download_91"
+    namespace "com.bilinico.download_91"
     compileSdk 34
     ndkVersion flutter.ndkVersion
 
@@ -51,7 +51,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.example.download_91"
+        applicationId "com.bilinico.download_91"
         minSdk 21
         targetSdk 34
         versionCode flutterVersionCode.toInteger()

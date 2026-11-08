@@ -12,7 +12,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val FLOATING_CHANNEL = "com.bilinico.download_91/floating_video"
     private val OPEN_DIR_CHANNEL = "com.bilinico.download_91/open_directory"
-    private val BRIGHTNESS_CHANNEL = "com.example.download_91/brightness"
+    private val BRIGHTNESS_CHANNEL = "com.bilinico.download_91/brightness"
 
     /** 进入播放页前的窗口亮度（-1f = 跟随系统），用于退出时还原 */
     private var savedWindowBrightness: Float = -1f

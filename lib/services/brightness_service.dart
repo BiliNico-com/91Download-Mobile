@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 /// - 不需要 WRITE_SETTINGS 权限
 /// - 退出 App 后由系统自动还原，不会污染用户的系统亮度设置
 class BrightnessService {
-  static const _channel = MethodChannel('com.example.download_91/brightness');
+  static const _channel = MethodChannel('com.bilinico.download_91/brightness');
 
   /// 原生端通道未注册（例如运行在桌面上）时只提示一次，避免刷屏
   static bool _warnedMissing = false;
