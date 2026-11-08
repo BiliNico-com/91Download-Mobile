@@ -13,7 +13,7 @@
 - 🔒 **应用锁** - PIN码保护隐私
 - 🎨 **深色主题** - Material 3 设计，护眼模式
 - 📱 **良好适配** - 支持Android 7.0+
-- 🌐 **多站点** - 91porn / 91porny / jiuse 站点切换，支持自定义站点；按家族分组展示并内置测速，最快线路自动打标；自定义站点可手动归类到指定站点系，也可随时删除
+- 🌐 **多站点** - 91porn / 91porny / jiuse / 嗨碰(hifuli) 站点切换，支持自定义站点；按家族分组展示并内置测速，最快线路自动打标；自定义站点可手动归类到指定站点系，也可随时删除
 - 🚀 **播放线路** - 内置多条视频 CDN 节点，可测速后手动选择
 - 🧹 **干净标题** - 自动剔除标题/作者中的隐形字符，搜索与文件名不再踩坑
 
@@ -37,7 +37,7 @@
 
 ## 技术栈
 
-- Flutter 3.16+
+- Flutter 3.22.0
 - Dart
 - SQLite (sqflite)
 - Dio (HTTP客户端)
@@ -63,10 +63,11 @@ flutter run
 # 构建APK
 flutter build apk --release
 
-# 静态检查与用例
+# 静态检查
 flutter analyze
-flutter test
 ```
+
+用例目录不在本仓库（见 `VERSIONING.md` 的发布前自检说明）。
 
 本仓库已补入完整的 Android 构建配置（gradle wrapper、gradle.properties、
 启动主题与自适应图标），clone 后配置好 `android/local.properties` 即可直接构建。

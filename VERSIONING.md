@@ -78,8 +78,10 @@ git tag -a v1.0.7 -m "发布 1.0.7"
 
 ```bash
 flutter analyze          # 0 error（warning/info 允许存量）
-flutter test             # test/ 下的解析与解密用例全绿
 ```
+
+运行逻辑（列表/详情/播放地址解析）如需回归，用项目外的本地样本与 mock 服务验证；
+用例目录已从仓库移除，不进版本库、也不参与 CI 构建。
 
 本地可直接出包：
 
