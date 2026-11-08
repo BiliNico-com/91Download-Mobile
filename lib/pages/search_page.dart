@@ -470,13 +470,6 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     children: [
                       Flexible(child: SitePill(appState: appState)),
                       const Spacer(),
-                      // 视频 / 作者 分段
-                      AppSegmented(
-                        labels: const ['视频', '作者'],
-                        selectedIndex: _isAuthorMode ? 1 : 0,
-                        height: 28,
-                        onChanged: (i) => _onSearchTypeChanged(i == 1),
-                      ),
                     ],
                   ),
                 ],
@@ -484,7 +477,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       ),
       bottom: PreferredSize(
         preferredSize: Size.fromHeight(
-            _isAuthorPageMode ? 0 : 58),
+            _isAuthorPageMode ? 0 : 95),
         child: _isAuthorPageMode
             ? const SizedBox.shrink()
             : _buildSearchBar(appState, t),
@@ -713,7 +706,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     ];
   }
 
-  /// 搜索框（顶栏底部固定一行）
+  /// 搜索框（顶栏底部固定区域：搜索框 + 视频/作者分段）
   Widget _buildSearchBar(AppState appState, AppTokens t) {
     final siteType = appState.crawler?.siteType ?? 'original';
     final showSort = !_isAuthorMode && siteType != 'porn91';
@@ -728,78 +721,94 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
       child: Container(
         color: t.surface,
         padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-        child: Container(
-          height: 42,
-          decoration: BoxDecoration(
-            // 只留描边，不铺底色（深色模式下 surface2 会比页底亮一档，显得像贴了色块）
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: t.line),
-          ),
-          child: Row(
-            children: [
-              const SizedBox(width: 12),
-              Icon(Icons.search_rounded, size: 17, color: t.text3),
-              const SizedBox(width: 7),
-              // 输入框
-              Expanded(
-                child: TextField(
-                  controller: _keywordController,
-                  focusNode: _keywordFocusNode,
-                  style: TextStyle(
-                    color: t.text1,
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  decoration: InputDecoration(
-                    // 关掉全局 inputDecorationTheme 的 filled，否则输入区会盖一层
-                    // darkInputFill 色块，和外层透明描边框对不上
-                    filled: false,
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: EdgeInsets.zero,
-                    hintText: '输入关键词搜索',
-                    hintStyle: TextStyle(
-                      color: t.text3,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w500,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              height: 42,
+              decoration: BoxDecoration(
+                // 只留描边，不铺底色（深色模式下 surface2 会比页底亮一档，显得像贴了色块）
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(color: t.line),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 12),
+                  Icon(Icons.search_rounded, size: 17, color: t.text3),
+                  const SizedBox(width: 7),
+                  // 输入框
+                  Expanded(
+                    child: TextField(
+                      controller: _keywordController,
+                      focusNode: _keywordFocusNode,
+                      style: TextStyle(
+                        color: t.text1,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      decoration: InputDecoration(
+                        // 关掉全局 inputDecorationTheme 的 filled，否则输入区会盖一层
+                        // darkInputFill 色块，和外层透明描边框对不上
+                        filled: false,
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                        hintText: '输入关键词搜索',
+                        hintStyle: TextStyle(
+                          color: t.text3,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      onChanged: (value) {
+                        if (value.trim().isNotEmpty) {
+                          _searchDebouncer.run(() => _search());
+                        }
+                      },
+                      onSubmitted: (_) => _search(),
+                      onTap: () {
+                        // 点回输入框时重新展开历史（焦点未变化时 listener 不会触发）
+                        final appState = context.read<AppState>();
+                        if (appState.searchHistory.isNotEmpty && !_showHistory) {
+                          setState(() => _showHistory = true);
+                        }
+                      },
+                      textInputAction: TextInputAction.search,
                     ),
                   ),
-                  onChanged: (value) {
-                    if (value.trim().isNotEmpty) {
-                      _searchDebouncer.run(() => _search());
-                    }
-                  },
-                  onSubmitted: (_) => _search(),
-                  onTap: () {
-                    // 点回输入框时重新展开历史（焦点未变化时 listener 不会触发）
-                    final appState = context.read<AppState>();
-                    if (appState.searchHistory.isNotEmpty && !_showHistory) {
-                      setState(() => _showHistory = true);
-                    }
-                  },
-                  textInputAction: TextInputAction.search,
-                ),
-              ),
-              // 排序下拉（仅视频搜索模式 + original CMS）
-              if (showSort) _buildSearchDropdown(t),
-              // 搜索按钮
-              GestureDetector(
-                onTap: _search,
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  margin: const EdgeInsets.only(right: 5),
-                  decoration: BoxDecoration(
-                    color: AppTokens.blue,
-                    borderRadius: BorderRadius.circular(9),
+                  // 排序下拉（仅视频搜索模式 + original CMS）
+                  if (showSort) _buildSearchDropdown(t),
+                  // 搜索按钮
+                  GestureDetector(
+                    onTap: _search,
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      margin: const EdgeInsets.only(right: 5),
+                      decoration: BoxDecoration(
+                        color: AppTokens.blue,
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: const Icon(Icons.search_rounded,
+                          color: Colors.white, size: 18),
+                    ),
                   ),
-                  child: const Icon(Icons.search_rounded,
-                      color: Colors.white, size: 18),
-                ),
+                ],
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 9),
+            // 视频 / 作者：贴着搜索框的整行分段。
+            // 早前它被塞进顶栏标题的第二行（与站点胶囊挤在一行）：SitePill 用
+            // Flexible、分段控件内部又全是 Expanded，两个都要靠父级给宽度，结果
+            // 整行内容一个都没画出来，看上去就像「搜作者和视频合并了」。
+            AppSegmented(
+              labels: const ['视频', '作者'],
+              selectedIndex: _isAuthorMode ? 1 : 0,
+              height: 28,
+              onChanged: (i) => _onSearchTypeChanged(i == 1),
+            ),
+          ],
         ),
       ),
     );
