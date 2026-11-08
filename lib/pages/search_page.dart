@@ -731,7 +731,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         child: Container(
           height: 42,
           decoration: BoxDecoration(
-            color: t.surface2,
+            // 只留描边，不铺底色（深色模式下 surface2 会比页底亮一档，显得像贴了色块）
+            color: Colors.transparent,
             borderRadius: BorderRadius.circular(AppRadius.lg),
             border: Border.all(color: t.line),
           ),
@@ -751,6 +752,9 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     fontWeight: FontWeight.w600,
                   ),
                   decoration: InputDecoration(
+                    // 关掉全局 inputDecorationTheme 的 filled，否则输入区会盖一层
+                    // darkInputFill 色块，和外层透明描边框对不上
+                    filled: false,
                     border: InputBorder.none,
                     isDense: true,
                     contentPadding: EdgeInsets.zero,
@@ -1058,6 +1062,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
                     ),
                     decoration: const InputDecoration(
                       hintText: '',
+                      // 外层 Container 已铺 surface2 底，这里再 filled 会多盖一层深灰块
+                      filled: false,
                       contentPadding:
                           EdgeInsets.symmetric(horizontal: 4, vertical: 6),
                       border: InputBorder.none,

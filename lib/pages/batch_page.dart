@@ -953,6 +953,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                   ),
                   decoration: const InputDecoration(
                     hintText: '',
+                    // 外层 Container 已铺 surface2 底，这里再 filled 会多盖一层深灰块
+                    filled: false,
                     contentPadding: EdgeInsets.symmetric(horizontal: 4),
                     border: InputBorder.none,
                     isDense: true,
