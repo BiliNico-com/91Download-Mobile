@@ -250,13 +250,8 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                     color: t.text1,
                   ),
                 ),
-                const Spacer(),
-                AppIconBtn(
-                  icon: Icons.info_outline_rounded,
-                  tooltip: '关于',
-                  onTap: () => _pushSubPage(
-                      '关于', (context) => _buildAboutContent()),
-                ),
+                // 这里曾放一个「关于」图标按钮，与下方列表里的「关于」整行重复，
+                // 去掉后顶栏右侧留白，与其它主页面（批量/搜索/已关注）保持一致。
               ],
             ),
             const SizedBox(height: 8),
@@ -3275,10 +3270,14 @@ class _SettingsSubPage extends StatelessWidget {
         leadingWidth: 52,
         leading: Padding(
           padding: const EdgeInsets.only(left: 12),
-          child: AppIconBtn(
-            icon: Icons.arrow_back_rounded,
-            tooltip: '返回',
-            onTap: () => Navigator.pop(context),
+          // 必须居中：AppBar 的 leading 会被拉满工具条高度，
+          // 直接放 34x34 的 AppIconBtn 会被纵向拉长，圆角框变成瘦高条
+          child: Center(
+            child: AppIconBtn(
+              icon: Icons.arrow_back_rounded,
+              tooltip: '返回',
+              onTap: () => Navigator.pop(context),
+            ),
           ),
         ),
         title: Text(
