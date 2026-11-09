@@ -274,15 +274,17 @@ class _StreamingPageState extends State<StreamingPage> {
         child: Row(
           children: [
             const SizedBox(width: 8),
+            // 尺寸与圆角对齐全站 AppIconBtn（34x34 / r11 / 图标 19）：
+            // 之前这里是 32x32 / r10，比别的页面小一圈，方框看起来「比例不对」。
             GestureDetector(
               onTap: () => Navigator.of(context).maybePop(),
               behavior: HitTestBehavior.opaque,
               child: Container(
-                width: 32,
-                height: 32,
+                width: 34,
+                height: 34,
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.14),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
                 alignment: Alignment.center,
                 child: const Icon(Icons.arrow_back_rounded,
@@ -306,12 +308,12 @@ class _StreamingPageState extends State<StreamingPage> {
               onTap: _isDownloading ? null : _downloadVideo,
               behavior: HitTestBehavior.opaque,
               child: Container(
-                width: 32,
-                height: 32,
+                width: 34,
+                height: 34,
                 margin: const EdgeInsets.only(right: 12),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.14),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
                 alignment: Alignment.center,
                 child: _isDownloading

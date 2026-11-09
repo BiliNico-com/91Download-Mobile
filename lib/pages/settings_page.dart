@@ -207,17 +207,25 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   onTap: () => _pushSubPage(
                       '调试设置', (context) => _buildDebugContent(appState)),
                 ),
-                _buildRow(
-                  t,
-                  icon: Icons.info_outline_rounded,
-                  color: const Color(0xFF00ACC1),
-                  title: '关于',
-                  subtitle: '91Download 移动端 · ${VersionService.fullVersion}',
+              ]),
+              // 版本号做成页脚小字：它只是「当前版本 + 检查更新」的入口，
+              // 单独占一行卡片太占版面，用户也会觉得多出来一个按钮。
+              const SizedBox(height: 18),
+              Center(
+                child: InkWell(
                   onTap: () => _pushSubPage(
                       '关于', (context) => _buildAboutContent()),
-                  last: true,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    child: Text(
+                      '91Download 移动端 · ${VersionService.fullVersion}',
+                      style: TextStyle(fontSize: 11.5, color: t.text3),
+                    ),
+                  ),
                 ),
-              ]),
+              ),
             ],
           ),
         );

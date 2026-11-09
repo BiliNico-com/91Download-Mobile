@@ -1251,18 +1251,21 @@ class _BatchHeader extends StatelessWidget {
       child: Row(
         children: [
           if (isAuthorPageMode && onBack != null) ...[
+            // 与全站 AppIconBtn 同尺寸（34x34 / r11 / 图标 19）；
+            // 底色仍用 accentSoft，因为这里在浅底标题行上，不是播放页的深色浮层。
             GestureDetector(
               onTap: onBack,
               behavior: HitTestBehavior.opaque,
               child: Container(
-                width: 32,
-                height: 32,
+                width: 34,
+                height: 34,
                 margin: const EdgeInsets.only(right: 10),
                 decoration: BoxDecoration(
                   color: t.accentSoft,
-                  borderRadius: BorderRadius.circular(AppRadius.sm + 1),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
-                child: Icon(Icons.arrow_back_rounded, size: 18, color: t.accent),
+                alignment: Alignment.center,
+                child: Icon(Icons.arrow_back_rounded, size: 19, color: t.accent),
               ),
             ),
           ],
