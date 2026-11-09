@@ -88,3 +88,6 @@ android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
 # 签名密钥：绝不能提交（已在历史中泄漏过，见安全说明）
 *.keystore
 *.jks
+
+# 单元测试用例：按 VERSIONING.md 第四条约定，不进版本库也不参与 CI
+/test/
