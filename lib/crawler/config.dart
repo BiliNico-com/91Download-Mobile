@@ -784,6 +784,80 @@ class CrawlerConfig {
     return segments <= 1 && totalSeconds <= 8;
   }
 
+  // ==================== 时长解析与「降级片源」识别 ====================
+
+  /// 播放列表里所有切片的时长合计（秒），取自 #EXTINF
+  static double playlistDurationSeconds(String content) {
+    if (content.isEmpty) return 0;
+    return RegExp(r'#EXTINF:\s*([0-9.]+)')
+        .allMatches(content)
+        .fold<double>(0, (s, m) => s + (double.tryParse(m.group(1)!) ?? 0));
+  }
+
+  /// 把站点自报的视频时长字符串解析成秒
+  ///
+  /// 各站点格式不统一，这里统一吃掉常见的几种：
+  ///   hh:mm:ss  porn91 播放页解密出来的值（config.dart 里补零成三位）
+  ///   mm:ss     original CMS / 九色系卡片角标（41:11）
+  ///   12分34秒   中文站点
+  ///   754       纯秒数
+  /// 解析不出来返回 null。调用方必须把 null 当成「无法校验」，
+  /// 绝不能当成「时长对不上」去拒绝下载。
+  static int? parseDurationSeconds(String? raw) {
+    if (raw == null) return null;
+    var text = raw.trim();
+    if (text.isEmpty) return null;
+    // 去掉「时长：」「Duration: 」之类的前缀，只留数字、冒号和分秒
+    text = text.replaceFirst(RegExp(r'^[^0-9]+'), '');
+
+    final colon = RegExp(r'^(\d+):(\d{1,2})(?::(\d{1,2}))?').firstMatch(text);
+    if (colon != null) {
+      final a = int.tryParse(colon.group(1)!) ?? 0;
+      final b = int.tryParse(colon.group(2)!) ?? 0;
+      final c = colon.group(3);
+      if (c == null) return a * 60 + b; // mm:ss
+      final cc = int.tryParse(c) ?? 0;
+      return a * 3600 + b * 60 + cc; // hh:mm:ss
+    }
+
+    final cn = RegExp(r'^(\d+)\s*分\s*(\d+)\s*秒').firstMatch(text);
+    if (cn != null) {
+      return (int.tryParse(cn.group(1)!) ?? 0) * 60 +
+          (int.tryParse(cn.group(2)!) ?? 0);
+    }
+    final cnSec = RegExp(r'^(\d+)\s*秒').firstMatch(text);
+    if (cnSec != null) return int.tryParse(cnSec.group(1)!) ?? 0;
+
+    final pure = RegExp(r'^(\d+)').firstMatch(text);
+    if (pure != null) return int.tryParse(pure.group(1)!);
+    return null;
+  }
+
+  /// 播放列表时长与站点自报时长是否明显对不上
+  ///
+  /// 九色系对未登录用户存在第三种「假片源」：详情页给的地址既不是
+  /// /hlsd/ 样片形态（[isJiuseSampleUrl] 认不出），内容也不是
+  /// 12 段 12 秒样片 / 6 秒占位（[jiusePlaylistIsSample] 与
+  /// [jiusePlaylistIsPlaceholder] 都拦不住），而是一条带 token 的
+  /// 真实播放列表——但**多条不同视频拿到的是同一份**。
+  ///
+  /// 实测：某视频列表页标注 07:56，播放列表 #EXTINF 合计只有 49 秒；
+  /// 另外三条分别标注 05:36 / 04:25，落盘文件与 49 秒那条逐字节相同。
+  ///
+  /// 返回 true = 明显不符；null = 无法判定（缺时长 / 解析失败 / 短视频）。
+  static bool? jiusePlaylistDurationMismatch(
+      String content, String? declaredDuration) {
+    final expected = parseDurationSeconds(declaredDuration);
+    // 一分钟以内的视频不校验：真实短视频与「降级片源」的时长本就接近，
+    // 判错会把正常视频挡在门外。
+    if (expected == null || expected < 60) return null;
+    final actual = playlistDurationSeconds(content);
+    if (actual <= 0) return null;
+    // 播放列表按切片边界分段，与实际时长有秒级出入；
+    // 站点标注也常是取整值。留 30% 余量，只拦「差出好几倍」的降级片源。
+    return actual < expected * 0.7;
+  }
+
   /// 九色系免登录取真实地址的备用入口
   ///
   /// 详情页给的是 12 秒样片、而 /apiDownloadUrl 未登录直接 422 时，

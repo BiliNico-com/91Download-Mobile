@@ -2289,6 +2289,25 @@ class CrawlerCore {
           ctrl.retryable = false;
           return false;
         }
+        // 第三种假片源：地址形态和播放列表结构都「正常」，
+        // 但它是站点给未登录用户统一发的降级片源——多条不同视频下下来
+        // 逐字节相同。这类片源只能靠时长识别：站点自报几分钟，
+        // 播放列表却只有几十秒。宁可明确失败，也不给用户一份假文件。
+        // 唯一失败模式的提示要写清是「站点限制」，别让用户以为是本地问题。
+        if (CrawlerConfig.jiusePlaylistDurationMismatch(
+                m3u8Content, video.duration) ==
+            true) {
+          final declared = CrawlerConfig.parseDurationSeconds(video.duration);
+          final actual =
+              CrawlerConfig.playlistDurationSeconds(m3u8Content).round();
+          ctrl.onLog?.call(
+              '播放列表只有 ${actual}s，与站点标注的 ${declared}s 不符', 'error');
+          ctrl.failureReason =
+              '站点只返回了 ${actual} 秒的降级片源（标注 ${declared} 秒，多个视频会是同一份），'
+              '完整片源需要 VIP 登录';
+          ctrl.retryable = false;
+          return false;
+        }
       }
 
       // 解析 TS 切片列表

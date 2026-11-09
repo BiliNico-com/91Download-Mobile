@@ -262,9 +262,28 @@ class DownloadManager extends ChangeNotifier {
   void setup(CrawlerCore crawler, String downloadDir) {
     _crawler = crawler;
     _downloadDir = downloadDir;
+    // 之前因为爬虫/目录没就绪而只入队、没真正开跑的任务，这里补一次启动。
+    // 不能同步调 _startDownload：setup() 常被 AppState.crawler 这个 getter
+    // 在 build 期间调用，同步 notifyListeners() 会踩到「build 中 setState」。
+    if (_waitingQueue.isNotEmpty && _activeDownloads < maxConcurrentTasks) {
+      Future.microtask(_tryStartNext);
+    }
   }
   
   List<DownloadTask> get tasks => List.unmodifiable(_tasks);
+
+  /// 从数据库恢复任务时，这个状态要不要重新排队
+  ///
+  /// 抽成静态纯函数是为了能单测：恢复逻辑本身依赖 sqflite，
+  /// 在桌面端跑不了单测，而这三种分支的判断恰恰最容易写错。
+  ///   - downloading：进程已经没了，必须降级成 pending 重新跑，
+  ///     否则界面显示「下载中」却没有任何下载在跑；
+  ///   - pending：本来就该跑，说明上次还没来得及启动；
+  ///   - paused：用户主动按的暂停，不能自作主张接着下；
+  ///   - completed / failed：终态，不需要重跑。
+  static bool shouldRequeueAfterRestore(DownloadStatus status) =>
+      status == DownloadStatus.downloading ||
+      status == DownloadStatus.pending;
 
   /// 未完成的任务：下载中 / 等待 / 暂停 / 失败
   ///
@@ -1037,7 +1056,51 @@ class DownloadManager extends ChangeNotifier {
       
       // 同时从 download_history.db 恢复已完成的任务
       await _restoreCompletedFromHistory();
-      
+
+      // 把上次被中断的任务重新放回队列。
+      //
+      // 进程被系统杀掉（或用户强停 App）时，库里会留下 status=pending /
+      // downloading 的行。以前这里只把状态原样还原就不再管了：既不入
+      // _waitingQueue，也没有任何地方再触发 _tryStartNext()，于是 App 一启动
+      // 这些任务就永远停在「等待中 / 下载中」——明明没有一条下载在跑，
+      // 进度条却再也不动，用户重启多少次都救不回来。
+      //
+      // 只处理 pending / downloading：
+      //   - downloading 必须降级成 pending：进程已经没了，保留 downloading
+      //     会让 UI 显示「正在下载」而 _activeDownloads 仍是 0；
+      //   - paused 是用户主动按的，不能自作主张接着下；
+      //   - completed / failed 各有终态含义，不需要重跑。
+      final resumable = <DownloadTask>[];
+      for (final task in _tasks) {
+        if (shouldRequeueAfterRestore(task.status)) {
+          task.status = DownloadStatus.pending;
+          if (task.progressText.isEmpty) {
+            task.progressText = '等待中';
+          }
+          resumable.add(task);
+        }
+      }
+      if (resumable.isNotEmpty) {
+        for (final task in resumable) {
+          if (!_waitingQueue.contains(task)) {
+            _waitingQueue.add(task);
+          }
+        }
+        if (_crawler == null || _downloadDir.isEmpty) {
+          // 爬虫/下载目录还没就绪（init() 里的恢复早于用户选站）。
+          // 这里不能直接调 _tryStartNext()：它会把任务判成 failed
+          //『未配置爬虫或下载目录』。保持 pending 留在队列里，
+          // 等 setup() 或用户的下一步操作再把它们带起来。
+          await logger.log('Download',
+              '${resumable.length} 个未完成任务已放回队列，等待下载目录就绪');
+        } else {
+          // 受 maxConcurrentTasks 限制，这里只会拉起一个，
+          // 其余留在队列里由 _startDownload 的 finally 接着拉。
+          _tryStartNext();
+          await logger.log('Download', '${resumable.length} 个未完成任务已重新入队');
+        }
+      }
+
       if (_tasks.isNotEmpty) {
         notifyListeners();
         await logger.log('Download', '从数据库恢复了 ${_tasks.length} 个下载任务');
