@@ -678,6 +678,11 @@ class CrawlerCore {
   List<VideoInfo> parseHifuliListForTest(String html) =>
       _parseVideoListHifuli(html);
 
+  /// 供测试直接调用嗨碰「从卡片提炼作者」的解析
+  @visibleForTesting
+  List<AuthorInfo> parseHifuliAuthorsForTest(String html) =>
+      _parseHifuliAuthorsFromCards(html);
+
   /// 供测试直接调用分页判据（jiuse 无分页控件，走条数 + 重复内容比对）
   @visibleForTesting
   void applyPaginationForTest(String html, int page, List<VideoInfo> videos) =>
@@ -867,21 +872,52 @@ class CrawlerCore {
         if (d.isNotEmpty && d != '--:--') duration = d;
       }
 
-      // 作者：列表页 meta 行里 a.hiporn-list-card-author > span 名字，
-      // 同时作者主页是 /u/{urlencode 名字}，把名字本身编码后当作者 id。
+      // 作者与上传时间都在卡片下方的 meta 行里（列表/搜索/推荐/热榜页专有）：
+      //   div.hiporn-list-card-meta
+      //     ├ a.hiporn-list-card-author[href=/u/{urlencode 名字}] > span 名字
+      //     └ time.hiporn-list-card-time 「3天前」
+      //
+      // 作者 id 优先取站点给的 href：把显示名重新编码在「显示名 ≠ URL 名」
+      // 时（含空格、emoji、大小写变体）会拼出打不开的主页地址。
+      // meta 行只有 a/img/span/time，不含嵌套 div，所以切块不会截断。
       String? author;
       String? authorId;
-      final authorMatch =
-          CrawlerConfig.hifuliCardAuthorPattern.firstMatch(card);
-      if (authorMatch != null) {
-        final name = CrawlerConfig.stripInvisible(
-                CrawlerConfig.unescapeHtml(authorMatch.group(1)!))
-            .trim();
-        if (name.isNotEmpty && name != '匿名') {
-          author = name;
-          authorId = Uri.encodeComponent(name);
-        } else if (name.isNotEmpty) {
-          author = name;
+      String? uploadDate;
+      final metaMatch = CrawlerConfig.hifuliCardMetaPattern.firstMatch(card);
+      if (metaMatch != null) {
+        final meta = metaMatch.group(1)!;
+
+        final hrefMatch =
+            CrawlerConfig.hifuliCardAuthorHrefPattern.firstMatch(meta);
+        final idFromHref = hrefMatch == null
+            ? ''
+            : CrawlerConfig.normalizeHifuliAuthorId(hrefMatch.group(1)!);
+
+        final authorMatch =
+            CrawlerConfig.hifuliCardAuthorPattern.firstMatch(meta);
+        if (authorMatch != null) {
+          final name = CrawlerConfig.stripInvisible(
+                  CrawlerConfig.unescapeHtml(authorMatch.group(1)!))
+              .trim();
+          if (name.isNotEmpty) {
+            author = name;
+            // 「匿名」是站点给未登录/匿名投稿占的位，点进去只有一页无关视频，
+            // 不提供跳转（保持原有行为）；有真实 href 时其余作者一律可跳。
+            if (name != '匿名') {
+              authorId = idFromHref.isNotEmpty
+                  ? idFromHref
+                  : Uri.encodeComponent(name);
+            }
+          }
+        }
+
+        final timeMatch =
+            CrawlerConfig.hifuliCardTimePattern.firstMatch(meta);
+        if (timeMatch != null) {
+          final t = CrawlerConfig.stripInvisible(
+                  CrawlerConfig.unescapeHtml(timeMatch.group(1)!))
+              .trim();
+          if (t.isNotEmpty) uploadDate = t;
         }
       }
 
@@ -893,11 +929,65 @@ class CrawlerCore {
         author: author,
         authorId: authorId,
         duration: duration,
+        // 相对时间（3天前 / 4小时前），与详情页的绝对日期是同一件事
+        uploadDate: uploadDate,
       ));
     }
 
     Logger().logSync('Parse', 'hifuli 解析完成: ${videos.length} 个视频');
     return videos;
+  }
+
+  /// 从嗨碰的视频列表/搜索页里提炼作者（去重后按命中条数排序）
+  ///
+  /// 站点没有独立的「搜索到用户」区块，作者信息只存在于每张卡片的 meta 行，
+  /// 所以搜索作者只能复用它。这里刻意和 [_parseVideoListHifuli] 用同一套
+  /// 正则与 id 规范，保证「列表里能点的作者」与「搜索出来的作者」是同一批、
+  /// 同一个 authorId，否则点进主页会 404。
+  List<AuthorInfo> _parseHifuliAuthorsFromCards(String html) {
+    final counts = <String, int>{};
+    final names = <String, String>{};
+
+    // 显示名与 href 不一致时以 href 为准，所以用 href 派生的 id 做去重键。
+    for (final card in CrawlerConfig.hifuliCardPattern.allMatches(html)) {
+      final metaMatch =
+          CrawlerConfig.hifuliCardMetaPattern.firstMatch(card.group(0)!);
+      if (metaMatch == null) continue;
+      final meta = metaMatch.group(1)!;
+
+      final nameMatch = CrawlerConfig.hifuliCardAuthorPattern.firstMatch(meta);
+      if (nameMatch == null) continue;
+      final name = CrawlerConfig.stripInvisible(
+              CrawlerConfig.unescapeHtml(nameMatch.group(1)!))
+          .trim();
+      // 「匿名」是站点给匿名投稿占的位，主页里没有作者维度内容，不收录。
+      if (name.isEmpty || name == '匿名') continue;
+
+      final hrefMatch =
+          CrawlerConfig.hifuliCardAuthorHrefPattern.firstMatch(meta);
+      final id = hrefMatch == null
+          ? Uri.encodeComponent(name)
+          : CrawlerConfig.normalizeHifuliAuthorId(hrefMatch.group(1)!);
+      if (id.isEmpty) continue;
+
+      names[id] = name;
+      counts[id] = (counts[id] ?? 0) + 1;
+    }
+
+    final authors = names.entries
+        .map((e) => AuthorInfo(
+              id: e.key,
+              name: e.value,
+              // 站点不给作者总投稿数，这里用「本次结果里命中的视频条数」代替：
+              // 它是一个真实数字，比硬编码 0 有信息量，也能用来排序。
+              videoCount: counts[e.key] ?? 0,
+              profileUrl: '$baseUrl/u/${e.key}',
+            ))
+        .toList();
+
+    // 命中数多的排前面：搜索时作者的相关性和这个基本成正比。
+    authors.sort((a, b) => b.videoCount.compareTo(a.videoCount));
+    return authors;
   }
 
   /// 解析视频列表 HTML - porn91 CMS（91porn 风格）
@@ -1432,10 +1522,10 @@ class CrawlerCore {
       // /search?keywords=xxx 结果页里（排在视频区块之前）
       url = CrawlerConfig.buildSearchUrl(baseUrl, _siteType, keyword);
     } else if (_siteType == "hifuli") {
-      // 嗨碰没有作者搜索：/s/ 只返回视频，作者主页只能从卡片的
-      // a.hiporn-list-card-author（/u/{名字}）进入。
-      await logger.log('Crawler', 'hifuli 站点不提供作者搜索，直接返回空结果');
-      return <AuthorInfo>[];
+      // 嗨碰没有独立的「搜索到用户」区块：/s/{关键词} 只返回视频卡片，
+      // 作者信息只存在于每张卡片下方的 meta 行（a.hiporn-list-card-author）。
+      // 所以这里照常请求搜索页，再按视频卡片的同源规则把作者抽出来去重。
+      url = CrawlerConfig.buildSearchUrl(baseUrl, _siteType, keyword);
     } else {
       // original 风格：使用 search.htm?search=xxx（和搜索视频一样的URL）
       url = '$baseUrl/search.htm?search=${Uri.encodeComponent(keyword)}';
@@ -1480,6 +1570,16 @@ class CrawlerCore {
         }
         await logger.log('Crawler', 'jiuse 作者搜索结果: ${authors.length} 个');
         return authors;
+      }
+
+      // ---- hifuli：搜索页没有用户区块，作者只能从视频卡片的 meta 行提炼 ----
+      //
+      // 和 _parseVideoListHifuli 用同一套正则，保证「列表里能点的作者」
+      // 和「搜索结果里的作者」是同一批人、同一个 authorId（否则点进主页会 404）。
+      if (_siteType == "hifuli") {
+        final fromCards = _parseHifuliAuthorsFromCards(html);
+        await logger.log('Crawler', 'hifuli 作者搜索结果: ${fromCards.length} 个');
+        return fromCards;
       }
       
       // 匹配作者链接
@@ -1537,7 +1637,11 @@ class CrawlerCore {
           : '$baseUrl/$path?page=$page';
     } else if (_siteType == "hifuli") {
       // 嗨碰作者主页：/u/{urlencode 名字}，第 2 页起 /u/{名字}/page/{page}
-      final id = authorId.trim();
+      //
+      // authorId 有两个来源：列表卡片 href 里的 /u/xxx（已编码，原样可用）、
+      // 详情页按名字编码的兜底值。调用方也可能直接把 profileUrl 的
+      // "/u/xxx" 整段传进来，所以统一剥掉前缀再拼，避免 /u/u/xxx。
+      final id = CrawlerConfig.normalizeHifuliAuthorId(authorId);
       url = page <= 1 ? '$baseUrl/u/$id' : '$baseUrl/u/$id/page/$page';
     } else {
       // original CMS - 分页格式：user-N.htm?author=xxx
@@ -1643,6 +1747,8 @@ class CrawlerCore {
       // 嗨碰详情页的标题/作者/时长/日期/播放数（在下面的专用分支里填）
       String? hipornTitle;
       String? hipornAuthor;
+      // 详情页只有作者名、没有 /u/ 主页链接，这里是「列表没带 id 时」的兜底
+      String? hipornAuthorId;
       String? hipornDuration;
       String? hipornDate;
       String? hipornViews;
@@ -1893,7 +1999,13 @@ class CrawlerCore {
           final a = CrawlerConfig.stripInvisible(
                   CrawlerConfig.unescapeHtml(authorMatch.group(1)!))
               .trim();
-          if (a.isNotEmpty) hipornAuthor = a;
+          if (a.isNotEmpty) {
+            hipornAuthor = a;
+            // 详情页作者块没有 /u/ 链接（全文 0 命中），只能按站点路径规则
+            // 把名字编码成 /u/{urlencode 名字}。列表页带来的 authorId 优先，
+            // 这里是「直接从详情页打开、没有列表上下文」时的兜底。
+            if (a != '匿名') hipornAuthorId = Uri.encodeComponent(a);
+          }
         }
         final durMatch =
             CrawlerConfig.hifuliIsoDurationPattern.firstMatch(html);
@@ -1903,7 +2015,12 @@ class CrawlerCore {
         }
         final dateMatch =
             CrawlerConfig.hifuliUploadDatePattern.firstMatch(html);
-        if (dateMatch != null) hipornDate = dateMatch.group(1)!.trim();
+        if (dateMatch != null) {
+          // 站点给的是 ISO 串（2018-08-11T00:00:00+08:00），
+          // 原样上屏会带着时分秒和时区，播放页的胶囊放不下。
+          hipornDate =
+              CrawlerConfig.formatHifuliDate(dateMatch.group(1)!.trim());
+        }
         final viewsMatch =
             CrawlerConfig.hifuliViewsPattern.firstMatch(html);
         if (viewsMatch != null) hipornViews = viewsMatch.group(1)!.trim();
@@ -2002,6 +2119,10 @@ class CrawlerCore {
         }
         
         // 提取上传日期 + 观看数（播放页可见，供在线播放页展示）
+        //
+        // 两种精度并存：详情页 JSON-LD 是绝对日期（yyyy-MM-dd），
+        // 列表卡片 meta 是相对时间（3天前）。绝对日期更准，优先用它；
+        // 拿不到才退回列表带来的相对时间，不能因为「有相对时间」就不取详情。
         String? uploadDate = hipornDate ?? video.uploadDate;
         if (uploadDate == null) {
           final dateMatch = RegExp(r'日期[：:]\s*(.+?)</div>').firstMatch(html);
@@ -2029,7 +2150,11 @@ class CrawlerCore {
           author: (secret?.author?.isNotEmpty ?? false)
               ? secret!.author
               : author,
-          authorId: video.authorId, // 保留原有的作者ID
+          // 列表带来的 /u/ 真实地址优先，其次才是详情页按名字编码的兜底；
+          // 两处都没有时保持 null，播放页就不会显示「查看主页」。
+          authorId: (video.authorId?.isNotEmpty ?? false)
+              ? video.authorId
+              : hipornAuthorId,
           duration: (secret?.duration?.isNotEmpty ?? false)
               ? secret!.duration
               : duration,

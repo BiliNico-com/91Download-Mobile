@@ -645,7 +645,32 @@ class CrawlerConfig {
         .replaceAll('&nbsp;', ' ')
         .replaceAll('&ldquo;', '“')
         .replaceAll('&rdquo;', '”')
-        .replaceAll('&hellip;', '…');
+        .replaceAll('&hellip;', '…')
+        // 站点在作者名/标题里会夹带排版实体，少见但确实会出现
+        // （例如「姐放君3&mdash;8」），不解码就原样上屏。
+        .replaceAll('&mdash;', '—')
+        .replaceAll('&ndash;', '–')
+        .replaceAll('&middot;', '·')
+        .replaceAll('&lsquo;', '‘')
+        .replaceAll('&rsquo;', '’')
+        .replaceAll('&laquo;', '«')
+        .replaceAll('&raquo;', '»')
+        .replaceAll('&times;', '×')
+        .replaceAll('&copy;', '©')
+        .replaceAll('&reg;', '®')
+        // 数字实体 &#8212; / &#x2014; 走通用解码，命名实体覆盖不到的靠它
+        .replaceAllMapped(
+          RegExp(r'&#([xX]?)([0-9a-fA-F]+);'),
+          (m) {
+            final raw = m.group(2)!;
+            final code = int.tryParse(
+              raw,
+              radix: m.group(1)!.isEmpty ? 10 : 16,
+            );
+            if (code == null || code <= 0 || code > 0x10FFFF) return m.group(0)!;
+            return String.fromCharCode(code);
+          },
+        );
   }
 
   // ==================== 正则表达式 ====================
@@ -1303,6 +1328,67 @@ class CrawlerConfig {
     r'"uploadDate"\s*:\s*"([^"]+)"',
     caseSensitive: false,
   );
+
+  // ---- 嗨碰：列表卡片的作者行（meta）----
+  //
+  // 列表/搜索/推荐/热榜页的卡片下方多一行 meta，作者与时间都在里面：
+  //   <div class="hiporn-list-card-meta">
+  //     <a href="/u/{urlencode 名字}" class="hiporn-list-card-author" …>
+  //       <img src="data:image/png;base64,…（约 600~1200 字符）" …><span>名字</span>
+  //     </a>
+  //     <time class="hiporn-list-card-time">3天前</time>
+  //   </div>
+  // 首页与 /video 的卡片没有这一行（作者/时间都拿不到）。
+
+  /// 卡片里的 meta 块（含作者行与时间）
+  static final RegExp hifuliCardMetaPattern = RegExp(
+    r'<div class="hiporn-list-card-meta">([\s\S]{0,3000}?)</div>',
+    caseSensitive: false,
+  );
+
+  /// meta 块里的作者主页地址：/u/{urlencode 名字}
+  ///
+  /// 这是站点给的真实路径，比「把显示名重新编码」可靠：显示名可能带
+  /// 空格/emoji，与 URL 里那段编码并不总是等价。
+  static final RegExp hifuliCardAuthorHrefPattern = RegExp(
+    r'href="(/u/[^"]+)"',
+    caseSensitive: false,
+  );
+
+  /// meta 块里的上传时间
+  ///
+  /// 站点给的是相对时间（3天前 / 4小时前 / 5分钟前），没有绝对日期，
+  /// 原样展示即可——它和详情页 JSON-LD 的 uploadDate 是同一件事的两种精度。
+  static final RegExp hifuliCardTimePattern = RegExp(
+    r'hiporn-list-card-time"[^>]*>\s*([^<]+?)\s*<',
+    caseSensitive: false,
+  );
+
+  /// 把作者主页地址规范成可直接拼进 /u/ 的 id
+  ///
+  /// 入参可能是 /u/jds、u/jds、jds 或已编码的 %E5%8C%BF%E5%90%8D，
+  /// 统一去掉 u/ 前缀；已编码的百分号形式原样保留，不能再编码一次。
+  static String normalizeHifuliAuthorId(String raw) {
+    var id = raw.trim();
+    if (id.startsWith('/')) id = id.substring(1);
+    if (id.startsWith('u/')) id = id.substring(2);
+    if (id.startsWith('/')) id = id.substring(1);
+    return id;
+  }
+
+  /// 把详情页 JSON-LD 的 ISO 日期格式化成 yyyy-MM-dd
+  ///
+  /// 站点给的是 "2018-08-11T00:00:00+08:00"，直接上屏会带着时分秒与时区，
+  /// 播放页的胶囊放不下。拿不到 ISO 形态时原样返回（列表带来的「3天前」
+  /// 这类相对时间就属于这种），空串一律返回 null。
+  static String? formatHifuliDate(String? raw) {
+    if (raw == null) return null;
+    final v = raw.trim();
+    if (v.isEmpty) return null;
+    final m = RegExp(r'^(\d{4}-\d{2}-\d{2})').firstMatch(v);
+    if (m != null) return m.group(1);
+    return v;
+  }
 
   /// 把 ISO 8601 时长转成 mm:ss / hh:mm:ss，解析不出来返回 null
   static String? formatIsoDuration(String? iso) {
