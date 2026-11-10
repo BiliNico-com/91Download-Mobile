@@ -618,14 +618,27 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
         .any((a) => a.authorId == _currentAuthorId);
 
     return GestureDetector(
+      // 这个胶囊里只有图标和文字，命中区不外扩；opaque 保证点文字与
+      // 图标之间的空隙也算点中（此前只有文字本身能触发，点边缘没反应）。
+      behavior: HitTestBehavior.opaque,
       onTap: () async {
+        final String? error;
         if (isFollowed) {
-          await appState.followedAuthorsService.unfollow(_currentAuthorId);
+          error = await appState.followedAuthorsService
+              .unfollow(_currentAuthorId);
         } else {
-          await appState.followedAuthorsService
+          error = await appState.followedAuthorsService
               .follow(_currentAuthorId, _currentAuthorName);
         }
-        if (mounted) setState(() {});
+        if (!mounted) return;
+        setState(() {});
+        // 失败时把原因说出来：以前返回值被直接丢掉，写库失败时
+        // 用户看到的就是「按钮点了一下，什么都不发生」。
+        if (error != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(error)),
+          );
+        }
       },
       child: Container(
         height: 26,

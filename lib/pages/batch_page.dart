@@ -490,15 +490,26 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                                     final currentlyFollowed = appState
                                         .followedAuthorsService
                                         .isFollowedSync(_currentAuthorId);
+                                    final String? error;
                                     if (currentlyFollowed) {
-                                      await appState.followedAuthorsService
+                                      error = await appState
+                                          .followedAuthorsService
                                           .unfollow(_currentAuthorId);
                                     } else {
-                                      await appState.followedAuthorsService
+                                      error = await appState
+                                          .followedAuthorsService
                                           .follow(_currentAuthorId,
                                               _currentAuthorName);
                                     }
-                                    if (mounted) setState(() {});
+                                    if (!mounted) return;
+                                    setState(() {});
+                                    // 写库失败必须让用户看见，否则按钮
+                                    // 看上去就是「点了没反应」。
+                                    if (error != null) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(SnackBar(
+                                              content: Text(error)));
+                                    }
                                   }
                                 : null,
                             onTypeChanged: (v) async {

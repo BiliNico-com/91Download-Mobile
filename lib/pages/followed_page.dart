@@ -183,9 +183,13 @@ class _FollowedPageState extends State<FollowedPage>
       child: GridView.builder(
         padding: EdgeInsets.fromLTRB(
             12, 12, 12, MediaQuery.of(context).padding.bottom + 84),
+        // 卡片高度写死 mainAxisExtent，不再用 childAspectRatio 反推。
+        // 之前 1.55 算出来只有 ~105dp，而内容（上下留白 25 + 头像 48 +
+        // 名字 19 + 间距 4 + 状态 15）需要 ~111dp，Column 里的 Spacer
+        // 在超高时会被压成 0、救不回布局，于是卡片底部稳定溢出 9.2px。
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          childAspectRatio: 1.55,
+          mainAxisExtent: 122,
           crossAxisSpacing: 11,
           mainAxisSpacing: 11,
         ),
