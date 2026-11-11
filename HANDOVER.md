@@ -468,6 +468,14 @@ git push origin --tags
 - 真机 91porn「下载零字节」在小米 Android 16 上由 v1.6.1 修复后，**未再拿到同机型复测确认**。若用户再报，需要：具体设备型号 / Android 版本 / 日志文件 / 卡住时的百分比与已下载字节。
 - 批量页的多选操作条（「已选 N 个 / 取消 / 开始下载」）会把页码胶囊整块盖住（截图见过，未修）。
 
+### 8.2.1 2026-11-12 新增能力（**待真机验证**，详见 `D:\91\改动记录-2026-11-12.md`）
+
+- **日志去重**：`utils/logger.dart` 的 `network()` 支持 `dedupeKey`，新增 `logDeduped(...)`；同签名在窗口内（普通失败 20s / 连接级失败 2min）只记首条，窗口结束时补一行「同类已静默 N 条」。`NetworkLogInterceptor` 失败行与 `_downloadTs` 的 catch 都已接上。→ 不连代理时不再刷爆 3 MB×6 的日志文件。
+- **MP4 独立并发**：`AppState.maxMp4Concurrent`（默认 32，1..64）→ `CrawlerCore.mp4MaxConcurrentDownloads`，只作用于直链 MP4 分块（`crawler_core.dart` 的 `ideal` 与 `workers`）；TS 切片仍用 `maxConcurrentSegments`。设置页「下载并发」现在是三行。
+- **强制合并**：任务行在有残留临时目录时多一个「合并切片」按钮（`DownloadManager.hasPendingSlices` → `CrawlerCore.forceMerge`），TS 走 `_mergeTsFiles(downloaded: null)`、MP4 走 `_forceMergeMp4`（读 `meta.json` 校验块，缺块时二次确认可硬拼）。
+- **提示条**：`AppTheme.snackBarThemeData`（floating + `insetPadding` 距底 70 = 底栏 62 + 8）挂到亮/暗主题，一处生效全局；关键调用点补 `hideCurrentSnackBar` + 显式 `duration`。
+- **恢复下载复用地址**：`download_tasks` 升到 **v4**，新增 `m3u8_url` 列；`DownloadTask.cachedUrl` 在解析成功时立刻落库，恢复时优先复用，撞失败（且非暂停/停止）才回站点重解析一次。→ 解决「开代理解析、关代理后恢复要重新解析」。
+
 ### 8.3 文档
 
 - `README.md` 原先的「项目结构」章节已过时（写的还是 `history_page.dart`，也没有 `lib/crawler/sites/`、`lib/theme/app_tokens.dart`、`lib/components/`）——**本次已一并修正**，并加了「开发文档」小节指向 `VERSIONING.md` 与本文。
