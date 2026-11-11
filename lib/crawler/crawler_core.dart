@@ -2,15 +2,17 @@
 /// 严格参照 Python 版本 _src/lib/__init__.py
 
 import 'dart:async';
-import 'dart:convert';
-import 'dart:math';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
-import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'config.dart';
+import 'sites/site_handler.dart';
+import 'sites/porn91_site.dart';
+import 'sites/jiuse_site.dart';
+import 'sites/hifuli_site.dart';
+import 'sites/original_site.dart';
 import '../models/video_info.dart';
 import '../utils/logger.dart';
 import '../utils/network_log_interceptor.dart';
@@ -208,6 +210,12 @@ class CrawlerCore {
     return runZoned(body, zoneValues: {_zoneKey: ctrl});
   }
 
+  /// 站点差异（URL 拼装 / HTML 解析 / 分页判据）全部委托给这个 handler。
+  ///
+  /// 它只做纯字符串处理、不发 HTTP，所以每个站点可以单独读、单独改、
+  /// 单独测；网络、分页状态与下载仍集中在 CrawlerCore。
+  SiteHandler _handler = const OriginalSite();
+
   /// 手动指定的站点类型（自定义站点由用户归类时传入，null = 按域名推断）
   String? _manualSiteType;
 
@@ -243,10 +251,27 @@ class CrawlerCore {
   /// 请求头、解密分支全都套错，站点一条也解析不出来。
   void _detectSiteType() {
     _siteType = _manualSiteType ?? CrawlerConfig.detectSiteType(baseUrl);
-    Logger().logSync('Crawler', '站点类型检测: domain=${Uri.parse(baseUrl).host}, type=$_siteType'
+    _handler = _resolveHandler(_siteType);
+    Logger().logSync(
+        'Crawler',
+        '站点类型检测: domain=${Uri.parse(baseUrl).host}, type=$_siteType'
         '${_manualSiteType != null ? ' (手动指定)' : ''}');
   }
-  
+
+  /// 按站点类型取对应的实现；未知类型一律落到通用原创系模板
+  static SiteHandler _resolveHandler(String siteType) {
+    switch (siteType) {
+      case 'porn91':
+        return const Porn91Site();
+      case 'jiuse':
+        return const JiuseSite();
+      case 'hifuli':
+        return const HifuliSite();
+      default:
+        return const OriginalSite();
+    }
+  }
+
   /// 获取站点类型
   String get siteType => _siteType;
 
@@ -342,62 +367,23 @@ class CrawlerCore {
 
   /// 计算并写入本页的分页判断结果
   ///
-  /// jiuse 优先看分区页的路径式分页链接，拿不到再退回「条数 + 与上一页比对」
-  /// 的专用判据；其余站点沿用 [_detectHasNextPage] 的通用策略。
+  /// 站点各有一套分页控件（jiuse 是路径式页码链接、hifuli 是 data-next-url、
+  /// 其余是页码 +「下一页」），具体判据由 handler 提供；handler 说自己
+  /// 没有判据（返回 null）时才退回通用的「分页控件 + 条数兜底」。
   void _applyPagination(String html, int page, List<VideoInfo> videos) {
-    if (_siteType == 'jiuse') {
-      final signature = videos.map((v) => v.id).join(',');
-
-      // 分区页（/video/category/*）页脚有真实分页控件，直接用页码链接判断，
-      // 比「条数 + 内容比对」准确得多（分区页每页条数不固定，条数判据会误判）。
-      final fromLinks = CrawlerConfig.jiusePaginationHasMore(html, page);
-      if (fromLinks != null) {
-        _lastPaginationParsed = true;
-        _lastJiuseSignature = signature;
-        _lastRequestHasMore = fromLinks;
-        _logPagination(
-          fromLinks
-              ? 'jiuse 分页控件命中：存在大于第 $page 页的链接'
-              : 'jiuse 分页控件命中：没有更靠后的页码链接，判定为最后一页',
-          fromLinks,
-        );
-        return;
-      }
-
-      final hasMore = CrawlerConfig.jiusePageHasMore(
-        itemCount: videos.length,
-        page: page,
-        signature: signature,
-        lastSignature: _lastJiuseSignature,
-      );
-      _lastPaginationParsed = true;
-      _lastJiuseSignature = signature;
-      _lastRequestHasMore = hasMore;
-      _logPagination(
-          'jiuse 无分页控件，按条数与重复内容判断：${videos.length} 条', hasMore);
-      return;
-    }
-    if (_siteType == 'hifuli') {
-      // 嗨碰只有 /hot、/recommend、/tag、/s 带分页控件，且它的
-      // data-last-page 数字并不可信（/hot 标 15307，实际 page/15124 仍有内容），
-      // 唯一可靠的判据是 data-next-url 是否为空。
-      final hasMore = CrawlerConfig.hifuliHasNextPage(html);
-      if (hasMore == null) {
-        // 首页 / 最新视频：没有分页控件，且每次请求内容都会随机重排，
-        // 条数兜底在这里恒为真，会让无限滚动永远停不下来 —— 直接当单页。
-        _lastPaginationParsed = true;
-        _lastRequestHasMore = false;
-        _logPagination('hifuli 页面无分页控件，按单页信息流处理', false);
-        return;
-      }
-      _lastPaginationParsed = true;
-      _lastRequestHasMore = hasMore;
-      _logPagination(
-        hasMore
-            ? 'hifuli 分页控件命中：data-next-url 不为空，还有下一页'
-            : 'hifuli 分页控件命中：data-next-url 为空，已是最后一页',
-        hasMore,
-      );
+    final signature = videos.map((v) => v.id).join(',');
+    final bySite = _handler.decidePagination(
+      html: html,
+      page: page,
+      itemCount: videos.length,
+      signature: signature,
+      lastSignature: _lastJiuseSignature,
+    );
+    if (bySite != null) {
+      _lastPaginationParsed = bySite.parsed;
+      _lastRequestHasMore = bySite.hasMore;
+      if (bySite.rememberSignature) _lastJiuseSignature = signature;
+      _logPagination(bySite.log, bySite.hasMore);
       return;
     }
     _lastRequestHasMore = _detectHasNextPage(html, page, videos.length);
@@ -556,23 +542,13 @@ class CrawlerCore {
       throw Exception('未知的列表类型: $listType');
     }
     
-    // jiuse 有两种分页格式，交给 config 判断；别的站点是路径占位符
-    String url;
-    if (_siteType == 'jiuse') {
-      url = CrawlerConfig.buildJiuseListUrl(baseUrl, urlPattern, page);
-    } else if (_siteType == 'hifuli') {
-      // 首页与「最新视频」是无页码的单页信息流，其余分区走 /xxx/page/N
-      url = CrawlerConfig.buildHifuliListUrl(baseUrl, urlPattern, page);
-    } else {
-      url = '$baseUrl/${urlPattern.replaceAll('{page}', page.toString())}';
-    }
-    // ✅ 修复4：使用更轻量的参数格式，避免触发反爬
+    // 分页格式各站不同（jiuse 路径式、hifuli 单页信息流、其余占位符），
+    // 交给站点类拼；防缓存时间戳只有 porn91 需要。
+    final url = _handler.buildListUrl(baseUrl, urlPattern, page);
     final ts = DateTime.now().millisecondsSinceEpoch;
-    // original 站点对 _t 参数敏感（首页/搜索带 _t 会 404），仅 porn91 保留 _t 防缓存
-    final urlWithCache = _siteType == "porn91"
+    final urlWithCache = _handler.addCacheBuster
         ? (url.contains('?') ? '$url&_t=$ts' : '$url?_t=$ts')
         : url;
-    
     // ✅ 修复：日志记录实际请求的 URL
     await logger.log('Crawler', '网络请求: GET $urlWithCache (siteType=$_siteType)');
     
@@ -652,18 +628,8 @@ class CrawlerCore {
       // ✅ 保存原始 HTML 到文件（调试用）
       await _saveHtmlToFile(html, listType, page);
       
-      // 根据站点类型选择解析方法
-      List<VideoInfo> videos;
-      if (_siteType == "jiuse") {
-        videos = _parseVideoListJiuse(html);
-      } else if (_siteType == "hifuli") {
-        videos = _parseVideoListHifuli(html);
-      } else if (_siteType == "porn91") {
-        videos = _parseVideoListPorn91(html);
-      } else {
-        videos = _parseVideoListOriginal(html);
-      }
-      
+      // 四套 DOM 的差异留在各自的 site 文件里
+      final videos = _handler.parseVideoList(html, baseUrl);
       // ✅ 关键调试日志：记录 URL 和解析结果的对应关系
       await logger.log('Crawler', '解析结果: URL=$urlWithCache -> ${videos.length} 个视频');
 
@@ -679,20 +645,20 @@ class CrawlerCore {
     }
   }
 
-  /// 供测试直接调用 jiuse 列表解析（解析器是私有的，测试在另一个 library）
+  /// 供测试直接调用 jiuse 列表解析（解析器已搬到 sites/jiuse_site.dart）
   @visibleForTesting
   List<VideoInfo> parseJiuseListForTest(String html) =>
-      _parseVideoListJiuse(html);
+      const JiuseSite().parseVideoList(html, baseUrl);
 
-  /// 供测试直接调用嗨碰列表解析
+  /// 供测试直接调用嗨碰列表解析（解析器在 sites/hifuli_site.dart）
   @visibleForTesting
   List<VideoInfo> parseHifuliListForTest(String html) =>
-      _parseVideoListHifuli(html);
+      const HifuliSite().parseVideoList(html, baseUrl);
 
   /// 供测试直接调用嗨碰「从卡片提炼作者」的解析
   @visibleForTesting
   List<AuthorInfo> parseHifuliAuthorsForTest(String html) =>
-      _parseHifuliAuthorsFromCards(html);
+      const HifuliSite().parseAuthors(html, baseUrl) ?? const <AuthorInfo>[];
 
   /// 供测试直接调用分页判据（jiuse 无分页控件，走条数 + 重复内容比对）
   @visibleForTesting
@@ -703,774 +669,6 @@ class CrawlerCore {
   @visibleForTesting
   List<String> parseM3u8ForTest(String content, String baseUrl) =>
       _parseM3u8(content, baseUrl);
-
-  /// 解析 jiuse 站点（91porny / jiuse.icu）的视频列表
-  ///
-  /// 卡片结构见 [CrawlerConfig.jiuseCardPattern] 的注释。
-  /// 三个要点：
-  /// 1. 卡片区混着整段是站外跳转的广告，必须只认站内 /xxx/view/yyy 链接；
-  /// 2. 作者写在「作者:」文本里，且可能是纯文本也可能是 <a>；
-  /// 3. 封面在 style="background-image: url('...')" 里，不是 img[src]。
-  List<VideoInfo> _parseVideoListJiuse(String html) {
-    final videos = <VideoInfo>[];
-    final seenIds = <String>{};
-    var hdSkipped = 0;
-    Logger().logSync('Parse', '解析 jiuse HTML, 长度: ${html.length}');
-
-    for (final m in CrawlerConfig.jiuseCardPattern.allMatches(html)) {
-      final card = m.group(1)!;
-
-      // 必须是站内视频详情链接，站外广告直接跳过
-      final hrefMatch =
-          CrawlerConfig.jiuseVideoHrefPattern.firstMatch(card);
-      if (hrefMatch == null) continue;
-      final href = hrefMatch.group(1)!;
-
-      // 高清（/video/viewhd/）整条跳过：未登录时该路径恒返回 12 秒样片，
-      // 所有视频共用同一段画面，下载下来必是同一个文件；同一 id 改走
-      // /video/view/ 又只给 6 秒 VIP 占位。所以高清不进列表。
-      if (CrawlerConfig.jiuseIsHdPath(href)) {
-        hdSkipped++;
-        continue;
-      }
-
-      // 取详情 id 作为唯一键：
-      //   /vod/view/SxeO                              -> SxeO
-      //   /videos/view/127663/410ed2e1f969cb2d3125/   -> 127663（取第一段）
-      final id = CrawlerConfig.jiuseVideoId(href);
-      if (id == null || id.isEmpty) continue;
-      if (seenIds.contains(id)) continue;
-      seenIds.add(id);
-
-      // 标题：优先取 title 链接的文本，取不到再退回任意 title= 属性
-      String? title;
-      final titleLink = RegExp(
-        r'<a[^>]*class="[^"]*\btitle\b[^"]*"[^>]*>([^<]+)</a>',
-        caseSensitive: false,
-      ).firstMatch(card);
-      if (titleLink != null) {
-        title = CrawlerConfig.stripInvisible(titleLink.group(1)!).trim();
-      }
-      title ??=
-          RegExp(r'title="([^"]+)"').firstMatch(card)?.group(1)?.trim();
-      if (title == null || title.isEmpty) continue;
-
-      // 封面
-      String? cover;
-      final coverMatch = RegExp(
-        r"""background-image:\s*url\(\s*['"]?([^)'"]+)""",
-      ).firstMatch(card);
-      if (coverMatch != null) {
-        // 封面有两种相对写法：//cdn.../1.jpg（协议相对）与 /static/1.jpg（站内相对），
-        // 早期统一 '$baseUrl$u' 会把协议相对地址拼成 https://host//cdn...
-        cover = CrawlerConfig.resolveJiuseAssetUrl(baseUrl, coverMatch.group(1)!);
-      }
-
-      // 时长：
-      // <small class="layer">00:22:08</small>
-      String? duration;
-      final durMatch = RegExp(
-        r'<small[^>]*class="[^"]*\blayer\b[^"]*"[^>]*>\s*([0-9:]+)\s*</small>',
-        caseSensitive: false,
-      ).firstMatch(card);
-      if (durMatch != null) duration = durMatch.group(1);
-
-      // 作者：作者: <a ...>名字</a> 或 作者: 名字
-      String? author;
-      String? authorId;
-      final authorLink =
-          CrawlerConfig.jiuseAuthorLinkPattern.firstMatch(card);
-      if (authorLink != null) {
-        // 站点有两套作者主页：/author/xxx 与 /dashen/xxx。
-        // 记住前缀，取作者视频时才能拼对路径（dashen 系拼成 /author/ 会 404）。
-        authorId = CrawlerConfig.jiuseAuthorId(
-            authorLink.group(1)!, authorLink.group(2)!);
-        author = CrawlerConfig.stripInvisible(authorLink.group(3)!).trim();
-      } else {
-        final plain = RegExp(r'作者[:：]\s*([^<\n\r]+)', caseSensitive: false)
-            .firstMatch(card);
-        if (plain != null) {
-          author = CrawlerConfig.stripInvisible(plain.group(1)!).trim();
-        }
-      }
-
-      // 日期 + 播放数：2026-11-05&nbsp;|&nbsp;1351次播放
-      String? uploadDate;
-      String? views;
-      final dateMatch =
-          RegExp(r'(\d{4}-\d{2}-\d{2})').firstMatch(card);
-      if (dateMatch != null) uploadDate = dateMatch.group(1);
-      final viewMatch =
-          RegExp(r'([\d.]+\s*[万wW]?)\s*次播放').firstMatch(card);
-      if (viewMatch != null) views = viewMatch.group(1)!.trim();
-
-      Logger().logSync('Parse',
-          'jiuse 视频: ID=$id, 作者=$author, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
-
-      videos.add(VideoInfo(
-        id: id,
-        url: '$baseUrl$href',
-        title: title,
-        cover: cover,
-        author: author,
-        authorId: authorId,
-        duration: duration,
-        uploadDate: uploadDate,
-        views: views,
-      ));
-    }
-
-    Logger().logSync('Parse',
-        'jiuse 解析完成: ${videos.length} 个视频（跳过高清 $hdSkipped 条）');
-    return videos;
-  }
-
-  /// 解析嗨碰（hifuli.com / hiporn.net）的视频列表
-  ///
-  /// 首页与列表页是两套 DOM（首页卡片直接挂在 grid 下，列表页外面多一层
-  /// article.hiporn-list-card 和 meta 行），但卡片本身的 class 一致，
-  /// 所以统一按卡片切片取字段：
-  ///   a.hiporn-video-card[href=/video/{数字id}-{slug}]
-  ///     ├ div.hiporn-video-card-thumb > img[data-original=封面] + span.…duration
-  ///     └ h3.hiporn-video-card-title 标题
-  ///
-  /// 注意：封面只在 data-original，src 恒为占位图 /dist/notfound.jpg。
-  List<VideoInfo> _parseVideoListHifuli(String html) {
-    final videos = <VideoInfo>[];
-    final seenIds = <String>{};
-    Logger().logSync('Parse', '解析 hifuli HTML, 长度: ${html.length}');
-
-    for (final m in CrawlerConfig.hifuliCardPattern.allMatches(html)) {
-      final card = m.group(0)!;
-
-      final hrefMatch = CrawlerConfig.hifuliHrefPattern.firstMatch(card);
-      if (hrefMatch == null) continue;
-      final href = hrefMatch.group(1)!;
-      final id = hrefMatch.group(2)!;
-      if (seenIds.contains(id)) continue;
-      seenIds.add(id);
-
-      // 标题：卡片标题节点优先，取不到退回图片 alt
-      String? title;
-      final titleMatch = CrawlerConfig.hifuliTitlePattern.firstMatch(card);
-      if (titleMatch != null) title = titleMatch.group(1);
-      if (title == null || title.trim().isEmpty) {
-        final alt = RegExp(r'alt="([^"]*)"', caseSensitive: false)
-            .firstMatch(card)
-            ?.group(1);
-        if (alt != null && alt.trim().isNotEmpty) title = alt;
-      }
-      if (title == null || title.trim().isEmpty) continue;
-      title = CrawlerConfig.stripInvisible(
-              CrawlerConfig.unescapeHtml(title))
-          .trim();
-
-      // 封面：只认 data-original，src 是占位图
-      String? cover;
-      final coverMatch =
-          CrawlerConfig.hifuliCoverPattern.firstMatch(card);
-      if (coverMatch != null) {
-        cover = CrawlerConfig.resolveAbsoluteUrl(
-            baseUrl, coverMatch.group(1)!.trim());
-      }
-
-      // 时长：span.hiporn-video-card-duration（形如 41:11）
-      String? duration;
-      final durMatch =
-          CrawlerConfig.hifuliDurationPattern.firstMatch(card);
-      if (durMatch != null) {
-        final d = durMatch.group(1)!.trim();
-        if (d.isNotEmpty && d != '--:--') duration = d;
-      }
-
-      // 作者与上传时间都在卡片下方的 meta 行里（列表/搜索/推荐/热榜页专有）：
-      //   div.hiporn-list-card-meta
-      //     ├ a.hiporn-list-card-author[href=/u/{urlencode 名字}] > span 名字
-      //     └ time.hiporn-list-card-time 「3天前」
-      //
-      // 作者 id 优先取站点给的 href：把显示名重新编码在「显示名 ≠ URL 名」
-      // 时（含空格、emoji、大小写变体）会拼出打不开的主页地址。
-      // meta 行只有 a/img/span/time，不含嵌套 div，所以切块不会截断。
-      String? author;
-      String? authorId;
-      String? uploadDate;
-      final metaMatch = CrawlerConfig.hifuliCardMetaPattern.firstMatch(card);
-      if (metaMatch != null) {
-        final meta = metaMatch.group(1)!;
-
-        final hrefMatch =
-            CrawlerConfig.hifuliCardAuthorHrefPattern.firstMatch(meta);
-        final idFromHref = hrefMatch == null
-            ? ''
-            : CrawlerConfig.normalizeHifuliAuthorId(hrefMatch.group(1)!);
-
-        final authorMatch =
-            CrawlerConfig.hifuliCardAuthorPattern.firstMatch(meta);
-        if (authorMatch != null) {
-          final name = CrawlerConfig.stripInvisible(
-                  CrawlerConfig.unescapeHtml(authorMatch.group(1)!))
-              .trim();
-          if (name.isNotEmpty) {
-            author = name;
-            // 「匿名」是站点给未登录/匿名投稿占的位，点进去只有一页无关视频，
-            // 不提供跳转（保持原有行为）；有真实 href 时其余作者一律可跳。
-            if (name != '匿名') {
-              authorId = idFromHref.isNotEmpty
-                  ? idFromHref
-                  : Uri.encodeComponent(name);
-            }
-          }
-        }
-
-        final timeMatch =
-            CrawlerConfig.hifuliCardTimePattern.firstMatch(meta);
-        if (timeMatch != null) {
-          final t = CrawlerConfig.stripInvisible(
-                  CrawlerConfig.unescapeHtml(timeMatch.group(1)!))
-              .trim();
-          if (t.isNotEmpty) uploadDate = t;
-        }
-      }
-
-      videos.add(VideoInfo(
-        id: id,
-        url: '$baseUrl$href',
-        title: title,
-        cover: cover,
-        author: author,
-        authorId: authorId,
-        duration: duration,
-        // 相对时间（3天前 / 4小时前），与详情页的绝对日期是同一件事
-        uploadDate: uploadDate,
-      ));
-    }
-
-    Logger().logSync('Parse', 'hifuli 解析完成: ${videos.length} 个视频');
-    return videos;
-  }
-
-  /// 从嗨碰的视频列表/搜索页里提炼作者（去重后按命中条数排序）
-  ///
-  /// 站点没有独立的「搜索到用户」区块，作者信息只存在于每张卡片的 meta 行，
-  /// 所以搜索作者只能复用它。这里刻意和 [_parseVideoListHifuli] 用同一套
-  /// 正则与 id 规范，保证「列表里能点的作者」与「搜索出来的作者」是同一批、
-  /// 同一个 authorId，否则点进主页会 404。
-  List<AuthorInfo> _parseHifuliAuthorsFromCards(String html) {
-    final counts = <String, int>{};
-    final names = <String, String>{};
-
-    // 显示名与 href 不一致时以 href 为准，所以用 href 派生的 id 做去重键。
-    for (final card in CrawlerConfig.hifuliCardPattern.allMatches(html)) {
-      final metaMatch =
-          CrawlerConfig.hifuliCardMetaPattern.firstMatch(card.group(0)!);
-      if (metaMatch == null) continue;
-      final meta = metaMatch.group(1)!;
-
-      final nameMatch = CrawlerConfig.hifuliCardAuthorPattern.firstMatch(meta);
-      if (nameMatch == null) continue;
-      final name = CrawlerConfig.stripInvisible(
-              CrawlerConfig.unescapeHtml(nameMatch.group(1)!))
-          .trim();
-      // 「匿名」是站点给匿名投稿占的位，主页里没有作者维度内容，不收录。
-      if (name.isEmpty || name == '匿名') continue;
-
-      final hrefMatch =
-          CrawlerConfig.hifuliCardAuthorHrefPattern.firstMatch(meta);
-      final id = hrefMatch == null
-          ? Uri.encodeComponent(name)
-          : CrawlerConfig.normalizeHifuliAuthorId(hrefMatch.group(1)!);
-      if (id.isEmpty) continue;
-
-      names[id] = name;
-      counts[id] = (counts[id] ?? 0) + 1;
-    }
-
-    final authors = names.entries
-        .map((e) => AuthorInfo(
-              id: e.key,
-              name: e.value,
-              // 站点不给作者总投稿数，这里用「本次结果里命中的视频条数」代替：
-              // 它是一个真实数字，比硬编码 0 有信息量，也能用来排序。
-              videoCount: counts[e.key] ?? 0,
-              profileUrl: '$baseUrl/u/${e.key}',
-            ))
-        .toList();
-
-    // 命中数多的排前面：搜索时作者的相关性和这个基本成正比。
-    authors.sort((a, b) => b.videoCount.compareTo(a.videoCount));
-    return authors;
-  }
-
-  /// 解析视频列表 HTML - porn91 CMS（91porn 风格）
-  List<VideoInfo> _parseVideoListPorn91(String html) {
-    final videos = <VideoInfo>[];
-    final seenIds = <String>{};
-    
-    Logger().logSync('Parse', '解析 porn91 HTML, 长度: ${html.length}');
-    
-    // 策略1：只匹配 col-lg-3 容器内的视频卡片（过滤 col-lg-8 广告）
-    // 找到所有容器位置
-    final containerMatches = CrawlerConfig.containerPattern.allMatches(html).toList();
-    Logger().logSync('Parse', '找到 ${containerMatches.length} 个容器匹配');
-    
-    for (var i = 0; i < containerMatches.length; i++) {
-      final match = containerMatches[i];
-      final start = match.start;
-      
-      // 确定容器结束位置：找到下一个 <div class="col-xs-12 开始
-      // 这样可以避开中间的广告位
-      final nextDivPattern = RegExp(r'<div[^>]*class="[^"]*col-xs-12[^"]*"', caseSensitive: false);
-      int? end;
-      for (final m in nextDivPattern.allMatches(html)) {
-        if (m.start > start) {
-          end = m.start;
-          break;
-        }
-      }
-      
-      final containerEnd = end ?? html.length;
-      final wellContent = html.substring(start, containerEnd);
-      
-      // 提取 viewkey
-      final viewkeyMatch = CrawlerConfig.viewkeyPattern.firstMatch(wellContent);
-      if (viewkeyMatch == null) continue;
-      
-      final videoHref = viewkeyMatch.group(1)!.replaceAll('&amp;', '&');
-      final viewkey = viewkeyMatch.group(2)!;
-      
-      // ✅ 修复：直接提取 img-responsive 的 src 属性获取封面ID
-      // 注意：不能依赖容器ID（如 playvthumb_XXXXXX），因为它与实际图片文件名不一致！
-      String? cover;
-      String? coverId;
-      
-      // 优先从 img-responsive 标签提取（这是实际正确的封面URL）
-      final imgMatch = RegExp(r'<img[^>]+class="img-responsive"[^>]+src="([^"]+)"')
-          .firstMatch(wellContent);
-      if (imgMatch != null) {
-        final imgSrc = imgMatch.group(1)!;
-        // 从URL中提取文件名作为封面ID（如 .../1191387.jpg -> 1191387）
-        final idMatch = RegExp(r'/(\d+)\.(?:jpe?g|webp|png)', caseSensitive: false)
-            .firstMatch(imgSrc);
-        if (idMatch != null && idMatch.group(1) != null) {
-          coverId = idMatch.group(1);
-          cover = VideoInfo.buildCoverUrl(coverId!);
-        } else if (imgSrc.startsWith('http')) {
-          cover = imgSrc;
-        }
-      }
-      
-      // 提取标题
-      final titleMatch = CrawlerConfig.titlePattern.firstMatch(wellContent);
-      if (titleMatch == null) continue;
-      
-      // 站点把标题逐字拆开并插入变体选择符（U+FE00~U+FE0F），
-      // 这些字符没有字形但占位，不剔除的话界面上看着就是字间多了空格。
-      final title = CrawlerConfig.stripInvisible(titleMatch.group(1)!).trim();
-      if (title.isEmpty) continue;
-      
-      // 提取作者（尝试多种格式）
-      String? author;
-      
-      // 格式1: 作者：</span>xxx
-      var authorMatch = CrawlerConfig.authorPattern.firstMatch(wellContent);
-      if (authorMatch != null) {
-        author = authorMatch.group(1)!.trim();
-      }
-      
-      // 格式2: <a href="...author=xxx">作者名</a>
-      if (author == null || author.isEmpty) {
-        final linkMatch = RegExp(r'href="[^"]*author=([^"&]+)[^"]*"[^>]*>([^<]+)</a>', caseSensitive: false).firstMatch(wellContent);
-        if (linkMatch != null) {
-          author = linkMatch.group(2)?.trim();
-        }
-      }
-
-      // 格式2b: <span class="info">From:</span> 后紧跟作者名。
-      // 91porn 卡片里作者的写法是 From:，不是「作者：」，
-      // 只认中文标签会漏掉一半视频的作者。
-      if (author == null || author.isEmpty) {
-        final fromMatch = RegExp(
-          r'From[：:]\s*</span>\s*([^<\n\r]+)',
-          caseSensitive: false,
-        ).firstMatch(wellContent);
-        if (fromMatch != null) {
-          author = fromMatch.group(1)?.trim();
-        }
-      }
-      
-      // 格式3: 作者：xxx（直接文本，跳过HTML标签）
-      if (author == null || author.isEmpty) {
-        final textMatch = RegExp(r'作者[：:]\s*(?:</?[^>]+>\s*)*([^<\n\r]+)').firstMatch(wellContent);
-        if (textMatch != null) {
-          author = textMatch.group(1)?.trim();
-        }
-      }
-      
-      // 清理作者名（去掉HTML标签和特殊字符）
-      if (author != null) {
-        // ✅ 修复：先剥离HTML标签，防止 </span> 等标签残留
-        author = author.replaceAll(CrawlerConfig.htmlTagPattern, '');
-        author = author.replaceAll('&nbsp;', '');
-        author = author.replaceAll(CrawlerConfig.htmlEntityPattern, '');
-        // 作者名和标题一样被塞了变体选择符，必须一并剔除；
-        // 放在 whitespacePattern 之前，否则这些字符会被当成空白折叠成空格。
-        author = CrawlerConfig.stripInvisible(author);
-        author = author.replaceAll(CrawlerConfig.whitespacePattern, ' ').trim();
-        if (author.isEmpty) author = null;
-      }
-      
-      // 提取时长
-      String? duration;
-      final durationMatch = CrawlerConfig.durationPattern.firstMatch(wellContent);
-      if (durationMatch != null) {
-        duration = durationMatch.group(1)!.trim();
-      }
-      
-      // 提取上传时间（多种格式：绝对日期 + 相对时间）
-      String? uploadDate;
-      // 格式1: <span class="added-time">2024-01-15</span> 或 <span class="added-time">3天前</span>
-      var dateMatch = RegExp(r'<span[^>]*class="[^"]*added[^"]*"[^>]*>([^<]+)</span>', caseSensitive: false).firstMatch(wellContent);
-      if (dateMatch != null) {
-        uploadDate = dateMatch.group(1)!.trim();
-      }
-      // 格式2: 添加/上传/更新 时间标签（中文）
-      if (uploadDate == null || uploadDate!.isEmpty) {
-        dateMatch = RegExp(r'(?:添加|上传|更新)[时日期\s]*[：:]\s*(.+?)(?:<|\s*$)', caseSensitive: false).firstMatch(wellContent);
-        if (dateMatch != null) {
-          uploadDate = dateMatch.group(1)!.trim();
-        }
-      }
-      // 格式3: 相对时间（X天前 / X小时前 / X分钟前 / 刚刚）
-      // 支持 "43 分钟 前"（带空格）和 "33分钟前"（无空格）两种格式
-      if (uploadDate == null || uploadDate!.isEmpty) {
-        dateMatch = RegExp(r'(\d+\s*[天时分秒钟小时月周]+\s*前|刚刚|刚才)', caseSensitive: false).firstMatch(wellContent);
-        if (dateMatch != null) {
-          uploadDate = dateMatch.group(1)!.trim();
-        }
-      }
-      // 格式4: 绝对日期 YYYY-MM-DD 或 YYYY/MM/DD
-      if (uploadDate == null || uploadDate!.isEmpty) {
-        dateMatch = RegExp(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})').firstMatch(wellContent);
-        if (dateMatch != null) {
-          uploadDate = dateMatch.group(1)!.trim();
-        }
-      }
-      
-      // 构造完整 URL
-      String videoUrl;
-      if (videoHref.startsWith('http')) {
-        videoUrl = videoHref;
-      } else if (videoHref.startsWith('/')) {
-        videoUrl = '$baseUrl$videoHref';
-      } else {
-        videoUrl = '$baseUrl/$videoHref';
-      }
-      
-      // 去重
-      if (seenIds.contains(viewkey)) continue;
-      seenIds.add(viewkey);
-      
-      // 详细日志
-      Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$viewkey, 封面ID=$coverId, 作者=$author, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
-      
-      videos.add(VideoInfo(
-        id: viewkey,
-        url: videoUrl,
-        title: title,
-        cover: cover,
-        author: author,
-        authorId: null, // porn91 没有作者ID
-        duration: duration,
-        uploadDate: uploadDate,
-      ));
-    }
-    
-    Logger().logSync('Parse', '解析完成: ${videos.length} 个视频');
-    
-    return videos;
-  }
-  
-  /// ✅ 新增：平衡 div 计数法提取指定 class 的 div 完整内容
-  /// 解决正则懒惰匹配无法正确捕获嵌套 div 完整内容的问题
-  static List<String> _extractBalancedDivContents(String html, String className) {
-    final results = <String>[];
-    final openPattern = RegExp(
-      '<div[^>]*class="[^"]*$className[^"]*"[^>]*>',
-      caseSensitive: false,
-    );
-    
-    // 小写副本只算一次。以前写在 for 循环体内，匹配到 N 个区块就把
-    // 整篇 HTML（几百 KB）重复小写化 N 次 —— 一次列表解析里这是最贵的开销。
-    final lowerHtml = html.toLowerCase();
-
-    for (final openMatch in openPattern.allMatches(html)) {
-      int start = openMatch.end;
-      int depth = 1;
-      int pos = start;
-      
-      while (pos < lowerHtml.length && depth > 0) {
-        final nextOpen = lowerHtml.indexOf('<div', pos);
-        final nextClose = lowerHtml.indexOf('</div>', pos);
-        
-        if (nextClose == -1) break;
-        
-        if (nextOpen != -1 && nextOpen < nextClose) {
-          // 确认是真正的 div 开标签（后面跟空格或 >）
-          final charAfter = nextOpen + 4 < html.length ? html[nextOpen + 4] : '';
-          if (charAfter == ' ' || charAfter == '>' || charAfter == '\n' || charAfter == '\r') {
-            depth++;
-          }
-          pos = nextOpen + 1;
-        } else {
-          depth--;
-          if (depth == 0) {
-            results.add(html.substring(start, nextClose));
-          }
-          pos = nextClose + 6;
-        }
-      }
-    }
-    return results;
-  }
-
-  /// 解析视频列表 HTML - original CMS（ml0987/hsex 风格）
-  /// 严格参照 Python 版本 _extract_search_results
-  List<VideoInfo> _parseVideoListOriginal(String html) {
-    final videos = <VideoInfo>[];
-    final seenIds = <String>{};
-    
-    Logger().logSync('Parse', '解析 original HTML, 长度: ${html.length}');
-    
-    // 策略1: 完整容器解析 - 匹配 thumbnail 容器
-    // <div class="thumbnail">
-    //   <a>封面</a>
-    //   <div class="caption title">标题</div>
-    //   <div class="info"><p>&nbsp;&nbsp;<a href="user.htm?author=xxx">作者名</a></p></div>
-    // </div>
-    // ✅ 修复：使用平衡 div 计数法替代正则，确保完整捕获包括 info 区域
-    final containers = _extractBalancedDivContents(html, 'thumbnail');
-    
-    for (final container in containers) {
-      
-      // 提取视频链接和ID
-      final videoLinkMatch = RegExp(r'href="(video-(\d+)\.htm)"').firstMatch(container);
-      if (videoLinkMatch == null) continue;
-      
-      final videoHref = videoLinkMatch.group(1)!;
-      final videoId = videoLinkMatch.group(2)!;
-      
-      if (seenIds.contains(videoId)) continue;
-      seenIds.add(videoId);
-      
-      // 提取封面（支持HTML实体编码 &#39; 和普通引号）
-      String? cover;
-      final coverMatch = RegExp(r'background-image:\s*url\(([^)]+)\)').firstMatch(container);
-      if (coverMatch != null) {
-        var coverUrl = coverMatch.group(1)!.trim();
-        // 去掉引号（包括HTML实体编码）
-        coverUrl = coverUrl.replaceAll('&#39;', '').replaceAll('&apos;', '');
-        coverUrl = coverUrl.replaceAll(RegExp(r'''['"]'''), '');
-        if (coverUrl.startsWith('http')) {
-          cover = coverUrl;
-        } else if (coverUrl.isNotEmpty) {
-          cover = '$baseUrl/$coverUrl';
-        }
-      }
-      
-      // 提取标题（允许 title= "xxx" 或 title="xxx" 格式）
-      String? title;
-      final titleMatch = RegExp(r'title\s*=\s*"([^"]+)"').firstMatch(container);
-      if (titleMatch != null) {
-        title = titleMatch.group(1)!.trim();
-      }
-      if (title == null) {
-        // 备用：从 h5 或标题区域提取
-        final h5Match = RegExp(r'<h5[^>]*>.*?<a[^>]*>([^<]+)</a>').firstMatch(container);
-        if (h5Match != null) {
-          title = h5Match.group(1)!.trim();
-        }
-      }
-      if (title == null) continue;
-      
-      // 提取时长 <var class="duration">时长</var>
-      String? duration;
-      final durationMatch = RegExp(r'<var[^>]*class="[^"]*duration[^"]*"[^>]*>([^<]+)</var>').firstMatch(container);
-      if (durationMatch != null) {
-        duration = durationMatch.group(1)!.trim();
-      }
-      
-      // 提取作者（多种格式尝试）
-      // ml0987 格式: <a href="user.htm?author=xxx">作者名</a>
-      String? author;
-      String? authorId;
-      
-      // 格式1: 带链接的作者 <a href="user.htm?author=xxx">作者名</a>
-      var authorMatch = RegExp(
-        r'<a[^>]*href="[^"]*user\.htm\?author=([^"&]+)"[^>]*>([^<]*)</a>',
-        caseSensitive: false
-      ).firstMatch(container);
-      if (authorMatch != null) {
-        authorId = authorMatch.group(1);
-        author = authorMatch.group(2)?.replaceAll('&nbsp;', '').replaceAll(CrawlerConfig.htmlEntityPattern, '').trim();
-      }
-      
-      // 格式2: 纯文本作者 作者：xxx（跳过HTML标签）
-      if (author == null || author.isEmpty) {
-        final textMatch = RegExp(r'作者[：:]\s*(?:</?[^>]+>\s*)*([^<\n\r]+)').firstMatch(container);
-        if (textMatch != null) {
-          author = textMatch.group(1)?.trim();
-        }
-      }
-      
-      // 清理作者名
-      if (author != null) {
-        // ✅ 修复：先剥离HTML标签，防止标签残留
-        author = author.replaceAll(CrawlerConfig.htmlTagPattern, '');
-        author = author.replaceAll(CrawlerConfig.whitespacePattern, ' ').trim();
-        if (author.isEmpty) author = null;
-      }
-      
-      // 提取上传时间（多种格式：绝对日期 + 相对时间）
-      String? uploadDate;
-      // 格式1: <span class="added-time">2024-01-15</span> 或 <span class="added-time">3天前</span>
-      var dateMatch = RegExp(r'<span[^>]*class="[^"]*added[^"]*"[^>]*>([^<]+)</span>', caseSensitive: false).firstMatch(container);
-      if (dateMatch != null) {
-        uploadDate = dateMatch.group(1)!.trim();
-      }
-      // 格式2: 添加/上传/更新 时间标签（中文）
-      if (uploadDate == null || uploadDate!.isEmpty) {
-        dateMatch = RegExp(r'(?:添加|上传|更新)[时日期\s]*[：:]\s*(.+?)(?:<|\s*$)', caseSensitive: false).firstMatch(container);
-        if (dateMatch != null) {
-          uploadDate = dateMatch.group(1)!.trim();
-        }
-      }
-      // 格式3: 相对时间（X天前 / X小时前 / X分钟前 / 刚刚）
-      // 支持 "43 分钟 前"（带空格）和 "33分钟前"（无空格）两种格式
-      if (uploadDate == null || uploadDate!.isEmpty) {
-        dateMatch = RegExp(r'(\d+\s*[天时分秒钟小时月周]+\s*前|刚刚|刚才)', caseSensitive: false).firstMatch(container);
-        if (dateMatch != null) {
-          uploadDate = dateMatch.group(1)!.trim();
-        }
-      }
-      // 格式4: 绝对日期 YYYY-MM-DD 或 YYYY/MM/DD
-      if (uploadDate == null || uploadDate!.isEmpty) {
-        dateMatch = RegExp(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})').firstMatch(container);
-        if (dateMatch != null) {
-          uploadDate = dateMatch.group(1)!.trim();
-        }
-      }
-      
-      // 从封面URL提取封面ID
-      String? coverId;
-      final coverIdMatch = RegExp(r'/(\d+)\.(webp|jpg|png)').firstMatch(cover ?? '');
-      if (coverIdMatch != null) {
-        coverId = coverIdMatch.group(1);
-      }
-      
-      // 详细日志
-      Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$videoId, 封面ID=$coverId, 作者=$author, 作者ID=$authorId, 时长=$duration, 更新时间=$uploadDate, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
-      
-      videos.add(VideoInfo(
-        id: videoId,
-        url: '$baseUrl/$videoHref',
-        title: title,
-        cover: cover,
-        author: author,
-        authorId: authorId,
-        duration: duration,
-        uploadDate: uploadDate,
-      ));
-    }
-    
-    Logger().logSync('Parse', '策略1(thumbnail容器)找到 ${videos.length} 个视频');
-    
-    // 策略2: 简单链接格式（兜底）
-    if (videos.isEmpty) {
-      // 支持HTML实体编码的封面URL
-      final pattern2 = RegExp(
-        r'''<a[^>]*href="[^"]*video-(\d+)\.htm[^"]*"[^>]*>.*?background-image:\s*url\(([^)]+)\)''',
-        caseSensitive: false,
-        dotAll: true,
-      );
-      
-      for (final match in pattern2.allMatches(html)) {
-        final videoId = match.group(1)!;
-        var coverUrl = match.group(2)!.trim();
-        
-        // 去掉引号和HTML实体编码
-        coverUrl = coverUrl.replaceAll('&#39;', '').replaceAll('&apos;', '');
-        coverUrl = coverUrl.replaceAll(RegExp(r'''['"]'''), '');
-        
-        String? cover;
-        if (coverUrl.startsWith('http')) {
-          cover = coverUrl;
-        } else if (coverUrl.isNotEmpty) {
-          cover = '$baseUrl/$coverUrl';
-        }
-        
-        if (seenIds.contains(videoId)) continue;
-        seenIds.add(videoId);
-        
-        // 提取标题（允许 title= "xxx" 或 title="xxx" 格式）
-        String? title;
-        final pos = match.end;
-        final blockEnd = pos + 500 < html.length ? pos + 500 : html.length;
-        final block = html.substring(pos, blockEnd);
-        final titleMatch = RegExp(r'title\s*=\s*"([^"]+)"').firstMatch(html.substring(match.start, match.end + 500));
-        if (titleMatch != null) {
-          title = titleMatch.group(1)!.trim();
-        }
-        if (title == null) continue;
-        
-        // 尝试从上下文提取时长和作者
-        String? duration;
-        String? author;
-        
-        final durationMatch = RegExp(r'<var[^>]*class="[^"]*duration[^"]*"[^>]*>([^<]+)</var>').firstMatch(block);
-        if (durationMatch != null) {
-          duration = durationMatch.group(1)!.trim();
-        }
-        
-        // 提取作者（多种格式）
-        var authorMatch = RegExp(r'<a[^>]*href="[^"]*user\.htm\?author=([^"&]+)"[^>]*>([^<]*)</a>', caseSensitive: false).firstMatch(block);
-        if (authorMatch != null) {
-          author = authorMatch.group(2)?.replaceAll('&nbsp;', '').trim();
-        }
-        // 格式2: 纯文本
-        if (author == null || author!.isEmpty) {
-          final textMatch = RegExp(r'作者[：:]\s*([^<\n\r]{2,20})').firstMatch(block);
-          if (textMatch != null) {
-            author = textMatch.group(1)?.trim();
-          }
-        }
-        
-        // 从封面URL提取封面ID
-        String? coverId;
-        final coverIdMatch = RegExp(r'/(\d+)\.(webp|jpg|png)').firstMatch(cover ?? '');
-        if (coverIdMatch != null) {
-          coverId = coverIdMatch.group(1);
-        }
-        
-        // 详细日志
-        Logger().logSync('Parse', '视频#${videos.length + 1}: ID=$videoId, 封面ID=$coverId, 作者=$author, 时长=$duration, 标题=${title.length > 20 ? title.substring(0, 20) + "..." : title}');
-        
-        videos.add(VideoInfo(
-          id: videoId,
-          url: '$baseUrl/video-$videoId.htm',
-          title: title,
-          cover: cover,
-          author: author,
-          authorId: null, // 策略2无法提取作者ID
-          duration: duration,
-        ));
-      }
-      
-      Logger().logSync('Parse', '策略2找到 ${videos.length} 个视频');
-    }
-    
-    Logger().logSync('Parse', '解析完成: ${videos.length} 个视频');
-    return videos;
-  }
 
   // ==================== 搜索 ====================
 
@@ -1495,18 +693,8 @@ class CrawlerCore {
       // ✅ 调试日志
       await logger.log('Crawler', '搜索响应: ${html.length} 字节');
       
-      // 根据站点类型选择解析方法
-      List<VideoInfo> videos;
-      if (_siteType == "jiuse") {
-        videos = _parseVideoListJiuse(html);
-      } else if (_siteType == "hifuli") {
-        videos = _parseVideoListHifuli(html);
-      } else if (_siteType == "porn91") {
-        videos = _parseVideoListPorn91(html);
-      } else {
-        videos = _parseVideoListOriginal(html);
-      }
-      
+      // 四套 DOM 的差异留在各自的 site 文件里
+      final videos = _handler.parseVideoList(html, baseUrl);
       await logger.log('Crawler', '搜索结果: ${videos.length} 个视频');
 
       // 依据站点分页控件判断是否还有下一页（jiuse 无控件，走专用判据）
@@ -1523,25 +711,9 @@ class CrawlerCore {
 
   /// 搜索作者
   Future<List<AuthorInfo>> searchAuthors(String keyword) async {
-    // 根据站点类型构建不同的搜索URL
-    String url;
-    if (_siteType == "porn91") {
-      // porn91 风格
-      url = '$baseUrl/search_result.php?search_id=${Uri.encodeComponent(keyword)}&search_type=author';
-    } else if (_siteType == "jiuse") {
-      // jiuse 没有独立的作者搜索接口：「搜索到用户」区块就在同一个
-      // /search?keywords=xxx 结果页里（排在视频区块之前）
-      url = CrawlerConfig.buildSearchUrl(baseUrl, _siteType, keyword);
-    } else if (_siteType == "hifuli") {
-      // 嗨碰没有独立的「搜索到用户」区块：/s/{关键词} 只返回视频卡片，
-      // 作者信息只存在于每张卡片下方的 meta 行（a.hiporn-list-card-author）。
-      // 所以这里照常请求搜索页，再按视频卡片的同源规则把作者抽出来去重。
-      url = CrawlerConfig.buildSearchUrl(baseUrl, _siteType, keyword);
-    } else {
-      // original 风格：使用 search.htm?search=xxx（和搜索视频一样的URL）
-      url = '$baseUrl/search.htm?search=${Uri.encodeComponent(keyword)}';
-    }
-    
+    // 各站的作者搜索入口不同（porn91 用 search_result.php、九色系与
+    // 嗨碰共用 /search、原创系用 search.htm），URL 规则交给站点类。
+    final url = _handler.buildAuthorSearchUrl(baseUrl, keyword);
     // ✅ 修复：搜索URL不再追加 _t 时间戳参数（与 searchVideos 保持一致）
     // 作者搜索 URL 同样是 search.htm，`&_t=` 与 `&sort=` 组合可能触发站点 404，
     // 防缓存已有 _noCacheOptions 兜底，因此不拼接 _t。
@@ -1554,45 +726,17 @@ class CrawlerCore {
       final resp = await _dio.get(urlWithCache, options: _noCacheOptions);
       final html = resp.data.toString();
       
+      // 九色系的用户徽章、嗨碰的卡片 meta 行各有自己的解析；
+      // 站点说自己没有专用解析（返回 null）时才走下面的通用正则。
+      final bySite = _handler.parseAuthors(html, baseUrl);
+      if (bySite != null) {
+        await logger.log('Crawler', '$_siteType 作者搜索结果: ${bySite.length} 个');
+        return bySite;
+      }
+
       final authors = <AuthorInfo>[];
       final seenNames = <String>{};
 
-      // ---- jiuse：结果页里「搜索到用户」区块 ----
-      //
-      // 该站没有独立作者搜索接口，用户区块和视频区块在同一个 /search 页里。
-      // 用户链接带 badge class，视频卡片里的作者链接只有 text-dark，
-      // 按 badge 过滤即可只拿用户。
-      if (_siteType == "jiuse") {
-        for (final match
-            in CrawlerConfig.jiuseAuthorBadgePattern.allMatches(html)) {
-          final path = match.group(1)!;            // /author/Testgogogo
-          final authorParam = match.group(2)!.trim(); // Testgogogo
-          final namePart = (match.group(3) ?? '').trim();
-          final count = int.tryParse(match.group(4) ?? '0') ?? 0;
-          if (authorParam.isEmpty) continue;
-          if (seenNames.contains(authorParam)) continue;
-          seenNames.add(authorParam);
-          authors.add(AuthorInfo(
-            id: authorParam,
-            name: namePart.isNotEmpty ? namePart : authorParam,
-            videoCount: count,
-            profileUrl: '$baseUrl$path',
-          ));
-        }
-        await logger.log('Crawler', 'jiuse 作者搜索结果: ${authors.length} 个');
-        return authors;
-      }
-
-      // ---- hifuli：搜索页没有用户区块，作者只能从视频卡片的 meta 行提炼 ----
-      //
-      // 和 _parseVideoListHifuli 用同一套正则，保证「列表里能点的作者」
-      // 和「搜索结果里的作者」是同一批人、同一个 authorId（否则点进主页会 404）。
-      if (_siteType == "hifuli") {
-        final fromCards = _parseHifuliAuthorsFromCards(html);
-        await logger.log('Crawler', 'hifuli 作者搜索结果: ${fromCards.length} 个');
-        return fromCards;
-      }
-      
       // 匹配作者链接
       // <a class="btn btn-default" href="user.htm?author=xxx">&nbsp;名字&nbsp;<span class="badge">数量</span></a>
       final pattern = RegExp(
@@ -1627,42 +771,13 @@ class CrawlerCore {
 
   /// 获取作者视频列表
   Future<List<VideoInfo>> getAuthorVideos(String authorId, {int page = 1}) async {
-    String url;
-    if (_siteType == "porn91") {
-      // porn91 作者主页URL格式
-      url = '$baseUrl/author.php?author=$authorId&page=$page';
-    } else if (_siteType == "jiuse") {
-      // jiuse 作者主页：/author/{id} 或 /dashen/{id}
-      //
-      // 站点有两套作者主页，解析卡片时把前缀记进 authorId（dashen/xxx），
-      // 这里原样拼路径即可；缺前缀的默认按 /author/ 处理。
-      //
-      // authorId 可能已是 URL 编码（%E9%85%92%E7%A5%9E）、也可能带尾随空格的
-      // 编码形式（%20），原样拼进路径即可，不能再编码一次。
-      final id = authorId.trim();
-      final path = id.startsWith('author/') || id.startsWith('dashen/')
-          ? id
-          : 'author/$id';
-      url = page <= 1
-          ? '$baseUrl/$path'
-          : '$baseUrl/$path?page=$page';
-    } else if (_siteType == "hifuli") {
-      // 嗨碰作者主页：/u/{urlencode 名字}，第 2 页起 /u/{名字}/page/{page}
-      //
-      // authorId 有两个来源：列表卡片 href 里的 /u/xxx（已编码，原样可用）、
-      // 详情页按名字编码的兜底值。调用方也可能直接把 profileUrl 的
-      // "/u/xxx" 整段传进来，所以统一剥掉前缀再拼，避免 /u/u/xxx。
-      final id = CrawlerConfig.normalizeHifuliAuthorId(authorId);
-      url = page <= 1 ? '$baseUrl/u/$id' : '$baseUrl/u/$id/page/$page';
-    } else {
-      // original CMS - 分页格式：user-N.htm?author=xxx
-      url = '$baseUrl/user-$page.htm?author=$authorId';
-    }
-    
+    // 各站作者主页路径不同（porn91 /author.php、九色系 /author|dashen/xxx、
+    // 嗨碰 /u/{名字}、原创系 user-N.htm），交给站点类拼。
+    final url = _handler.buildAuthorUrl(baseUrl, authorId, page);
     // ✅ 修复：使用更轻量的参数格式
     final ts = DateTime.now().millisecondsSinceEpoch;
     // original 站点对 _t 参数敏感（首页/搜索带 _t 会 404），仅 porn91 保留 _t 防缓存
-    final urlWithCache = _siteType == "porn91"
+    final urlWithCache = _handler.addCacheBuster
         ? (url.contains('?') ? '$url&_t=$ts' : '$url?_t=$ts')
         : url;
     
@@ -1673,19 +788,7 @@ class CrawlerCore {
       final resp = await _dio.get(urlWithCache, options: _noCacheOptions);
       final html = resp.data.toString();
       
-      List<VideoInfo> videos;
-      if (_siteType == "porn91") {
-        videos = _parseVideoListPorn91(html);
-      } else if (_siteType == "jiuse") {
-        // 作者主页与列表页是同一套 colVideoList 卡片，此前落到 original
-        // 解析器（找 video-item），必然 0 条
-        videos = _parseVideoListJiuse(html);
-      } else if (_siteType == "hifuli") {
-        // 嗨碰作者页 /u/{名字} 与列表页共用 hiporn-video-card 卡片
-        videos = _parseVideoListHifuli(html);
-      } else {
-        videos = _parseVideoListOriginal(html);
-      }
+      final videos = _handler.parseVideoList(html, baseUrl);
 
       // 依据站点分页控件判断是否还有下一页（jiuse 无控件，走专用判据）
       _applyPagination(html, page, videos);
@@ -1710,8 +813,10 @@ class CrawlerCore {
       // ✅ 修复：使用更轻量的参数格式
       final ts = DateTime.now().millisecondsSinceEpoch;
       // original 站点对 _t 参数敏感（首页/搜索带 _t 会 404），仅 porn91 保留 _t 防缓存
-      final urlWithCache = _siteType == "porn91"
-          ? (video.url.contains('?') ? '${video.url}&_t=$ts' : '${video.url}?_t=$ts')
+      final urlWithCache = _handler.addCacheBuster
+          ? (video.url.contains('?')
+              ? '${video.url}&_t=$ts'
+              : '${video.url}?_t=$ts')
           : video.url;
       
       await logger.log('Crawler', '网络请求: 获取视频详情 $urlWithCache');
@@ -1752,289 +857,39 @@ class CrawlerCore {
         }
       }
       
-      String? videoUrl;
-      String? extractionMethod;
-
-      // 嗨碰详情页的标题/作者/时长/日期/播放数（在下面的专用分支里填）
-      String? hipornTitle;
-      String? hipornAuthor;
-      // 详情页只有作者名、没有 /u/ 主页链接，这里是「列表没带 id 时」的兜底
-      String? hipornAuthorId;
-      String? hipornDuration;
-      String? hipornDate;
-      String? hipornViews;
-      
-      // ===== porn91 专用策略 =====
-      if (_siteType == "porn91") {
-        
-        // ✅ 从播放页 poster 属性提取视频ID（如 poster="https://.../thumb/848765.jpg"）
-        // 注意：列表页封面ID与视频ID无关，必须用播放页poster ID
-        String? posterVideoId;
-        // 站点同时存在 .jpg / .webp 两种封面后缀，两种都要认，
-        // 否则 poster ID 取不到，下面按 ID 匹配真实视频地址那步会失效。
-        final posterMatch =
-            RegExp(r'poster="[^"]*thumb/(\d+)\.(?:jpe?g|webp|png)"')
-                .firstMatch(html);
-        if (posterMatch != null) {
-          posterVideoId = posterMatch.group(1);
-          await logger.log('Debug', '播放页poster ID: $posterVideoId');
-        } else {
-          await logger.log('Debug', '⚠️ 未找到播放页poster属性');
-        }
-        
-        // 策略 A: strencode2("%3c%73%6f...") — URL 编码的 <source> 标签
-        // 可能有多个strencode2调用，优先匹配poster ID
-        final strencodePattern = RegExp(r'''strencode2\(["'](%[0-9a-fA-F]{2}[^"']+)["']\)''');
-        final strencodeMatches = strencodePattern.allMatches(html).toList();
-        await logger.log('Debug', '找到 ${strencodeMatches.length} 个strencode2调用');
-        
-        for (var i = 0; i < strencodeMatches.length; i++) {
-          final m = strencodeMatches[i];
-          try {
-            final encoded = m.group(1)!;
-            final decoded = Uri.decodeComponent(encoded);
-            await logger.log('Debug', 'strencode2#${i+1} 解码结果: ${decoded.length > 200 ? decoded.substring(0, 200) + "..." : decoded}');
-            
-            // 提取 src 属性
-            final srcPattern = RegExp(r'''src=["']([^"']+)["']''', caseSensitive: false);
-            final srcMatch = srcPattern.firstMatch(decoded);
-            
-            if (srcMatch != null) {
-              final src = srcMatch.group(1)?.replaceAll('&amp;', '&') ?? '';
-              if (src.contains('.mp4') || src.contains('.m3u8')) {
-                // 广告片也可能被站点塞进 strencode2。取「首个」时若不排掉，
-                // 用户下到的就是那条几十秒的推广片（与正片完全无关）。
-                if (CrawlerConfig.knownAdVideoIds.any(src.contains)) {
-                  await logger.log('Debug', '跳过广告视频地址(strencode2): ${src.substring(0, 60)}...');
-                  continue;
-                }
-                // 提取视频URL中的ID
-                final urlIdMatch = RegExp(r'/(\d+)\.(?:mp4|m3u8)').firstMatch(src);
-                final urlVideoId = urlIdMatch?.group(1);
-                await logger.log('Debug', '提取到视频URL: ID=$urlVideoId, URL=${src.length > 100 ? src.substring(0, 100) + "..." : src}');
-                
-                // 优先匹配poster ID
-                if (posterVideoId != null && urlVideoId == posterVideoId) {
-                  videoUrl = src;
-                  extractionMethod = 'strencode2解码(ID匹配)';
-                  await logger.log('Debug', '✅ poster ID匹配成功: posterVideoId=$posterVideoId');
-                  break;  // 找到匹配的，退出循环
-                } else if (videoUrl == null) {
-                  // 没有poster ID时，取第一个作为候选
-                  videoUrl = src;
-                  extractionMethod = 'strencode2解码(首个)';
-                  await logger.log('Debug', '⚠️ poster ID不匹配 (posterID=$posterVideoId, 视频ID=$urlVideoId)');
-                }
-              }
-            }
-          } catch (e) {
-            await logger.log('Debug', 'strencode2解码失败: $e');
-          }
-        }
-        
-        // 策略 B: 直接查找 <source> 标签
-        // 优先匹配封面ID，排除已知广告
-        if (videoUrl == null) {
-          
-          final sourcePattern = RegExp(r'''<source[^>]+src=["']([^"']+)["']''', caseSensitive: false);
-          final sourceMatches = sourcePattern.allMatches(html).toList();
-          
-          // 优先匹配poster ID
-          for (var i = 0; i < sourceMatches.length; i++) {
-            final match = sourceMatches[i];
-            final src = match.group(1)?.replaceAll('&amp;', '&') ?? '';
-            
-            if (src.contains('.mp4') || src.contains('.m3u8')) {
-              // 提取视频URL中的ID
-              final urlIdMatch = RegExp(r'/(\d+)\.(?:mp4|m3u8)').firstMatch(src);
-              final urlVideoId = urlIdMatch?.group(1);
-              
-              // 优先匹配poster ID
-              if (posterVideoId != null && urlVideoId == posterVideoId) {
-                videoUrl = src;
-                extractionMethod = 'source标签(ID匹配)';
-                break;
-              }
-            }
-          }
-          
-          // 如果没有匹配到封面ID，取第一个非广告的source
-          if (videoUrl == null) {
-            for (var i = 0; i < sourceMatches.length; i++) {
-              final match = sourceMatches[i];
-              final src = match.group(1)?.replaceAll('&amp;', '&') ?? '';
-              
-              if (src.contains('.mp4') || src.contains('.m3u8')) {
-                // 排除已知的广告视频ID
-                //
-                // 91porn 的播放页里 <source> 常常整段就是广告片（358999），
-                // 真实地址只藏在下面的 strencode2 里。这里必须认出来，
-                // 否则会拿广告地址去下载，用户下到的是几十秒的推广片。
-                if (CrawlerConfig.knownAdVideoIds.any(src.contains)) {
-                  await logger.log('Debug', '跳过广告视频地址: ${src.substring(0, 60)}...');
-                  continue;
-                }
-                videoUrl = src;
-                extractionMethod = 'source标签(首个非广告)';
-                break;
-              }
-            }
-          }
-        }
-        
-        // 策略 C: 查找内嵌 JavaScript 中的视频 URL
-        if (videoUrl == null) {
-          final jsPatterns = [
-            r'''\.(?:mp4|m3u8)["']?\s*;''',  // 简化匹配
-            r'''["']https?://[^"']+\.(?:mp4|m3u8)[^"']*["']''',
-          ];
-          
-          for (final pattern in jsPatterns) {
-            final match = RegExp(pattern, caseSensitive: false).firstMatch(html);
-            if (match != null) {
-              final urlMatch = RegExp(r'''https?://[^"'\s]+\.(?:mp4|m3u8)[^"'\s]*''').firstMatch(match.group(0)!);
-              if (urlMatch != null) {
-                videoUrl = urlMatch.group(0);
-                extractionMethod = 'JS内嵌';
-                break;
-              }
-            }
-          }
-        }
-      }
-      
-      // ===== jiuse 站点（91porny / jiuse.icu）=====
+      // ===== 站点差异交给 lib/crawler/sites/ 下各自的实现 =====
       //
-      // 详情页把播放地址放在 <video data-src="..."> 上（不是 <source src>），
-      // 由前端 JS 在播放时才塞进播放器；纯 HTTP 抓取必须自己读 data-src。
-      if (videoUrl == null && _siteType == "jiuse") {
-        final dataSrc = RegExp(
-          r'<video[^>]*\bdata-src="([^"]+)"',
-          caseSensitive: false,
-        ).firstMatch(html);
-        if (dataSrc != null) {
-          // 站点常给协议相对地址（//cdn2.jiuse2.cloud/...）。
-          // 原样交给 Dio 会抛 Unsupported scheme ''，任务 0% 直接失败。
-          videoUrl = CrawlerConfig.resolveAbsoluteUrl(
-              baseUrl, dataSrc.group(1)!.replaceAll('&amp;', '&'));
-          extractionMethod = 'jiuse-data-src';
-          await logger.log('Debug', 'jiuse data-src: ${videoUrl.length > 120 ? videoUrl.substring(0, 120) + "..." : videoUrl}');
-        }
-        // 兜底：有些页面把地址写在 video 的 source 子节点里
-        if (videoUrl == null) {
-          final srcMatch = RegExp(
-            r'<video[^>]*>[\s\S]{0,400}?src="([^"]+\.m3u8[^"]*)"',
-            caseSensitive: false,
-          ).firstMatch(html);
-          if (srcMatch != null) {
-            videoUrl = CrawlerConfig.resolveAbsoluteUrl(
-                baseUrl, srcMatch.group(1)!.replaceAll('&amp;', '&'));
-            extractionMethod = 'jiuse-video-src';
-          }
-        }
+      // porn91 的 strencode2 三部曲、九色系 video[data-src]、嗨碰的
+      // HIPORN_WATCH / JSON-LD，都在站点类里；这里只取结果。
+      final siteDetail = await _handler.extractDetail(html, video, baseUrl);
+      String? videoUrl = siteDetail.videoUrl;
+      final hipornTitle = siteDetail.title;
+      final hipornAuthor = siteDetail.author;
+      final hipornAuthorId = siteDetail.authorId;
+      final hipornDuration = siteDetail.duration;
+      final hipornDate = siteDetail.uploadDate;
+      final hipornViews = siteDetail.views;
 
-        // data-src 有时指向站点内置的 12 秒样片（/hlsd/<名字>/index.m3u8），
-        // 直接下载/播放就只有 11 秒，而且**所有视频都是同一段画面**——
-        // 用户下载多个视频得到相同文件就是这么来的。
-        // 真实地址有两条来路，按成功率依次尝试：
-        //   1) GET {baseUrl}/apiDownloadUrl/{data-id}（未登录常回 422）
-        //   2) GET {baseUrl}/video/embed/{id}（HTML 内联一条带 token 的地址）
-        if (videoUrl == null || CrawlerConfig.isJiuseSampleUrl(videoUrl)) {
-          if (videoUrl != null) {
-            await logger.log('Debug',
-                'jiuse 命中站点样片地址（所有视频共用），尝试换真实地址');
-          }
-          var real = await _fetchJiuseRealUrl(baseUrl, html);
-          if (real != null) {
-            extractionMethod = 'jiuse-apiDownloadUrl';
-          } else {
-            real = await _fetchJiuseEmbedUrl(baseUrl, video.id);
-            if (real != null) extractionMethod = 'jiuse-embed';
-          }
-          if (real != null) {
-            videoUrl = real;
-          } else {
-            // 换不到就退回样片，但必须让用户知道这是「12 秒预览」，
-            // 不能静默下成一段和别的视频一模一样的 11 秒画面。
-            lastDetailSampleOnly = true;
-            await logger.log('Warning',
-                'jiuse 未能换到真实地址，只能拿到站点样片（约 12 秒，所有视频相同）');
-          }
-        }
-      }
-
-      // ===== 嗨碰（hifuli.com / hiporn.net）=====
-      //
-      // 页面里既没有 <video> 也没有 <source>，播放地址写在前端配置对象上：
-      //   window.HIPORN_WATCH = { ..., player: { url: 'https://....m3u8?sign=...&t=...',
-      //                                          pic: '...', durationSec: 300, type: 'hls' } }
-      // 同一份地址在 JSON-LD 的 contentUrl 里也有一份，互为兜底。
-      //
-      // 注意 sign/t 是带时效的签名（每次请求都变），所以这个地址不能缓存，
-      // 每次播放/下载都必须重新抓详情页。
-      if (videoUrl == null && _siteType == "hifuli") {
-        final playerMatch =
-            CrawlerConfig.hifuliPlayerUrlPattern.firstMatch(html);
-        if (playerMatch != null) {
-          videoUrl = CrawlerConfig.resolveAbsoluteUrl(
-              baseUrl, playerMatch.group(1)!.replaceAll('&amp;', '&'));
-          extractionMethod = 'hifuli-HIPORN_WATCH';
-        }
-        if (videoUrl == null) {
-          final contentMatch =
-              CrawlerConfig.hifuliContentUrlPattern.firstMatch(html);
-          if (contentMatch != null) {
-            videoUrl = CrawlerConfig.resolveAbsoluteUrl(
-                baseUrl, contentMatch.group(1)!.replaceAll('&amp;', '&'));
-            extractionMethod = 'hifuli-jsonld';
-          }
-        }
+      // 九色系：data-src 有时指向站点内置的 12 秒样片（所有视频共用），
+      // 真实地址要走站点的联网接口换，这一步需要发 HTTP，所以留在核心。
+      if (siteDetail.needsRealUrl) {
         if (videoUrl != null) {
           await logger.log('Debug',
-              'hifuli 播放地址($extractionMethod): ${videoUrl.length > 120 ? videoUrl.substring(0, 120) + "..." : videoUrl}');
+              'jiuse 命中站点样片地址（所有视频共用），尝试换真实地址');
+        }
+        var real = await _fetchJiuseRealUrl(baseUrl, html);
+        if (real == null) {
+          real = await _fetchJiuseEmbedUrl(baseUrl, video.id);
+        }
+        if (real != null) {
+          videoUrl = real;
         } else {
-          await logger.log('Warning', 'hifuli 详情页未找到 player.url / contentUrl');
+          // 换不到就退回样片，但必须让用户知道这是「12 秒预览」，
+          // 不能静默下成一段和别的视频一模一样的 11 秒画面。
+          lastDetailSampleOnly = true;
+          await logger.log('Warning',
+              'jiuse 未能换到真实地址，只能拿到站点样片（约 12 秒，所有视频相同）');
         }
-
-        final titleMatch =
-            CrawlerConfig.hifuliDetailTitlePattern.firstMatch(html);
-        if (titleMatch != null) {
-          final t = CrawlerConfig.stripInvisible(
-                  CrawlerConfig.unescapeHtml(titleMatch.group(1)!))
-              .trim();
-          if (t.isNotEmpty) hipornTitle = t;
-        }
-        final authorMatch =
-            CrawlerConfig.hifuliDetailAuthorPattern.firstMatch(html);
-        if (authorMatch != null) {
-          final a = CrawlerConfig.stripInvisible(
-                  CrawlerConfig.unescapeHtml(authorMatch.group(1)!))
-              .trim();
-          if (a.isNotEmpty) {
-            hipornAuthor = a;
-            // 详情页作者块没有 /u/ 链接（全文 0 命中），只能按站点路径规则
-            // 把名字编码成 /u/{urlencode 名字}。列表页带来的 authorId 优先，
-            // 这里是「直接从详情页打开、没有列表上下文」时的兜底。
-            if (a != '匿名') hipornAuthorId = Uri.encodeComponent(a);
-          }
-        }
-        final durMatch =
-            CrawlerConfig.hifuliIsoDurationPattern.firstMatch(html);
-        if (durMatch != null) {
-          hipornDuration =
-              CrawlerConfig.formatIsoDuration(durMatch.group(0));
-        }
-        final dateMatch =
-            CrawlerConfig.hifuliUploadDatePattern.firstMatch(html);
-        if (dateMatch != null) {
-          // 站点给的是 ISO 串（2018-08-11T00:00:00+08:00），
-          // 原样上屏会带着时分秒和时区，播放页的胶囊放不下。
-          hipornDate =
-              CrawlerConfig.formatHifuliDate(dateMatch.group(1)!.trim());
-        }
-        final viewsMatch =
-            CrawlerConfig.hifuliViewsPattern.firstMatch(html);
-        if (viewsMatch != null) hipornViews = viewsMatch.group(1)!.trim();
       }
 
       // ===== 通用策略 (original CMS) =====
@@ -2044,7 +899,6 @@ class CrawlerCore {
         final sourceMatch = RegExp(r'''<source[^>]+src="([^"]+\.m3u8[^"]*)"''', caseSensitive: false).firstMatch(html);
         if (sourceMatch != null) {
           videoUrl = sourceMatch.group(1);
-          extractionMethod = 'source-m3u8';
         }
         
         // 策略2: 搜索任何 .m3u8 URL
@@ -2052,7 +906,6 @@ class CrawlerCore {
           final m3u8Match = CrawlerConfig.m3u8Pattern.firstMatch(html);
           if (m3u8Match != null) {
             videoUrl = m3u8Match.group(1);
-            extractionMethod = '通用m3u8正则';
           }
         }
         
@@ -2066,7 +919,6 @@ class CrawlerCore {
             final match = RegExp(pattern, caseSensitive: false).firstMatch(html);
             if (match != null) {
               videoUrl = match.group(1);
-              extractionMethod = 'JS变量';
               break;
             }
           }
