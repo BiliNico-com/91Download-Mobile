@@ -46,6 +46,14 @@ class DownloadTask {
   String? filePath;
   DateTime startTime;
   DateTime? endTime;
+
+  /// 上次解析出来的播放地址（带签名的 m3u8 / mp4 直链）
+  ///
+  /// 站点页面本身经常不通（要挂代理、要过 Cloudflare），而 CDN 上的
+  /// 分片文件往往照常能取。把这个地址随任务存进数据库后，重启/继续时
+  /// 就能直接按原地址续传，不必再回站点解析一遍——否则「关掉代理点
+  /// 恢复」会直接失败，明明已经下了一半。
+  String? cachedUrl;
   
   // 下载速度相关
   int downloadedBytes = 0;      // 已下载字节数
@@ -181,7 +189,8 @@ class DownloadManager extends ChangeNotifier {
               start_time TEXT,
               end_time TEXT,
               progress REAL,
-              progress_text TEXT
+              progress_text TEXT,
+              m3u8_url TEXT
             )
           ''');
         },
@@ -212,8 +221,16 @@ class DownloadManager extends ChangeNotifier {
               }
             }
           }
+          // v4 记住解析出来的播放地址：恢复下载时先复用，失效了再重解析。
+          // 否则每次「继续」都要先访问站点页面，没挂代理时页面根本打不开。
+          if (oldVersion < 4) {
+            if (!await _hasColumn(db, 'download_tasks', 'm3u8_url')) {
+              await db.execute(
+                  'ALTER TABLE download_tasks ADD COLUMN m3u8_url TEXT');
+            }
+          }
         },
-        version: 3,
+        version: 4,
       );
       _dbInitialized = true;
     } catch (e) {
@@ -543,47 +560,46 @@ class DownloadManager extends ChangeNotifier {
     }
 
     try {
-      // 1. 获取视频详情（m3u8地址）
-      await logger.log('Download', '获取视频详情...');
-      final detail = await _crawler!.getVideoDetail(task.video);
-      
-      if (detail == null || detail.m3u8Url == null) {
-        await logger.log('Download', '获取视频地址失败: detail=$detail', level: LogLevel.error);
-        task.status = DownloadStatus.failed;
-        task.error = '无法获取视频地址';
-        notifyListeners();
-        return;
+      // 1. 拿到播放地址：优先复用上次解析出来的那个
+      //
+      // 站点页面和 CDN 分片是两条完全不同的通路：页面经常需要挂代理才能打开
+      // （91porn 的域名还会被 DNS 污染），而已经解析出来的直链往往还能继续用。
+      // 以前这里无条件重解析，于是「挂代理解析好、关代理继续下」直接失败，
+      // 明明分片都在本地。改成先复用、失败了再回站点重解析。
+      final cached = task.cachedUrl;
+      VideoInfo detail;
+      var usedCachedUrl = false;
+      if (cached != null && cached.isNotEmpty) {
+        await logger.log('Download', '复用上次的播放地址（无需访问站点页面）');
+        detail = _videoWithUrl(task.video, cached);
+        usedCachedUrl = true;
+      } else {
+        await logger.log('Download', '获取视频详情...');
+        final resolved = await _crawler!.getVideoDetail(task.video);
+        if (resolved == null || resolved.m3u8Url == null) {
+          await logger.log('Download', '获取视频地址失败: detail=$resolved', level: LogLevel.error);
+          task.status = DownloadStatus.failed;
+          task.error = '无法获取视频地址';
+          notifyListeners();
+          return;
+        }
+        detail = resolved;
       }
-      
+
       await logger.log('Download', '获取到视频地址: ${detail.m3u8Url}', level: LogLevel.debug);
       logger.logSync(
         'Download',
         '详情: 标题=${detail.title ?? "-"}, 时长=${detail.duration ?? "-"}',
       );
+      // 解析成功立刻落库：进度写库是 5 秒节流的，进程随时可能被杀，
+      // 靠节流存地址的话重启后照样要重新解析。
+      await _rememberUrl(task, detail.m3u8Url!);
       
       // 2. 下载视频
-      // 清理文件名中的非法字符
       //
-      // 再兜一次隐形字符：任务可能是从数据库恢复的老记录，
-      // 那时 VideoInfo 的构造函数还没做净化，标题里仍夹着变体选择符。
-      // 不剥掉的话文件名里会出现肉眼看不见的字符，用户根本搜不到该文件。
-      final cleanTitle =
-          CrawlerConfig.stripInvisible(task.video.title);
-      final safeTitle = cleanTitle.replaceAll(_invalidFileNameChars, '_');
-      // 构建文件名：视频名称 + 作者信息（避免同名覆盖）
-      String fileName;
-      final author = task.video.author ?? task.video.authorId;
-      if (author != null && author.isNotEmpty) {
-        final safeAuthor = CrawlerConfig.stripInvisible(author)
-            .replaceAll(_invalidFileNameChars, '_');
-        // 带上唯一 ID：同一作者上传两个同标题的视频时，
-        // 仅靠「标题_作者」会得到同一路径，后下的会静默覆盖先下的，
-        // 且「已完成」里出现两条记录指向同一文件，删任一条会连带删掉另一条
-        fileName = '${safeTitle}_${safeAuthor}_${task.video.id}.mp4';
-      } else {
-        fileName = '${safeTitle}_${task.video.id}.mp4';
-      }
-      final savePath = '$_downloadDir/$fileName';
+      // 文件名规则抽到了 savePathForTask：它同时被「强制合并」用来反推
+      // 临时切片目录，两处必须用同一套规则，否则会出现「按钮点了没反应」。
+      final savePath = savePathForTask(task);
       
       await logger.log('Download', '保存路径: $savePath');
       
@@ -647,8 +663,34 @@ class DownloadManager extends ChangeNotifier {
       
       // 把已挂好回调的句柄一起传进去：downloadVideo 会在绑定了同一份
       // 句柄的 Zone 里执行下载链，回调和暂停/停止才真正对得上号。
-      final success =
+      var success =
           await _crawler!.downloadVideo(detail, savePath, ctrl: ctrl);
+
+      // 复用的地址被 CDN 拒了（签名过期是最常见的一种）：回站点重解析一次再重试。
+      // 只重试一次，避免「解析→失败→再解析」打转。
+      // 已下的切片/分块都还在临时目录里，重试是续传不是从头下，不会白费流量。
+      if (!success && usedCachedUrl && !ctrl.isPaused && !ctrl.isStopped) {
+        await logger.log(
+          'Download',
+          '缓存的播放地址已失效（${ctrl.failureReason ?? "未知原因"}），重新解析',
+          level: LogLevel.warn,
+        );
+        final retried = await _crawler!.getVideoDetail(task.video);
+        if (retried != null && retried.m3u8Url != null) {
+          await _rememberUrl(task, retried.m3u8Url!);
+          detail = retried;
+          ctrl.reset();
+          // 上一轮的失败原因留着会盖住第二轮的判断，先清掉
+          ctrl.failureReason = null;
+          success = await _crawler!.downloadVideo(detail, savePath, ctrl: ctrl);
+        } else {
+          await logger.log(
+            'Download',
+            '重新解析也失败（站点页面可能打不开，检查代理设置）',
+            level: LogLevel.error,
+          );
+        }
+      }
       
       if (success) {
         final elapsed = DateTime.now().difference(startedAt);
@@ -704,6 +746,9 @@ class DownloadManager extends ChangeNotifier {
       task.error = e.toString();
       task.downloadSpeed = 0.0;
       task.endTime = DateTime.now();
+      // 异常分支以前不落库：状态只停在内存里，重启后任务又变回
+      // 「下载中」被重新排队，用户看到的是「明明失败了却自己又开始下」
+      _saveTaskToDb(task);
     } finally {
       // ✅ 清理回调，避免引用泄漏（只清自己这一份，不影响并发任务）
       final ctrl = taskCtrl;
@@ -751,6 +796,129 @@ class DownloadManager extends ChangeNotifier {
     }
   }
   
+  /// 由任务推导最终文件路径（下载目录 + 文件名）
+  ///
+  /// 文件名规则是「标题_作者_视频ID.mp4」，这里必须与 _startDownload 里
+  /// 拼出来的一模一样：强制合并要靠它反推出临时切片目录，只要差一个字符
+  /// 就会找不到 './xxx_temp' / './xxx.chunks'，按钮点了没反应。
+  String savePathForTask(DownloadTask task) {
+    // 再兜一次隐形字符：任务可能是从数据库恢复的老记录，
+    // 那时 VideoInfo 的构造函数还没做净化，标题里仍夹着变体选择符。
+    // 不剥掉的话文件名里会出现肉眼看不见的字符，用户根本搜不到该文件。
+    final cleanTitle = CrawlerConfig.stripInvisible(task.video.title);
+    final safeTitle = cleanTitle.replaceAll(_invalidFileNameChars, '_');
+    // 带上唯一 ID：同一作者上传两个同标题的视频时，
+    // 仅靠「标题_作者」会得到同一路径，后下的会静默覆盖先下的，
+    // 且「已完成」里出现两条记录指向同一文件，删任一条会连带删掉另一条
+    final author = task.video.author ?? task.video.authorId;
+    if (author != null && author.isNotEmpty) {
+      final safeAuthor =
+          CrawlerConfig.stripInvisible(author).replaceAll(_invalidFileNameChars, '_');
+      return '$_downloadDir/${safeTitle}_${safeAuthor}_${task.video.id}.mp4';
+    }
+    return '$_downloadDir/${safeTitle}_${task.video.id}.mp4';
+  }
+
+  /// 复制一份视频信息并换上新的播放地址
+  ///
+  /// VideoInfo 全字段 final，改地址只能整体重建。字段要原样带过去，
+  /// 漏一个（比如 authorId）就会让下载后的文件名、历史记录跟着变。
+  VideoInfo _videoWithUrl(VideoInfo video, String url) => VideoInfo(
+        id: video.id,
+        url: video.url,
+        title: video.title,
+        cover: video.cover,
+        author: video.author,
+        authorId: video.authorId,
+        duration: video.duration,
+        uploadDate: video.uploadDate,
+        views: video.views,
+        m3u8Url: url,
+      );
+
+  /// 记住本次解析出的播放地址并立刻写库
+  ///
+  /// 不复用每 5 秒一次的进度节流：地址是「恢复下载」的唯一凭据，
+  /// 进程随时可能被杀掉，晚几秒写就可能白丢一次解析结果。
+  Future<void> _rememberUrl(DownloadTask task, String url) async {
+    if (task.cachedUrl == url) return;
+    task.cachedUrl = url;
+    await _saveTaskToDb(task);
+  }
+
+  /// 该任务是否还有可合并的临时切片（用于决定是否显示「合并」按钮）
+  ///
+  /// 同步实现：列表构建时每帧都会问一次，异步版本会让按钮延迟一帧出现。
+  bool hasPendingSlices(DownloadTask task) {
+    if (_crawler == null || _downloadDir.isEmpty) return false;
+    if (task.status == DownloadStatus.completed ||
+        task.status == DownloadStatus.downloading) {
+      return false;
+    }
+    return _crawler!.pendingTempKindSync(savePathForTask(task)) != null;
+  }
+
+  /// 临时切片的类型：'mp4' / 'ts' / null（只用于给按钮配文案）
+  String? pendingSliceKind(DownloadTask task) {
+    if (_crawler == null || _downloadDir.isEmpty) return null;
+    return _crawler!.pendingTempKindSync(savePathForTask(task));
+  }
+
+  /// 用户主动触发的「强制合并」
+  ///
+  /// 走爬虫的 forceMerge：它直接扫临时目录按序号拼，不再校验下载时的
+  /// 切片位图，因此「切片都下完了但合并那步被杀掉」的任务能救回来。
+  /// allowIncomplete 允许在少量切片失败时硬拼（用户明确接受不完整文件）。
+  Future<ForceMergeResult> forceMergeTask(
+    DownloadTask task, {
+    bool allowIncomplete = false,
+  }) async {
+    if (_crawler == null) {
+      return const ForceMergeResult(false, '下载器还没就绪，请稍后再试');
+    }
+    if (task.status == DownloadStatus.downloading) {
+      return const ForceMergeResult(false, '任务正在下载，请先暂停再合并');
+    }
+    final savePath = savePathForTask(task);
+    final ctrl = _crawler!.createControl();
+    ctrl.onLog = (msg, level) => logger.log(
+          'Download',
+          msg,
+          level: level == 'error'
+              ? LogLevel.error
+              : (level == 'warn' ? LogLevel.warn : LogLevel.info),
+        );
+
+    logger.mark('强制合并', '${task.video.title} | $savePath');
+    final result = await _crawler!.forceMerge(
+      savePath,
+      task.video,
+      ctrl,
+      allowIncomplete: allowIncomplete,
+    );
+
+    if (result.ok) {
+      // 合并成功后补一条已完成任务：视频已经能放了，
+      // 但进度/状态字段还停在暂停或失败上，不修的话用户看到的是一个
+      // 「失败」任务配一个能播的文件。
+      final file = File(savePath);
+      task
+        ..status = DownloadStatus.completed
+        ..progress = 1.0
+        ..progressText = '下载完成'
+        ..error = null
+        ..filePath = savePath
+        ..endTime = DateTime.now();
+      try {
+        task.totalBytes = await file.length();
+        task.downloadedBytes = task.totalBytes;
+      } catch (_) {}
+      await _saveTaskToDb(task);
+      notifyListeners();
+    }
+    return result;
+  }
+
   /// 把耗时格式化成「1 分 23 秒」这样，日志里比毫秒直观
   String _formatElapsed(Duration d) {
     if (d.inHours > 0) {
@@ -1031,6 +1199,9 @@ class DownloadManager extends ChangeNotifier {
           // 而不是看着 0% 以为要从头再下一遍（分片文件其实都还在）。
           'progress': task.progress,
           'progress_text': task.progressText,
+          // 播放地址随任务落盘：恢复下载时先按它续传，
+          // 只有它失效了才回站点重新解析（见 _startDownload）。
+          'm3u8_url': task.cachedUrl,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -1101,6 +1272,7 @@ class DownloadManager extends ChangeNotifier {
         
         if (!_taskMap.containsKey(video.id)) {
           final task = DownloadTask(id: video.id, video: video);
+          task.cachedUrl = map['m3u8_url'] as String?;
           task.status = _decodeStatus(map['status'], filePath: map['file_path'] as String?);
           task.filePath = map['file_path'] as String?;
           task.error = map['error'] as String?;
