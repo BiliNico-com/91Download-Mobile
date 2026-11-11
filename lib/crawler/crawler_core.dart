@@ -2,7 +2,9 @@
 /// 严格参照 Python 版本 _src/lib/__init__.py
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show max, min;
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path_provider/path_provider.dart';
@@ -93,6 +95,58 @@ class DownloadControl {
   }
 }
 
+/// 「强制合并」的结果
+///
+/// 合并是下载收尾的一步，成败只需要一句话 + 是否需要提示用户，
+/// 单独建模比抛异常好处理（UI 侧直接弹提示即可）。
+class ForceMergeResult {
+  const ForceMergeResult(this.ok, this.message, [this.filePath]);
+
+  /// 是否合并成功
+  final bool ok;
+
+  /// 给用户看的一句话（失败时就是原因）
+  final String message;
+
+  /// 成功时的最终文件路径
+  final String? filePath;
+}
+
+/// 直链 MP4 单块一次请求的结果（[_fetchMp4ChunkOnce] 永不抛出，全部折算成结果）
+enum _Mp4ChunkKind {
+  done, // 本块拿满（或未知总长的串行块正常读到 EOF）
+  partial, // 连接提前断流但有字节落盘，整块重下
+  stalled, // 看门狗掐掉：20 秒零字节，应当场换连接重试
+  failed, // 其它网络错误，退避后重试
+  fatal, // 4xx / HTML 嗅探命中等，重试无意义
+  rangeLost, // 服务器开始忽略 Range（响应 200），必须退回单连接从头下
+  replan, // 416 且响应带了新的文件总长，需要按新总长重排
+}
+
+class _Mp4ChunkOutcome {
+  const _Mp4ChunkOutcome(
+    this.kind, {
+    this.newTotal,
+    this.message,
+    this.bytesWritten = 0,
+    this.retryable = true,
+  });
+
+  final _Mp4ChunkKind kind;
+
+  /// replan：服务器上的新文件总长
+  final int? newTotal;
+
+  /// fatal：给用户看的失败原因
+  final String? message;
+
+  /// partial：本次尝试已落盘的字节数
+  final int bytesWritten;
+
+  /// fatal：是否值得重试（HTML 嗅探命中 → false）
+  final bool retryable;
+}
+
 class CrawlerCore {
   final Dio _dio;
   String baseUrl;
@@ -103,6 +157,17 @@ class CrawlerCore {
   int _maxConcurrentDownloads = 32;
   set maxConcurrentDownloads(int value) => _maxConcurrentDownloads = value.clamp(1, 64);
   int get maxConcurrentDownloads => _maxConcurrentDownloads;
+
+  /// MP4 直连分块的并发数，与 TS 切片并发分开可调。
+  ///
+  /// 两类下载的特性完全不同：TS 切片是几百 KB 的独立文件，靠请求数堆速度；
+  /// MP4 每块 256 KB~1 MB 且带 Range 头，CDN 按连接分配配额，
+  /// 两者用同一个数字时会互相迁就（调高切片并发会连带把 MP4 的块切得过碎）。
+  /// 默认值与切片并发一致，用户不改就还是老行为。
+  int _mp4MaxConcurrentDownloads = 32;
+  set mp4MaxConcurrentDownloads(int value) =>
+      _mp4MaxConcurrentDownloads = value.clamp(1, 64);
+  int get mp4MaxConcurrentDownloads => _mp4MaxConcurrentDownloads;
   
   Database? _db;
   bool _dbInitialized = false;
@@ -171,6 +236,152 @@ class CrawlerCore {
   /// await runZoned(() => downloadVideo(...), zoneValues: {_zoneKey: ctrl});
   /// ```
   DownloadControl createControl() => DownloadControl();
+
+  /// 该任务当前残留的可合并临时目录：'mp4' / 'ts' / null
+  ///
+  /// 两种临时目录都由 savePath 派生（见 _downloadDirectMp4 / _downloadTs），
+  /// 所以只看目录在不在，就能判断「有没有下了一半的切片可以救」。
+  Future<String?> pendingTempKind(String savePath) async {
+    if (await Directory("$savePath.chunks").exists()) return 'mp4';
+    if (await Directory("${savePath}_temp").exists()) return 'ts';
+    return null;
+  }
+
+  /// 同步版：列表每帧都要判断一次按钮是否显示，走 IO 的 Future 太贵
+  ///
+  /// 只做两次 existsSync（stat 系统调用），对一屏十几个任务来说开销可忽略。
+  String? pendingTempKindSync(String savePath) {
+    try {
+      if (Directory("$savePath.chunks").existsSync()) return 'mp4';
+      if (Directory("${savePath}_temp").existsSync()) return 'ts';
+    } catch (_) {}
+    return null;
+  }
+
+  /// 用户主动触发的「强制合并」：把已下好的切片拼成最终文件。
+  ///
+  /// 正常流程里合并是下载的收尾步骤，只有全部切片到位才会跑。但有两种
+  /// 情况需要它：① 切片早已下完，合并那一步被系统杀掉，任务停在失败态；
+  /// ② 少量切片反复失败，用户不想再等，愿意接受不完整的文件。
+  /// 因此这里不复用下载时的 downloaded 位图，直接扫目录按序号拼。
+  Future<ForceMergeResult> forceMerge(
+    String savePath,
+    VideoInfo video,
+    DownloadControl ctrl, {
+    bool allowIncomplete = false,
+  }) async {
+    final kind = await pendingTempKind(savePath);
+    if (kind == null) {
+      return const ForceMergeResult(
+          false, '没有找到未合并的切片目录，可能已经合并过了');
+    }
+
+    if (kind == 'ts') {
+      final tempDir = Directory("${savePath}_temp");
+      ctrl.onLog?.call('强制合并 TS 切片：${tempDir.path}', 'info');
+      final ok = await _mergeTsFiles(tempDir.path, savePath, null, ctrl);
+      if (!ok) {
+        return const ForceMergeResult(false, '合并失败：切片目录里没有可用的数据');
+      }
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+    } else {
+      final result =
+          await _forceMergeMp4(savePath, ctrl, allowIncomplete: allowIncomplete);
+      if (!result.ok) return result;
+    }
+
+    await _saveToHistory(video, savePath);
+    ctrl.onLog?.call('强制合并完成: ${video.title}', 'info');
+    return ForceMergeResult(true, '已合并为视频文件', savePath);
+  }
+
+  /// MP4 分块的强制合并：先盘点块文件，再交给 _mergeMp4Chunks 逐块拼接。
+  ///
+  /// 默认要求「不缺块、长度符合网格」，否则拒绝合并——拼一个中间空一段的
+  /// 文件只会播放到断点就花屏，还不如提示用户先补齐。
+  /// allowIncomplete 为 true 时跳过全部校验，按现有块顺序硬拼。
+  Future<ForceMergeResult> _forceMergeMp4(
+    String savePath,
+    DownloadControl ctrl, {
+    bool allowIncomplete = false,
+  }) async {
+    final partDir = Directory("$savePath.chunks");
+
+    // meta.json 记着下载时的总长与块长，用来判断每块是否完整
+    var total = 0;
+    var chunkLen = 0;
+    try {
+      final meta = File("${partDir.path}/meta.json");
+      if (await meta.exists()) {
+        final decoded = jsonDecode(await meta.readAsString());
+        if (decoded is Map) {
+          final t = decoded["total"];
+          final c = decoded["chunkLen"];
+          if (t is num) total = t.toInt();
+          if (c is num) chunkLen = c.toInt();
+        }
+      }
+    } catch (_) {}
+
+    final chunkPattern = RegExp(r'chunk_(\d+)$');
+    final files = <int, File>{};
+    await for (final entity in partDir.list()) {
+      if (entity is! File) continue;
+      final segments = entity.uri.pathSegments;
+      final name = segments.isEmpty ? entity.path : segments.last;
+      final match = chunkPattern.firstMatch(name);
+      if (match == null) continue;
+      final idx = int.tryParse(match.group(1) ?? '');
+      if (idx == null) continue;
+      files[idx] = entity;
+    }
+    if (files.isEmpty) {
+      return const ForceMergeResult(false, '分块目录里没有块文件');
+    }
+
+    final count = files.keys.reduce(max) + 1;
+    final expectedLens = List<int>.filled(count, 0);
+    final missing = <int>[];
+    final mismatched = <int>[];
+    for (var i = 0; i < count; i++) {
+      final file = files[i];
+      if (file == null) {
+        missing.add(i);
+        continue;
+      }
+      final len = await file.length();
+      expectedLens[i] = len;
+      if (chunkLen > 0 && total > 0) {
+        final expect = _mp4ExpectedLen(i, chunkLen, total);
+        if (expect > 0 && len != expect) mismatched.add(i);
+      }
+    }
+
+    if (!allowIncomplete && (missing.isNotEmpty || mismatched.isNotEmpty)) {
+      final detail = StringBuffer('分块不完整：共 $count 块');
+      if (missing.isNotEmpty) {
+        detail.write('，缺 ${missing.length} 块（如 #${missing.first + 1}）');
+      }
+      if (mismatched.isNotEmpty) {
+        detail.write(
+            '，有 ${mismatched.length} 块长度不符（如 #${mismatched.first + 1}）');
+      }
+      detail.write('。可继续下载补齐后再合并');
+      return ForceMergeResult(false, detail.toString());
+    }
+
+    ctrl.onLog?.call('强制合并 MP4 分块：$count 块', 'info');
+    final ok = await _mergeMp4Chunks(
+      partDir,
+      allowIncomplete ? List<int>.filled(count, 0) : expectedLens,
+      savePath,
+      ctrl,
+    );
+    if (!ok) return const ForceMergeResult(false, '合并失败，详见日志');
+    return ForceMergeResult(true, 'MP4 分块已合并', savePath);
+  }
 
   static final Object _zoneKey = Object();
 
@@ -1747,7 +1958,20 @@ class CrawlerCore {
         await file.writeAsBytes(bytes);
         return true;
       } catch (e) {
-        Logger().logSync('Download', '下载切片失败(retry ${retry + 1}): $e');
+        // 去重：没连代理时整片视频的切片会齐齐失败，几百片 × 3 次重试
+        // 就是上千行完全相同的报错，把真正有用的那几行全淹了。
+        // key 用「主机 + 异常类型」，同一片源的失败聚合成一条 + 计数。
+        Logger().logDeduped(
+          'Download',
+          '下载切片失败(retry ${retry + 1}): $e',
+          level: LogLevel.warn,
+          dedupeKey: 'seg|' + Uri.tryParse(url)?.host.toString() + '|' +
+              e.runtimeType.toString(),
+          offline: e is DioException &&
+              (e.type == DioExceptionType.connectionError ||
+                  e.type == DioExceptionType.connectionTimeout ||
+                  e.type == DioExceptionType.receiveTimeout),
+        );
         if (retry < CrawlerConfig.maxRetries - 1) {
           await Future.delayed(Duration(seconds: 1));
         }
@@ -1804,9 +2028,21 @@ class CrawlerCore {
   /// 3 秒就能取到 1 MB。对 la.btc620.com 实测：
   ///   bare GET（不带 Range）        -> 45 秒 0 字节（真机）
   ///   GET + Range: bytes=0-1048575 -> 206 / 1048576 B / 3.0 秒，连续 6 次全中
-  /// 即「长连接大流量 GET」会被挂住，「短小的带 Range 请求」稳定。
-  /// 分段还有附带好处：一段废了只损失这一段，换条连接从同一偏移续上，
-  /// 进度只增不减，不会再出现「卡在某个百分比不动」。
+  ///
+  /// 为什么还要「多连接并发」（2026-11-12，修「卡 4 MB / 卡 70%」）：
+  /// CDN 按「连接」给配额——单连接起步爆发 0.8~4 MB 后被压到 20~30 KB/s，
+  /// 串行下载的上限就是单连接速度；第 1 个 4 MB 分块用完配额后，下一段
+  /// 永远拿不到响应头，进度停在 4 MB；小文件单连接只能拿到全长的
+  /// 70~80%，剩下的靠 1 KB/s 滴水。实测同一地址并发拉不同区间可以线性
+  /// 叠加：×4=61.8、×8=125.2、×32=284.5 KB/s——这正是「迅雷能下、
+  /// App 下不了」的全部差别。并发结构复用 HLS 切片的滑动窗口，并发度走
+  /// [_maxConcurrentDownloads]（设置页「切片并发数」直接生效）。
+  ///
+  /// 分块落盘用「每块一个临时文件 + 完成后合并」（与 HLS 切片同一模式），
+  /// 而不是 RandomAccessFile 定位写：dart:io 的 FileMode.append 是 O_APPEND
+  ///（setPosition 会被忽略）、FileMode.write 打开即截断，都做不了
+  /// 「续传时按偏移改写旧文件」；分块文件还天然规避多连接写盘冲突，
+  /// 块文件长度本身就是续传进度，配 meta.json 记网格即可断点续传。
   Future<bool> _downloadDirectMp4(
       VideoInfo video, String mp4Url, String savePath,
       DownloadControl ctrl) async {
@@ -1830,389 +2066,836 @@ class CrawlerCore {
       ctrl.onOverallProgress?.call(downloaded, total);
     }
 
-    // ── 断点续传 ──
-    // 先下到 .part，成功后原子改名；失败保留 .part 供下次续传。
-    final partFile = File("$savePath.part");
-    var alreadyBytes = 0;
-    if (await partFile.exists()) {
-      alreadyBytes = await partFile.length();
-      if (alreadyBytes > 0) {
-        ctrl.onLog?.call(
-            "断点续传：已下载 ${(alreadyBytes / 1024 / 1024).toStringAsFixed(1)} MB",
-            "info");
+    // ── 临时目录：每块一个文件（与 HLS 切片同模式）──
+    // 成功后合并、改名到最终路径；失败保留供续传。
+    // 旧实现（v1.6.1 串行版）的 "$savePath.part" 单文件与新结构不兼容，
+    // 见到就删：宁可整片重下，也不接出错位的文件。
+    final partDir = Directory("$savePath.chunks");
+    try {
+      final legacy = File("$savePath.part");
+      if (await legacy.exists()) await legacy.delete();
+    } catch (_) {}
+
+    // 单块 256 KB ~ 1 MB：
+    // - 下限 256 KB：电脑端 32×256 KB 实测能线性叠满；且块越小越稳——
+    //   CDN 每条连接先爆发 0.8~4 MB 再断流，块在爆发额度内必定拿满，
+    //   不会出现「半块卡死、反复重试同一块」的空转。
+    // - 上限 1 MB：控制单块的握手与重试成本。
+    const chunkCap = 1024 * 1024;
+    const chunkFloor = 256 * 1024;
+    const stallTimeout = Duration(seconds: 20); // 块内 20 秒无新字节 → 掐掉换连接
+    const maxIdleRounds = 24; // 连续这么多「零进展请求」才放弃
+
+    // ── 分块网格与进度账本 ──
+    var totalBytes = 0; // 0 = 还不知道（探测后回填）
+    var chunkLen = 0; // 0 = 串行模式（单块、不带 Range，读到 EOF 为止）
+    var chunkCount = 0;
+    var chunkDone = <bool>[];
+    var inflightBytes = <int>[]; // 每块本次尝试已落盘字节（进度瞬时值）
+    var completedBytes = 0; // 已完成块的合计
+    var received = 0; // 完成块 + 在途瞬时（真实账本，用于失败文案）
+    var displayHigh = 0; // 界面进度只增不减：整块重试期间瞬时值回落，显示取历史高点
+
+    void recalcReceived() {
+      var sum = completedBytes;
+      for (final b in inflightBytes) {
+        sum += b;
+      }
+      received = sum;
+    }
+
+    void reportProgress() {
+      if (received > displayHigh) displayHigh = received;
+      reportBytes(displayHigh, totalBytes);
+      if (totalBytes > 0) {
+        final progress = (displayHigh / totalBytes).clamp(0.0, 1.0);
+        ctrl.onProgress?.call(
+            progress,
+            "${(displayHigh / 1024 / 1024).toStringAsFixed(1)}/"
+            "${(totalBytes / 1024 / 1024).toStringAsFixed(1)} MB");
       }
     }
 
-    // 每段 4 MB：在 300~500 KB/s 的线路上约 10 秒一段，
-    // 一段被掐也只损失这一段的等待时间。
-    const chunkSize = 4 * 1024 * 1024;
-    const stallTimeout = Duration(seconds: 20); // 段内 20 秒无新字节就换连接
-    const maxChunkRetries = 5; // 单个分块写盘失败的重试次数
-    const maxAttempts = 1000; // 总请求次数上限（4MB/次≈4GB），防服务器异常时空转
-    const maxIdleRounds = 24; // 连续这么多轮毫无进展才放弃
+    // ── 续传元数据：只记网格（total/chunkLen），块完成与否看块文件长度 ──
+    var metaTotal = 0;
+    var metaChunkLen = 0;
+    try {
+      final mf = File("${partDir.path}/meta.json");
+      if (await mf.exists()) {
+        final m = jsonDecode(await mf.readAsString()) as Map<String, dynamic>;
+        metaTotal = (m["total"] as num?)?.toInt() ?? 0;
+        metaChunkLen = (m["chunkLen"] as num?)?.toInt() ?? 0;
+      }
+    } catch (_) {
+      metaTotal = 0;
+      metaChunkLen = 0;
+    }
 
-    var totalBytes = 0;
-    var attempts = 0;
-    var idleRounds = 0;
-    var rangeSupported = true;
     var sizeLogged = false;
+    var rangeOk = true; // 服务器是否接受 Range（探测返回 200 时转串行）
+
+    // ── 全局中止标记：任一 worker 置位后，其余 worker 与调度全部让路 ──
+    String? fatalMsg;
+    var fatalRetryable = true;
+    var rangeLostFlag = false;
+    var replanTotal = 0;
+    var replanStreak = 0;
+    final activeTokens = <CancelToken>{};
+    void cancelAllActive() {
+      for (final t in activeTokens.toList()) {
+        if (!t.isCancelled) t.cancel("abort");
+      }
+    }
+
+    var attempts = 0;
+    var maxAttempts = 1000;
+    var idleStreak = 0;
+    var maxIdleAttempts = maxIdleRounds;
+    var workers = 1;
+    DateTime? lastStallLog; // 多条连接同时停滞时只记一条日志
 
     while (true) {
+      // ── 循环顶部：停止 / 失败 / 重排的统一出口 ──
       if (ctrl.isStopped) {
         ctrl.onLog?.call("下载已停止", "warn");
         ctrl.failureReason = "下载已停止";
         try {
-          await partFile.delete();
+          if (await partDir.exists()) await partDir.delete(recursive: true);
         } catch (_) {}
         return false;
       }
-      if (ctrl.isPaused) {
-        final wantStop = await ctrl.awaitIfPaused();
-        if (wantStop) {
-          ctrl.failureReason = "下载已停止";
+      if (fatalMsg != null) {
+        // 确定性失败（HTML 嗅探命中）不留半截分块；其余保留供续传
+        if (!fatalRetryable) {
           try {
-            await partFile.delete();
+            if (await partDir.exists()) await partDir.delete(recursive: true);
           } catch (_) {}
-          return false;
         }
-        idleRounds = 0; // 暂停不算失败，恢复后不消耗重试次数
-      }
-
-      if (totalBytes > 0 && alreadyBytes >= totalBytes) break;
-      if (attempts >= maxAttempts) {
-        final mb = (alreadyBytes / 1024 / 1024).toStringAsFixed(1);
-        ctrl.failureReason = "下载多次中断（已下 $mb MB），重试会从断点继续";
+        ctrl.retryable = fatalRetryable;
+        ctrl.failureReason = fatalMsg;
         return false;
       }
-
-      final start = alreadyBytes;
-      final end = totalBytes > 0
-          ? (start + chunkSize - 1).clamp(start, totalBytes - 1)
-          : start + chunkSize - 1;
-      final requestedLen = end - start + 1;
-
-      attempts++;
-      Timer? stallTimer;
-      final cancelToken = CancelToken();
-      RandomAccessFile? raf;
-      var stopThisAttempt = false;
-      var wroteThisAttempt = 0;
-
-      // ── 停滞看门狗 ──
-      // dio 的 receiveTimeout 是 10 分钟，CDN 掐连接时经常既不报错也不再
-      // 吐数据，界面就会「进度不动、也不失败」地卡着。这里自己盯：
-      // 20 秒没收到任何字节就掐掉本轮，立刻换一条连接从同一偏移续上。
-      void armWatchdog() {
-        stallTimer?.cancel();
-        stallTimer = Timer(stallTimeout, () {
-          if (!cancelToken.isCancelled) cancelToken.cancel("stalled");
-        });
+      if (rangeLostFlag) {
+        rangeLostFlag = false;
+        await _mp4WipeChunks(
+            partDir, "服务器开始忽略 Range，退回单连接从头下载", ctrl);
+        totalBytes = 0;
+        chunkLen = 0;
+        chunkCount = 0;
+        continue;
       }
-
-      try {
-        armWatchdog();
-        final resp = await dio.get<ResponseBody>(
-          mp4Url,
-          options: Options(
-            responseType: ResponseType.stream,
-            headers: {
-              "Accept": "*/*",
-              "Accept-Encoding": "identity",
-              if (rangeSupported) "Range": "bytes=$start-$end",
-            },
-            receiveTimeout: const Duration(minutes: 10),
-            sendTimeout: const Duration(seconds: 10),
-          ),
-          cancelToken: cancelToken,
-        );
-
-        final status = resp.statusCode ?? 0;
-        final lengthHeader =
-            int.tryParse(resp.headers.value("content-length") ?? "0") ?? 0;
-        final contentType =
-            (resp.headers.value("content-type") ?? "").toLowerCase();
-        final contentRange = resp.headers.value("content-range");
-
-        var resumed = status == 206 && start > 0;
-
-        if (status != 206) {
-          // 服务器忽略了 Range（或本来就不支持）：body 从第 0 字节开始，
-          // 前面已下的部分必须丢掉重写，否则会接成半截文件。
-          if (start > 0) {
-            ctrl.onLog?.call("服务器忽略了 Range，从头重新下载", "warn");
-          }
-          rangeSupported = false;
-          resumed = false;
-          alreadyBytes = 0;
-          try {
-            if (await partFile.exists()) await partFile.delete();
-          } catch (_) {}
-          if (lengthHeader > 0) totalBytes = lengthHeader;
+      if (replanTotal > 0) {
+        if (replanTotal != totalBytes) {
+          replanStreak = 0;
+          totalBytes = replanTotal;
+          await _mp4WipeChunks(partDir, "服务器文件总长已变为 $totalBytes，重新分块", ctrl);
         } else {
-          final rangeTotal = _contentRangeTotal(contentRange);
-          if (rangeTotal != null && rangeTotal > 0) {
-            totalBytes = rangeTotal;
-          } else if (lengthHeader > 0 && totalBytes <= 0) {
-            totalBytes = start + lengthHeader;
-          }
-          // 本地残留的 .part 比服务器上的文件还大（站点换源或上次写坏），
-          // 继续按偏移续传只会一直 416，只能重来。
-          if (totalBytes > 0 && alreadyBytes > totalBytes) {
-            ctrl.onLog?.call("本地临时文件大于服务器文件，重新下载", "warn");
-            try {
-              await partFile.delete();
-            } catch (_) {}
-            alreadyBytes = 0;
-            resumed = false;
+          // 总长没变却一直 416：连续 3 次就放弃，防止无意义空转
+          replanStreak++;
+          if (replanStreak >= 3) {
+            fatalMsg = "服务器对分块请求持续返回 416（文件可能已被更换），请稍后重试";
           }
         }
+        replanTotal = 0;
+        chunkCount = 0;
+        continue;
+      }
 
+      // ── 探测文件总长（Range: bytes=0-0）──
+      if (totalBytes <= 0 && rangeOk) {
+        var probed = false;
+        while (!probed && fatalMsg == null && !ctrl.isStopped) {
+          if (await ctrl.awaitIfPaused()) break; // 暂停中被 stop 叫醒
+          attempts++;
+          final o = await _probeMp4Total(dio, mp4Url, ctrl, stallTimeout, activeTokens);
+          if (o.kind == _Mp4ChunkKind.done) {
+            totalBytes = o.newTotal ?? 0; // 206：Content-Range 总长
+          } else if (o.kind == _Mp4ChunkKind.rangeLost) {
+            rangeOk = false; // 200：服务器忽略 Range，转串行
+            totalBytes = o.newTotal ?? 0;
+          } else if (o.kind == _Mp4ChunkKind.replan) {
+            totalBytes = o.newTotal ?? 0; // 416：用 Content-Range 校正
+          } else if (o.kind == _Mp4ChunkKind.fatal) {
+            fatalMsg = o.message ?? "下载失败";
+          } else if (o.kind == _Mp4ChunkKind.stalled) {
+            idleStreak++;
+            if (idleStreak >= maxIdleAttempts) {
+              fatalMsg = "线路长时间不返回数据（停滞不动），请换播放节点或稍后重试";
+            }
+          } else {
+            idleStreak++;
+            if (idleStreak >= maxIdleAttempts) {
+              fatalMsg = "连接不上服务器，请检查网络或更换播放节点";
+            } else {
+              await Future.delayed(const Duration(seconds: 2));
+            }
+          }
+          if (o.kind == _Mp4ChunkKind.done ||
+              o.kind == _Mp4ChunkKind.rangeLost ||
+              o.kind == _Mp4ChunkKind.replan) {
+            probed = true;
+          }
+        }
+        if (fatalMsg != null || ctrl.isStopped) continue;
+        if (rangeOk && totalBytes == 0) {
+          // 探测确认服务器上就是空文件：直接落一个空文件收尾
+          try {
+            await File(savePath).writeAsBytes(const <int>[], flush: true);
+          } catch (e) {
+            ctrl.failureReason = "创建文件失败: $e";
+            return false;
+          }
+          await _saveToHistory(video, savePath);
+          ctrl.onLog?.call("下载完成: ${video.title}", "info");
+          return true;
+        }
+      }
+
+      // ── 建分块网格（首轮；replan / rangeLost 后 chunkCount 归零重建）──
+      if (chunkCount == 0) {
+        if (!rangeOk) {
+          chunkLen = 0;
+          chunkCount = 1;
+        } else if (totalBytes <= 0) {
+          // 连总长都拿不到（206 却没有 Content-Range）：串行兜底
+          rangeOk = false;
+          chunkLen = 0;
+          chunkCount = 1;
+        } else {
+          final ideal = totalBytes ~/ max(_mp4MaxConcurrentDownloads, 1);
+          chunkLen =
+              ideal < chunkFloor ? chunkFloor : (ideal > chunkCap ? chunkCap : ideal);
+          if (chunkLen > totalBytes) chunkLen = totalBytes;
+          chunkCount = (totalBytes + chunkLen - 1) ~/ chunkLen;
+          // 上次的网格还适用时沿用旧块长：改了并发数不该丢掉已完成块
+          if (metaTotal == totalBytes &&
+              metaChunkLen > 0 &&
+              metaChunkLen != chunkLen) {
+            chunkLen = metaChunkLen;
+            chunkCount = (totalBytes + chunkLen - 1) ~/ chunkLen;
+          }
+        }
+        // 服务器文件变了 / 串并行切换：旧分块全部作废
+        final gridChanged = (metaTotal > 0 &&
+                totalBytes > 0 &&
+                metaTotal != totalBytes) ||
+            (metaChunkLen > 0 && !rangeOk) ||
+            (metaTotal > 0 && metaChunkLen == 0 && rangeOk);
+        if (gridChanged) {
+          await _mp4WipeChunks(partDir, "服务器文件或分块方案与上次不一致", ctrl);
+        }
+        chunkDone = List<bool>.filled(chunkCount, false);
+        inflightBytes = List<int>.filled(chunkCount, 0);
+        completedBytes = 0;
+        workers = chunkCount == 1
+            ? 1
+            : min(_mp4MaxConcurrentDownloads, chunkCount);
+        maxAttempts = chunkCount * 3 + 60;
+        maxIdleAttempts = max(maxIdleRounds, workers * 2);
+        await partDir.create(recursive: true);
+        await _mp4WriteMeta(partDir, totalBytes, chunkLen);
+        // 盘点已完成块（块文件存在且长度与网格一致才算完成；
+        // 长度对不上的半截块留着重下即可，不用删）
+        var resumedCount = 0;
+        for (var i = 0; i < chunkCount; i++) {
+          if (await _mp4ChunkFileDone(partDir, i, chunkLen, totalBytes)) {
+            chunkDone[i] = true;
+            completedBytes += _mp4ExpectedLen(i, chunkLen, totalBytes);
+            resumedCount++;
+          }
+        }
+        recalcReceived();
+        reportProgress();
+        if (resumedCount > 0) {
+          ctrl.onLog?.call(
+              "断点续传：已完成 $resumedCount/$chunkCount 块"
+              "（${(completedBytes / 1024 / 1024).toStringAsFixed(1)} MB）",
+              "info");
+        }
         if (totalBytes > 0 && !sizeLogged) {
           sizeLogged = true;
           ctrl.onLog?.call(
               "文件大小: ${(totalBytes / 1024 / 1024).toStringAsFixed(2)} MB",
               "info");
         }
-
-        final file = await partFile
-            .open(mode: resumed ? FileMode.append : FileMode.write);
-        raf = file;
-
-        var headChecked = resumed;
-        await for (final chunk in resp.data!.stream) {
-          armWatchdog();
-          if (ctrl.isStopped) {
-            stopThisAttempt = true;
-            break;
-          }
-          if (ctrl.isPaused) {
-            // 暂停期间本来就收不到数据，别让看门狗把这条连接掐掉
-            stallTimer?.cancel();
-            final wantStop = await ctrl.awaitIfPaused();
-            if (wantStop) {
-              stopThisAttempt = true;
-              break;
-            }
-            armWatchdog();
-          }
-
-          if (!headChecked && chunk.isNotEmpty) {
-            headChecked = true;
-            // 拿到第一段就先判断这到底是不是视频：
-            // 签名过期或触发风控时站点会回 200 + 一个 HTML 页面，
-            // 旧实现会把它原样存成 .mp4，任务显示「下载完成」但文件放不出来。
-            //
-            // 判据必须是「像文本」而不是「首字符是 < 或 {」：视频头几个字节
-            // 完全可能是随机的 { 或 <，只看首字符会把正常片子误杀。
-            final head = chunk.take(512).toList();
-            var printable = 0;
-            for (final b in head) {
-              if ((b >= 32 && b < 127) || b == 9 || b == 10 || b == 13) {
-                printable++;
-              }
-            }
-            // 页面正文里只要有中文（UTF-8 三字节），可打印字符比例就会掉到
-            // 0.4 左右，所以不能只靠比例；再补一条「content-type 说是文本
-            // 且首字符是 < 或 {」的判定，两者取并集。
-            final looksText =
-                head.length >= 16 && printable / head.length > 0.9;
-            final textType = contentType.contains("text/html") ||
-                contentType.contains("application/json") ||
-                contentType.contains("text/plain");
-            final preview = String.fromCharCodes(
-                head.take(120).map((b) => (b >= 32 && b < 127) ? b : 32));
-            final lower = preview.toLowerCase().trimLeft();
-            final looksMarkup =
-                lower.startsWith("<") || lower.startsWith("{");
-            if (looksText || (textType && looksMarkup)) {
-              ctrl.onLog?.call("服务器返回的是网页而不是视频: $preview", "error");
-              ctrl.failureReason = "站点返回的是网页而不是视频文件（链接已失效或被风控拦截）。"
-                  "请重试；若一直失败，到设置里把播放节点切回「自动（跟随站点）」。";
-              ctrl.retryable = false;
-              await file.close();
-              raf = null;
-              if (!resumed) {
-                try {
-                  await partFile.delete();
-                } catch (_) {}
-              }
-              return false;
-            }
-          }
-
-          // 分块写盘：偶发的一次写入失败不该整单作废，重试几次再往上抛。
-          var written = false;
-          for (var i = 0; i < maxChunkRetries; i++) {
-            try {
-              await file.writeFrom(chunk);
-              written = true;
-              break;
-            } catch (e) {
-              ctrl.onLog?.call("写入分块失败（第 ${i + 1} 次）: $e", "warn");
-              await Future.delayed(Duration(milliseconds: 200 * (i + 1)));
-            }
-          }
-          if (!written) {
-            throw FileSystemException("分块写入磁盘失败", partFile.path);
-          }
-
-          wroteThisAttempt += chunk.length;
-          final overall = alreadyBytes + wroteThisAttempt;
-          reportBytes(overall, totalBytes);
-          if (totalBytes > 0) {
-            final progress = (overall / totalBytes).clamp(0.0, 1.0);
-            final downloadedMB = (overall / 1024 / 1024).toStringAsFixed(1);
-            final totalMB = (totalBytes / 1024 / 1024).toStringAsFixed(1);
-            ctrl.onProgress?.call(progress, "$downloadedMB/$totalMB MB");
-          }
-        }
-
-        await file.close();
-        raf = null;
-      } catch (e) {
-        if (raf != null) {
-          try {
-            await raf.close();
-          } catch (_) {}
-          raf = null;
-        }
-        // 把已写进 .part 的部分算进断点，下一轮从这里接着要
-        try {
-          if (await partFile.exists()) {
-            final len = await partFile.length();
-            if (len > alreadyBytes) alreadyBytes = len;
-          }
-        } catch (_) {}
-        if (ctrl.isStopped) {
-          ctrl.failureReason = "下载已停止";
-          try {
-            await partFile.delete();
-          } catch (_) {}
-          return false;
-        }
-
-        final code = e is DioException ? e.response?.statusCode : null;
-        // 416 = 请求的偏移越过了文件末尾。通常是本地 .part 已经完整，
-        // 或者服务器上的文件变了。用响应里的 Content-Range 校正总长度。
-        if (code == 416) {
-          final rangeHeader =
-              e is DioException ? e.response?.headers.value("content-range") : null;
-          final realTotal = _contentRangeTotal(rangeHeader);
-          if (realTotal != null && realTotal > 0) {
-            totalBytes = realTotal;
-            if (alreadyBytes >= realTotal) break;
-          }
-          ctrl.onLog?.call("请求偏移越界（416），重新下载", "warn");
-          try {
-            await partFile.delete();
-          } catch (_) {}
-          alreadyBytes = 0;
-          continue;
-        }
-        // 4xx（签名过期 / 无权限 / 文件没了）重连没有意义，直接给出原因。
-        if (code != null && code >= 400 && code < 500) {
-          final msg = _describeDirectDownloadError(e);
-          ctrl.onLog?.call("下载失败: $msg", "error");
-          ctrl.failureReason = msg;
-          return false;
-        }
-
-        final progressed = alreadyBytes > start;
-        if (progressed) {
-          idleRounds = 0;
-        } else {
-          idleRounds++;
-        }
-        // 看门狗主动断开也是一种「中断」，文案不能套用 dio 的
-        // 「The request was manually cancelled by the user」，
-        // 否则用户看到的会是莫名其妙的一句话。
-        final stalled =
-            e is DioException && e.type == DioExceptionType.cancel;
-        if (stalled) {
+        if (chunkCount > 1) {
           ctrl.onLog?.call(
-              "${stallTimeout.inSeconds}s 没收到任何数据，正在换一条连接继续",
-              "warn");
+              "并发下载：$workers 条连接 × 每块 ${(chunkLen / 1024).toStringAsFixed(0)} KB"
+              "（共 $chunkCount 块）",
+              "info");
         }
-        if (idleRounds >= maxIdleRounds) {
-          final msg = stalled
-              ? "线路长时间不返回数据（停滞不动），请换播放节点或稍后重试"
-              : _describeDirectDownloadError(e);
-          ctrl.onLog?.call(
-              "连续 $maxIdleRounds 轮没取到数据，停止重连: $msg", "error");
-          final mb = (alreadyBytes / 1024 / 1024).toStringAsFixed(1);
-          ctrl.failureReason = "$msg（已下载 $mb MB，重试会从断点继续）";
-          return false;
-        }
-
-        var waitSeconds = progressed ? 1 : 2;
-        if (stalled) waitSeconds = 0; // 停滞多半是这条连接废了，立刻换一条
-        if (waitSeconds > 0) {
-          await Future.delayed(Duration(seconds: waitSeconds));
-        }
-        continue;
-      } finally {
-        stallTimer?.cancel();
-        stallTimer = null;
       }
 
-      if (stopThisAttempt) {
-        if (ctrl.isStopped) {
-          ctrl.onLog?.call("下载已停止", "warn");
-          ctrl.failureReason = "下载已停止";
-          try {
-            await partFile.delete();
-          } catch (_) {}
+      // ── 滑动窗口并发（结构与 HLS 切片一致）──
+      // 每完成一块立即补发下一块，始终保持 N 条连接在途。
+      // 用「未消费的完成信号计数 + 等待者队列」实现，信号不会丢失。
+      var unconsumed = 0;
+      final waiters = <Completer<void>>[];
+
+      void signalDone() {
+        if (waiters.isNotEmpty) {
+          waiters.removeAt(0).complete();
         } else {
-          try {
-            if (await partFile.exists()) {
-              final len = await partFile.length();
-              if (len > alreadyBytes) alreadyBytes = len;
-            }
-          } catch (_) {}
-          final mb = (alreadyBytes / 1024 / 1024).toStringAsFixed(1);
-          ctrl.onLog?.call("已暂停，已保留 $mb MB，恢复后可续传", "info");
-          ctrl.failureReason = "已暂停";
+          unconsumed++; // 没有等待者，先记账，稍后被消费
         }
+      }
+
+      Future<void> waitAny() {
+        if (unconsumed > 0) {
+          unconsumed--;
+          return Future.value();
+        }
+        final c = Completer<void>();
+        waiters.add(c);
+        return c.future;
+      }
+
+      Future<void> runOne(int idx) async {
+        try {
+          while (true) {
+            // 全局中止 / 停止：不再发新请求
+            if (ctrl.isStopped ||
+                fatalMsg != null ||
+                rangeLostFlag ||
+                replanTotal > 0) {
+              return;
+            }
+            if (await ctrl.awaitIfPaused()) return; // 暂停中被 stop 叫醒
+            if (attempts >= maxAttempts) return; // 预算兜底，收尾判定统一给文案
+            attempts++;
+
+            final start = idx * chunkLen;
+            final end = chunkLen > 0
+                ? min(start + chunkLen, totalBytes) - 1
+                : -1; // -1 = 串行整文件，不带 Range
+            inflightBytes[idx] = 0;
+            final o = await _fetchMp4ChunkOnce(
+              dio: dio,
+              url: mp4Url,
+              target: File(
+                  "${partDir.path}/chunk_${idx.toString().padLeft(5, '0')}"),
+              start: start,
+              end: end,
+              ctrl: ctrl,
+              stallTimeout: stallTimeout,
+              activeTokens: activeTokens,
+              sniff: idx == 0,
+              onWritten: (w) {
+                inflightBytes[idx] = w;
+                recalcReceived();
+                reportProgress();
+              },
+            );
+
+            if (o.kind == _Mp4ChunkKind.done) {
+              inflightBytes[idx] = 0;
+              if (!chunkDone[idx]) {
+                chunkDone[idx] = true;
+                completedBytes += _mp4ExpectedLen(idx, chunkLen, totalBytes);
+              }
+              recalcReceived();
+              reportProgress();
+              idleStreak = 0;
+              return;
+            } else if (o.kind == _Mp4ChunkKind.partial) {
+              // 连接提前断流但有字节落盘：整块重下（块文件重写，进度只增不减）
+              if (o.bytesWritten > 0) {
+                idleStreak = 0;
+              } else {
+                idleStreak++;
+              }
+              await Future.delayed(const Duration(seconds: 1));
+            } else if (o.kind == _Mp4ChunkKind.stalled) {
+              // 20 秒零字节：这条连接的配额多半用完了，立刻换一条
+              if (fatalMsg == null && !ctrl.isStopped) {
+                final now = DateTime.now();
+                if (lastStallLog == null ||
+                    now.difference(lastStallLog!).inMilliseconds >= 1000) {
+                  lastStallLog = now;
+                  ctrl.onLog?.call(
+                      "${stallTimeout.inSeconds}s 没收到任何数据，正在换一条连接继续",
+                      "warn");
+                }
+              }
+              idleStreak++;
+              if (idleStreak >= maxIdleAttempts) {
+                fatalMsg ??=
+                    "线路长时间不返回数据（停滞不动），请换播放节点或稍后重试";
+                cancelAllActive();
+                return;
+              }
+            } else if (o.kind == _Mp4ChunkKind.failed) {
+              idleStreak++;
+              if (idleStreak >= maxIdleAttempts) {
+                fatalMsg ??= "下载中断（长时间取不到数据），重试会从断点继续";
+                cancelAllActive();
+                return;
+              }
+              await Future.delayed(const Duration(seconds: 2));
+            } else if (o.kind == _Mp4ChunkKind.fatal) {
+              if (!o.retryable) fatalRetryable = false;
+              fatalMsg ??= o.message ?? "下载失败";
+              cancelAllActive();
+              return;
+            } else if (o.kind == _Mp4ChunkKind.rangeLost) {
+              rangeLostFlag = true;
+              cancelAllActive();
+              return;
+            } else {
+              // replan
+              replanTotal = o.newTotal ?? 0;
+              cancelAllActive();
+              return;
+            }
+          }
+        } finally {
+          inflightBytes[idx] = 0;
+          signalDone();
+        }
+      }
+
+      var pending = 0;
+      var inFlight = 0;
+      while (inFlight > 0 || pending < chunkCount) {
+        if (ctrl.isStopped ||
+            fatalMsg != null ||
+            rangeLostFlag ||
+            replanTotal > 0) {
+          break;
+        }
+        // 暂停期间不派发新块；已派发的 worker 会在自己的循环里挂起等 resume
+        while (inFlight < workers && pending < chunkCount && !ctrl.isPaused) {
+          unawaited(runOne(pending));
+          pending++;
+          inFlight++;
+        }
+        if (pending >= chunkCount && inFlight == 0) break;
+        if (inFlight == 0) {
+          // 窗口空了但还有块没派发：在暂停里等 resume（或 stop 退出）
+          if (await ctrl.awaitIfPaused()) break;
+          continue;
+        }
+        await waitAny();
+        inFlight--;
+      }
+      // 收尾：等在途任务全部结束（暂停/停止时同样要收尾，避免半截状态）
+      while (inFlight > 0) {
+        await waitAny();
+        inFlight--;
+      }
+
+      // ── 本轮收尾判定（rangeLost / replan 交回循环顶部统一处理）──
+      if (ctrl.isStopped) continue;
+      if (fatalMsg != null) continue;
+      if (rangeLostFlag || replanTotal > 0) continue;
+
+      var allDone = true;
+      for (final d in chunkDone) {
+        if (!d) {
+          allDone = false;
+          break;
+        }
+      }
+      if (!allDone) {
+        final mb = (received / 1024 / 1024).toStringAsFixed(1);
+        ctrl.failureReason = attempts >= maxAttempts
+            ? "下载多次中断（已下 $mb MB），重试会从断点继续"
+            : "下载中断（已下 $mb MB），重试会从断点继续";
         return false;
       }
 
-      // 这一轮正常结束：把落盘长度同步为断点
-      try {
-        if (await partFile.exists()) {
-          final len = await partFile.length();
-          if (len > alreadyBytes) alreadyBytes = len;
-        }
-      } catch (_) {}
-
-      if (totalBytes > 0 && alreadyBytes >= totalBytes) break;
-
-      // 不知道总长度时（服务器既不给 Content-Range 也不给 Content-Length）：
-      // 整文件那条路读完即完成；分段路则「本段没要满」视为文件结束。
-      if (totalBytes <= 0) {
-        if (!rangeSupported) break;
-        if (wroteThisAttempt < requestedLen) break;
+      // ── 合并分块 → 原子改名 → 记历史 ──
+      final expectedLens = <int>[
+        for (var i = 0; i < chunkCount; i++)
+          _mp4ExpectedLen(i, chunkLen, totalBytes)
+      ];
+      if (!await _mergeMp4Chunks(partDir, expectedLens, savePath, ctrl)) {
+        ctrl.failureReason ??= "合并分块文件失败，重试会从断点继续";
+        return false;
       }
+      await _saveToHistory(video, savePath);
+      ctrl.onLog?.call("下载完成: ${video.title}", "info");
+      return true;
+    }
+  }
 
-      final progressed = alreadyBytes > start;
-      if (progressed) {
-        idleRounds = 0;
-      } else {
-        idleRounds++;
-        if (idleRounds >= maxIdleRounds) {
-          final mb = (alreadyBytes / 1024 / 1024).toStringAsFixed(1);
-          ctrl.failureReason =
-              "下载中断（$mb MB 后长时间取不到数据），重试会从断点继续";
-          return false;
-        }
-        await Future.delayed(const Duration(seconds: 2));
+  /// 媒体分块请求头。
+  ///
+  /// Connection: close 是刻意为之：CDN 按「连接」给起步配额，刚吐完一块的
+  /// 连接配额已经耗尽，复用它的下一次请求只会白等 20 秒看门狗；close 让
+  /// 完成的连接不回连接池，每次分块都拿一条带新配额的连接。
+  /// [end] < start 表示串行整文件下载，不带 Range。
+  Map<String, String> _mp4RequestHeaders([int? start, int? end]) {
+    return {
+      "Accept": "*/*",
+      // 分段下载必须拿原始字节：gzip 后的字节数与 Content-Range
+      // 对不上，按偏移续传会错位。
+      "Accept-Encoding": "identity",
+      "Connection": "close",
+      if (start != null && end != null && end >= start)
+        "Range": "bytes=$start-$end",
+    };
+  }
+
+  /// 请求一个分块并写入 [target]（块文件独占写）。
+  ///
+  /// 块文件里可能已有上次没下完的部分：此时只请求剩余区间并以 append
+  /// 续写；整块从零开始时才用 FileMode.write 截断。
+  /// 永不抛异常：所有错误都折算成 [_Mp4ChunkOutcome]，重试策略由调用方定。
+  /// [end] < [start] 表示串行整文件下载（不带 Range，读到 EOF 为止）。
+  Future<_Mp4ChunkOutcome> _fetchMp4ChunkOnce({
+    required Dio dio,
+    required String url,
+    required File target,
+    required int start,
+    required int end,
+    required DownloadControl ctrl,
+    required Duration stallTimeout,
+    required Set<CancelToken> activeTokens,
+    required void Function(int written) onWritten,
+    bool sniff = false,
+  }) async {
+    final expected = end >= start ? end - start + 1 : -1;
+    final cancelToken = CancelToken();
+    activeTokens.add(cancelToken);
+    Timer? stallTimer;
+    RandomAccessFile? raf;
+    // 块文件可能带着上次没下完的部分：从它的实际长度接着要。
+    // 块文件是纯顺序写，FileMode.append（O_APPEND）正好匹配；这样
+    // 「每条连接只吐一段配额就断流」的服务器行为也能几何收敛，
+    // 不会在同一块上反复从零开始空转。
+    var have = 0;
+    if (expected > 0 && await target.exists()) {
+      have = await target.length();
+      if (have > expected) {
+        // 长度越过网格（服务器换源等异常）：删掉整块重来
+        try {
+          await target.delete();
+        } catch (_) {}
+        have = 0;
       }
     }
+    if (expected > 0 && have >= expected) {
+      return const _Mp4ChunkOutcome(_Mp4ChunkKind.done);
+    }
+    var written = have;
 
-    // 下载完成：原子改名到最终路径
-    await partFile.rename(savePath);
-    await _saveToHistory(video, savePath);
-    ctrl.onLog?.call("下载完成: ${video.title}", "info");
-    return true;
+    // ── 停滞看门狗 ──
+    // dio 的 receiveTimeout 是 10 分钟，CDN 掐连接时经常既不报错也不再
+    // 吐数据，界面就会「进度不动、也不失败」地卡着。这里自己盯：
+    // 20 秒没收到任何字节就掐掉本次请求，换一条连接重试。
+    void armWatchdog() {
+      stallTimer?.cancel();
+      stallTimer = Timer(stallTimeout, () {
+        if (!cancelToken.isCancelled) cancelToken.cancel("stalled");
+      });
+    }
+
+    try {
+      armWatchdog();
+      final resp = await dio.get<ResponseBody>(
+        url,
+        options: Options(
+          responseType: ResponseType.stream,
+          // 续传块：只请求还没拿到的后半段
+          headers: _mp4RequestHeaders(
+              expected > 0 ? start + have : null, expected > 0 ? end : null),
+          receiveTimeout: const Duration(minutes: 10),
+          sendTimeout: const Duration(seconds: 10),
+        ),
+        cancelToken: cancelToken,
+      );
+
+      final status = resp.statusCode ?? 0;
+      final contentType =
+          (resp.headers.value("content-type") ?? "").toLowerCase();
+
+      if (expected > 0 && status != 206) {
+        // 服务器开始忽略 Range：响应体从第 0 字节开始，按偏移写会接出错位
+        // 文件。弃流、上报，由外层清掉全部分块退回串行。
+        final sub = resp.data!.stream.listen((_) {});
+        await sub.cancel();
+        return const _Mp4ChunkOutcome(_Mp4ChunkKind.rangeLost);
+      }
+
+      raf = await target.open(
+          mode: (expected > 0 && have > 0) ? FileMode.append : FileMode.write);
+      // 追写续传块时响应从文件中段开始，头部嗅探只对完整的新响应做
+      var headChecked = !sniff || (expected > 0 && have > 0);
+      await for (final chunk in resp.data!.stream) {
+        armWatchdog();
+        if (ctrl.isStopped) break;
+        if (ctrl.isPaused) {
+          // 暂停期间本来就收不到数据，别让看门狗把这条连接掐掉
+          stallTimer?.cancel();
+          final wantStop = await ctrl.awaitIfPaused();
+          if (wantStop) break;
+          armWatchdog();
+        }
+
+        if (!headChecked && chunk.isNotEmpty) {
+          headChecked = true;
+          final reason = _mp4SniffFailure(chunk, contentType, ctrl);
+          if (reason != null) {
+            return _Mp4ChunkOutcome(_Mp4ChunkKind.fatal,
+                message: reason, retryable: false);
+          }
+        }
+
+        // 分块写盘：偶发的一次写入失败不该整单作废，重试几次再放弃
+        var ok = false;
+        for (var i = 0; i < 5; i++) {
+          try {
+            await raf.writeFrom(chunk);
+            ok = true;
+            break;
+          } catch (e) {
+            ctrl.onLog?.call("写入分块失败（第 ${i + 1} 次）: $e", "warn");
+            await Future.delayed(Duration(milliseconds: 200 * (i + 1)));
+          }
+        }
+        if (!ok) {
+          throw FileSystemException("分块写入磁盘失败", target.path);
+        }
+
+        written += chunk.length;
+        onWritten(written);
+      }
+
+      if (ctrl.isStopped) {
+        return const _Mp4ChunkOutcome(_Mp4ChunkKind.failed);
+      }
+      if (expected > 0) {
+        if (written == expected) {
+          return const _Mp4ChunkOutcome(_Mp4ChunkKind.done);
+        }
+        // 服务器提前断流：整块重下。已写部分不计入完成账本，进度不虚高。
+        return _Mp4ChunkOutcome(_Mp4ChunkKind.partial, bytesWritten: written);
+      }
+      // 串行模式：读到 EOF 即完成
+      return const _Mp4ChunkOutcome(_Mp4ChunkKind.done);
+    } catch (e) {
+      if (ctrl.isStopped) {
+        return const _Mp4ChunkOutcome(_Mp4ChunkKind.failed);
+      }
+      final err = e is DioException ? e : null;
+      final code = err?.response?.statusCode;
+      if (code == 416) {
+        // 请求的偏移越过了文件末尾：服务器上的文件比网格小，按新总长重排
+        final realTotal =
+            _contentRangeTotal(err?.response?.headers.value("content-range"));
+        if (realTotal != null && realTotal > 0) {
+          return _Mp4ChunkOutcome(_Mp4ChunkKind.replan, newTotal: realTotal);
+        }
+        return const _Mp4ChunkOutcome(_Mp4ChunkKind.failed);
+      }
+      if (code != null && code >= 400 && code < 500) {
+        // 签名过期 / 无权限 / 文件没了：重连没有意义，直接给出原因
+        return _Mp4ChunkOutcome(_Mp4ChunkKind.fatal,
+            message: _describeDirectDownloadError(e));
+      }
+      if (err != null && err.type == DioExceptionType.cancel) {
+        // 看门狗掐的；若是其它 worker 触发的全局中止，外层看共享标记区分
+        return const _Mp4ChunkOutcome(_Mp4ChunkKind.stalled);
+      }
+      return _Mp4ChunkOutcome(_Mp4ChunkKind.failed, message: e.toString());
+    } finally {
+      stallTimer?.cancel();
+      activeTokens.remove(cancelToken);
+      if (raf != null) {
+        try {
+          await raf.close();
+        } catch (_) {}
+      }
+    }
+  }
+
+  /// 探测直链文件总长（Range: bytes=0-0）。
+  ///
+  /// 总长只认 Content-Range（见 [_contentRangeTotal]：HEAD 的
+  /// content-length 不可信，实测同一地址两次 HEAD 报过 16.00 MB 与 3.24 MB）。
+  /// 206 却没有 Content-Range 时没法按网格切，退回串行。
+  Future<_Mp4ChunkOutcome> _probeMp4Total(
+      Dio dio,
+      String url,
+      DownloadControl ctrl,
+      Duration stallTimeout,
+      Set<CancelToken> activeTokens) async {
+    final cancelToken = CancelToken();
+    activeTokens.add(cancelToken);
+    Timer? stallTimer;
+    try {
+      stallTimer = Timer(stallTimeout, () {
+        if (!cancelToken.isCancelled) cancelToken.cancel("stalled");
+      });
+      final resp = await dio.get<ResponseBody>(
+        url,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: _mp4RequestHeaders(0, 0),
+          receiveTimeout: const Duration(minutes: 1),
+          sendTimeout: const Duration(seconds: 10),
+        ),
+        cancelToken: cancelToken,
+      );
+      final status = resp.statusCode ?? 0;
+      // 响应体只有 1 字节（或一页 HTML），立刻弃流、关连接
+      final sub = resp.data!.stream.listen((_) {});
+      await sub.cancel();
+      final crTotal = _contentRangeTotal(resp.headers.value("content-range"));
+      final lengthHeader =
+          int.tryParse(resp.headers.value("content-length") ?? "") ?? 0;
+      if (status == 206) {
+        if (crTotal != null && crTotal > 0) {
+          return _Mp4ChunkOutcome(_Mp4ChunkKind.done, newTotal: crTotal);
+        }
+        return const _Mp4ChunkOutcome(_Mp4ChunkKind.rangeLost);
+      }
+      if (status == 200) {
+        // 服务器忽略 Range：退回串行；Content-Length 可当总长参考
+        return _Mp4ChunkOutcome(_Mp4ChunkKind.rangeLost,
+            newTotal: lengthHeader > 0 ? lengthHeader : null);
+      }
+      return _Mp4ChunkOutcome(_Mp4ChunkKind.failed, message: "HTTP $status");
+    } catch (e) {
+      if (ctrl.isStopped) {
+        return const _Mp4ChunkOutcome(_Mp4ChunkKind.failed);
+      }
+      final err = e is DioException ? e : null;
+      final code = err?.response?.statusCode;
+      if (code == 416) {
+        final crTotal =
+            _contentRangeTotal(err?.response?.headers.value("content-range"));
+        return _Mp4ChunkOutcome(_Mp4ChunkKind.replan, newTotal: crTotal ?? 0);
+      }
+      if (code != null && code >= 400 && code < 500) {
+        return _Mp4ChunkOutcome(_Mp4ChunkKind.fatal,
+            message: _describeDirectDownloadError(e));
+      }
+      if (err != null && err.type == DioExceptionType.cancel) {
+        return const _Mp4ChunkOutcome(_Mp4ChunkKind.stalled);
+      }
+      return _Mp4ChunkOutcome(_Mp4ChunkKind.failed,
+          message: _describeDirectDownloadError(e));
+    } finally {
+      stallTimer?.cancel();
+      activeTokens.remove(cancelToken);
+    }
+  }
+
+  /// 判断响应开头是不是网页/JSON——签名过期或触发风控时站点会回
+  /// 200 + 一个 HTML 页面，旧实现会把它原样存成 .mp4，任务显示
+  /// 「下载完成」但文件放不出来。
+  ///
+  /// 判据必须是「像文本」而不是「首字符是 < 或 {」：视频头几个字节完全
+  /// 可能是随机的 { 或 <，只看首字符会把正常片子误杀。页面正文里有中文
+  ///（UTF-8 三字节）会把可打印比例拉到 0.4 左右，所以比例之外再补一条
+  /// 「content-type 说是文本且首字符是 < 或 {」，两者取并集。
+  /// 返回 null = 像视频，继续下载；返回文案 = 给用户的失败原因。
+  String? _mp4SniffFailure(
+      List<int> chunk, String contentType, DownloadControl ctrl) {
+    final head = chunk.take(512).toList();
+    var printable = 0;
+    for (final b in head) {
+      if ((b >= 32 && b < 127) || b == 9 || b == 10 || b == 13) {
+        printable++;
+      }
+    }
+    final looksText = head.length >= 16 && printable / head.length > 0.9;
+    final textType = contentType.contains("text/html") ||
+        contentType.contains("application/json") ||
+        contentType.contains("text/plain");
+    final preview = String.fromCharCodes(
+        head.take(120).map((b) => (b >= 32 && b < 127) ? b : 32));
+    final lower = preview.toLowerCase().trimLeft();
+    final looksMarkup = lower.startsWith("<") || lower.startsWith("{");
+    if (looksText || (textType && looksMarkup)) {
+      ctrl.onLog?.call("服务器返回的是网页而不是视频: $preview", "error");
+      return "站点返回的是网页而不是视频文件（链接已失效或被风控拦截）。"
+          "请重试；若一直失败，到设置里把播放节点切回「自动（跟随站点）」。";
+    }
+    return null;
+  }
+
+  /// 第 idx 块的期望字节数；-1 表示未知（串行且总长拿不到）
+  int _mp4ExpectedLen(int idx, int chunkLen, int total) {
+    if (chunkLen <= 0) return total > 0 ? total : -1;
+    final start = idx * chunkLen;
+    final end = min(start + chunkLen, total);
+    return end - start;
+  }
+
+  /// 块文件是否已完成：存在且长度与网格一致。
+  /// 长度对不上（上次写了一半被杀）不算完成，整块重下。
+  Future<bool> _mp4ChunkFileDone(
+      Directory dir, int idx, int chunkLen, int total) async {
+    final f = File("${dir.path}/chunk_${idx.toString().padLeft(5, '0')}");
+    if (!await f.exists()) return false;
+    final expected = _mp4ExpectedLen(idx, chunkLen, total);
+    if (expected <= 0) return false;
+    return await f.length() == expected;
+  }
+
+  /// 写续传元数据。写失败只影响下次续传精度，不阻断本次下载。
+  Future<void> _mp4WriteMeta(Directory dir, int total, int chunkLen) async {
+    try {
+      await File("${dir.path}/meta.json").writeAsString(
+          jsonEncode({"v": 1, "total": total, "chunkLen": chunkLen}),
+          flush: true);
+    } catch (_) {}
+  }
+
+  /// 清空分块临时目录（服务器文件变化 / 串并行切换 / 确定性失败时）
+  Future<void> _mp4WipeChunks(
+      Directory dir, String why, DownloadControl ctrl) async {
+    ctrl.onLog?.call("清空分块临时目录：$why", "warn");
+    try {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    } catch (_) {}
+  }
+
+  /// 把分块文件按序合并成最终文件；全部通过长度校验后原子改名。
+  Future<bool> _mergeMp4Chunks(Directory partDir, List<int> expectedLens,
+      String savePath, DownloadControl ctrl) async {
+    final merged = File("$savePath.merging");
+    IOSink? sink;
+    try {
+      sink = merged.openWrite(mode: FileMode.write);
+      var written = 0;
+      for (var i = 0; i < expectedLens.length; i++) {
+        final f = File("${partDir.path}/chunk_${i.toString().padLeft(5, '0')}");
+        var len = 0;
+        if (await f.exists()) len = await f.length();
+        final expected = expectedLens[i];
+        if (expected > 0 && len != expected) {
+          ctrl.onLog?.call("合并中止：分块 $i 大小不符（$len / $expected）", "error");
+          return false;
+        }
+        await sink.addStream(f.openRead());
+        written += len;
+      }
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      if (written <= 0) {
+        ctrl.onLog?.call("合并中止：所有分块都是空的", "error");
+        return false;
+      }
+      await merged.rename(savePath);
+      try {
+        await partDir.delete(recursive: true);
+      } catch (_) {}
+      return true;
+    } catch (e) {
+      ctrl.onLog?.call("合并分块失败: $e", "error");
+      return false;
+    } finally {
+      if (sink != null) {
+        try {
+          await sink.close();
+        } catch (_) {}
+      }
+    }
   }
 
   /// 从 Content-Range 头里取文件总长度
