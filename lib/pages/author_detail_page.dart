@@ -153,11 +153,12 @@ class _AuthorDetailPageState extends State<AuthorDetailPage> {
     if (mounted) {
       String msg = '已添加 $newCount 个任务到下载队列';
       if (dupCount > 0) msg += '，$dupCount 个已存在';
-      ScaffoldMessenger.of(context).showSnackBar(
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
         SnackBar(
           content: Text(msg),
           duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
         ),
       );
       setState(() => _selectedIds.clear());

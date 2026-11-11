@@ -131,6 +131,21 @@ class AppTheme {
     color: textHint,
   );
 
+  // ─────────────────── 提示条（SnackBar） ───────────────────
+  //
+  // 所有提示统一成「悬浮 + 距底 70」：
+  // ① 页面根 Scaffold 用了 extendBody，底栏是 62 高的自绘胶囊，
+  //    默认贴底的 SnackBar 会落在底栏后面，看起来被遮住；
+  // ② 悬浮样式下 margin 是往上抬的量，70 = 底栏 62 + 8 留白。
+  // 放在主题里而不是逐处传参：全工程有 76 处 showSnackBar，
+  // 逐处改既容易漏，也会让后续新写的提示继续踩坑。
+  // 底部安全区由 SnackBar 自身叠加，这里不用再算 padding.bottom。
+  // 注意：behavior 与 margin 是配套的，floating 之外不能设 margin（框架断言）。
+  static const SnackBarThemeData snackBarThemeData = SnackBarThemeData(
+    behavior: SnackBarBehavior.floating,
+    insetPadding: EdgeInsets.fromLTRB(16, 0, 16, 70),
+  );
+
   // ─────────────────── 亮色主题 ───────────────────
   static ThemeData get lightTheme => ThemeData(
     useMaterial3: true,
@@ -171,6 +186,7 @@ class AppTheme {
       color: dividerColor,
       thickness: 1,
     ),
+    snackBarTheme: snackBarThemeData,
   );
 
   // ─────────────────── 暗黑主题 ───────────────────
@@ -215,5 +231,6 @@ class AppTheme {
       color: darkCardBorder,
       thickness: 1,
     ),
+    snackBarTheme: snackBarThemeData,
   );
 }

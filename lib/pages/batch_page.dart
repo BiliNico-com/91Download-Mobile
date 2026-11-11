@@ -1070,9 +1070,15 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     // 队列中已存在的视频（正在下载/等待/暂停），直接跳过并提示
     if (inQueue.isNotEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${inQueue.length} 个视频已在下载队列中，已跳过')),
-        );
+        // 先 hide 再 show：ScaffoldMessenger 是队列语义，不 hide 的话
+        // 上一条还没走完，新提示会排在后面，用户感觉「弹了但没反应」。
+        // 样式（悬浮 + 距底 70）由 AppTheme.snackBarThemeData 统一给。
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(SnackBar(
+          content: Text('${inQueue.length} 个视频已在下载队列中，已跳过'),
+          duration: const Duration(seconds: 2),
+        ));
       }
     }
 
@@ -1143,11 +1149,12 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
       if (mounted) {
         final msg = '已添加 ${result['new']} 个视频到下载队列'
             '${result['duplicate']! > 0 ? '，${result['duplicate']} 个已跳过' : ''}';
-        ScaffoldMessenger.of(context).showSnackBar(
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(
           SnackBar(
             content: Text(msg),
-            duration: const Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
             action: SnackBarAction(label: '查看', onPressed: () => appState.navigateToPage?.call(3)),
           ),
         );

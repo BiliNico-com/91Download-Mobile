@@ -166,11 +166,14 @@ class _StreamingPageState extends State<StreamingPage> {
     } else {
       msg = '已覆盖并重新下载';
     }
-    ScaffoldMessenger.of(context).showSnackBar(
+    // 先 hide 再 show：ScaffoldMessenger 是队列语义，连着加两次任务时
+    // 上一条没走完新提示会排队，看起来像「点了没反应」。
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
       SnackBar(
         content: Text(msg),
         duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
       ),
     );
   }
