@@ -69,7 +69,16 @@ class NetworkLogInterceptor extends Interceptor {
         final type = error.type.name;
         final message = error.message ?? '';
         final tail = message.isEmpty ? '' : ' ' + message;
-        logger.network('${target} -> 失败(${type}, ${elapsed})${tail}', level: LogLevel.warn);
+        // 去重键：失败类型 + 主机 + 路径。
+        // 没连代理时 91porn 被 DNS 污染成 127.0.0.1，一次解析会打出成百上千条
+        // 一模一样的 connectionError，日志文件几秒就满；同键在窗口内只留第一条。
+        final key = '${type}|${uri.host}${path}';
+        logger.network(
+          '${target} -> 失败(${type}, ${elapsed})${tail}',
+          level: LogLevel.warn,
+          dedupeKey: key,
+          offline: _isOfflineError(type),
+        );
         return;
       }
 
@@ -80,6 +89,16 @@ class NetworkLogInterceptor extends Interceptor {
     } catch (_) {
       // 日志本身绝不能影响请求
     }
+  }
+
+  /// 连接根本没建立起来的失败：断网、代理没开、DNS 被污染、拒绝连接。
+  /// 这类失败刷得最快，用更长的去重窗口压掉。
+  bool _isOfflineError(String type) {
+    return type == 'connectionError' ||
+        type == 'connectionTimeout' ||
+        type == 'receiveTimeout' ||
+        type == 'sendTimeout' ||
+        type == 'unknown';
   }
 
   /// 查询串里可能带签名，只保留前若干字符，够区分接口就行

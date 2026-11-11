@@ -33,6 +33,24 @@ class LogLevel {
 /// 5. 崩溃捕获：Flutter 框架异常与未捕获的异步异常都写入并立即落盘；
 /// 6. 轮转与上限：单文件超过上限自动换新文件，目录只保留最近若干个；
 /// 7. 一键提交：exportForShare 导出一份快照文件，配合 share_plus 以文件形式分享。
+/// 网络日志去重的一格：同一个签名在 window 内只放行第一条，
+/// 其余累计到 suppressed，窗口结束时补一条「同类已忽略 N 条」。
+///
+/// 关掉代理时 91porn 会被 DNS 污染成 127.0.0.1，一次解析就会打出成百上千条
+/// Connection refused，把 3MB 的日志文件瞬间刷满、把真正的线索挤掉。
+class _NetDedupe {
+  _NetDedupe(this.start, this.window, this.tag);
+
+  final DateTime start;
+  final Duration window;
+
+  /// 首次出现时用的 tag，汇总行沿用它（Net / Download 等）
+  final String tag;
+  int suppressed = 0;
+
+  bool expiredAt(DateTime now) => now.difference(start) >= window;
+}
+
 class Logger {
   static final Logger _instance = Logger._internal();
   factory Logger() => _instance;
@@ -62,6 +80,24 @@ class Logger {
 
   /// 因缓冲溢出丢弃的行数，下次落盘时说明一次
   int _droppedLines = 0;
+
+  /// 网络日志去重：签名 → 当前窗口状态
+  ///
+  /// 关掉代理时站点域名会被 DNS 污染成 127.0.0.1，一次解析就能产生成百上千条
+  /// 完全相同的 "-> 失败(connectionError, ...) Connection refused"，
+  /// 3 MB 的日志文件几秒就被刷满，真正做到排查用的那几条反而看不到。
+  final Map<String, _NetDedupe> _netDedupe = {};
+
+  /// 普通失败（4xx/5xx）的去重窗口
+  static const Duration _netFailureWindow = Duration(seconds: 20);
+
+  /// 连接级失败（代理没开、DNS 污染、拒绝连接）的去重窗口更长：
+  /// 这类失败在一轮解析里会连打几十条，且内容完全一样，
+  /// 保留第一条 + 末尾一条汇总足够定位问题。
+  static const Duration _netOfflineWindow = Duration(minutes: 2);
+
+  /// 去重表的条目上限，防止签名爆炸把内存吃掉
+  static const int _netDedupeMaxKeys = 128;
 
   /// 当前会话的环境信息块（写入文件头）
   String? _sessionHeader;
@@ -168,9 +204,93 @@ class Logger {
   }
 
   /// 网络请求打点（由 Dio 拦截器调用）
-  void network(String message, {String level = LogLevel.info}) {
+  ///
+  /// [dedupeKey] 非空时启用去重聚合：同一个 key 在窗口内只记第一条，
+  /// 窗口结束（下一条同 key 到达时判定）补一行「同类已忽略 N 条」。
+  /// 失败行的 key 由拦截器按「失败类型 + 主机 + 路径」生成，
+  /// 成功行不传 key，历史行为完全不变。
+  void network(
+    String message, {
+    String level = LogLevel.info,
+    String? dedupeKey,
+    bool offline = false,
+  }) {
     if (!_enabled) return;
-    _appendLine(_formatLine('Net', level, message));
+    if (dedupeKey == null || dedupeKey.isEmpty) {
+      _appendLine(_formatLine('Net', level, message));
+      return;
+    }
+    _appendDeduped('Net', level, message, dedupeKey, offline);
+  }
+
+  /// 通用去重写入（网络请求之外的高频失败也走这里）
+  ///
+  /// 典型场景：没连代理时整片视频的切片会齐齐失败，几百个切片 × 3 次重试
+  /// 就是上千行 "下载切片失败"，把真正有用的那几行彻底淹没。
+  /// [offline] 为 true 时用更长的窗口，因为这类失败通常整轮都一样。
+  void logDeduped(
+    String tag,
+    String message, {
+    String level = LogLevel.info,
+    required String dedupeKey,
+    bool offline = false,
+  }) {
+    if (!_enabled) return;
+    _appendDeduped(tag, level, message, dedupeKey, offline);
+  }
+
+  /// 去重的实际实现：窗口内同 key 只放行第一条，窗口结束时补一行汇总
+  void _appendDeduped(
+    String tag,
+    String level,
+    String message,
+    String dedupeKey,
+    bool offline,
+  ) {
+    final now = DateTime.now();
+    final window = offline ? _netOfflineWindow : _netFailureWindow;
+    final existing = _netDedupe[dedupeKey];
+    if (existing != null && !existing.expiredAt(now)) {
+      // 同一签名还在窗口内：只计数，不落盘
+      existing.suppressed++;
+      return;
+    }
+    if (existing != null) {
+      // 窗口结束，先把上一段被吞掉的数量交代清楚
+      final n = existing.suppressed;
+      _netDedupe.remove(dedupeKey);
+      if (n > 0) {
+        _appendLine(_formatLine(
+          tag,
+          LogLevel.warn,
+          '同类已静默 $n 条（' + dedupeKey + '）',
+        ));
+      }
+    }
+    if (_netDedupe.length >= _netDedupeMaxKeys) {
+      // 签名太多说明不是同一种失败在刷屏，老老实实记，别把内存拖垮
+      _appendLine(_formatLine(tag, level, message));
+      return;
+    }
+    _netDedupe[dedupeKey] = _NetDedupe(now, window, tag);
+    _appendLine(_formatLine(tag, level, message));
+  }
+
+  /// 把还在窗口内的聚合计数冲刷掉（停止下载、导出日志前调用），
+  /// 否则被静默的条数会一直不落盘。
+  void flushNetworkDedupe() {
+    if (_netDedupe.isEmpty) return;
+    for (final entry in _netDedupe.entries) {
+      final n = entry.value.suppressed;
+      if (n > 0) {
+        _appendLine(_formatLine(
+          entry.value.tag,
+          LogLevel.warn,
+          '同类已静默 $n 条（' + entry.key + '）',
+        ));
+      }
+    }
+    _netDedupe.clear();
   }
 
   /// 直接写入原始文本（不做级别与时间戳加工）
@@ -431,6 +551,7 @@ class Logger {
 
   /// 获取当前日志文件内容
   Future<String> getLogContent() async {
+    flushNetworkDedupe();
     await flush();
     final file = _logFile;
     if (file == null || !await file.exists()) {
@@ -461,6 +582,7 @@ class Logger {
   Future<void> clearLogs() async {
     try {
       flushSync();
+      _netDedupe.clear();
       final dir = await getApplicationDocumentsDirectory();
       final logDir = Directory('${dir.path}/logs');
       if (await logDir.exists()) {
@@ -545,6 +667,7 @@ class Logger {
   /// 保存日志到指定目录，返回 (路径, 错误信息)
   Future<(String?, String?)> saveToDirectoryWithError(String targetDir) async {
     try {
+      flushNetworkDedupe();
       await flush();
       final file = _logFile;
       if (file == null || !await file.exists()) {
@@ -573,6 +696,7 @@ class Logger {
   /// 源文件若已在其中会直接抛 IOException。
   Future<(String?, String?)> exportForShare() async {
     try {
+      flushNetworkDedupe();
       await flush();
       final file = _logFile;
       if (file == null || !await file.exists()) {
