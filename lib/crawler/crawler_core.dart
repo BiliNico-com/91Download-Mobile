@@ -1965,7 +1965,9 @@ class CrawlerCore {
           'Download',
           '下载切片失败(retry ${retry + 1}): $e',
           level: LogLevel.warn,
-          dedupeKey: 'seg|' + Uri.tryParse(url)?.host.toString() + '|' +
+          dedupeKey: 'seg|' +
+              (Uri.tryParse(url)?.host ?? 'unknown') +
+              '|' +
               e.runtimeType.toString(),
           offline: e is DioException &&
               (e.type == DioExceptionType.connectionError ||
