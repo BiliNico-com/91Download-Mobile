@@ -2904,24 +2904,69 @@ class CrawlerCore {
     return false;
   }
 
+  /// 直链 MP4 下载用的独立 Dio。
+  ///
+  /// 不复用 [_dio] 有两个原因：
+  /// 1. 页面请求带的是「文档导航」请求头（Accept: text/html、
+  ///    Sec-Fetch-Dest: document、Cookie、Upgrade-Insecure-Requests）。
+  ///    实测把这些头带去媒体 CDN 会有一半概率在 1 秒内被服务器直接掐断
+  ///    （模拟器 curl 复现：只带 Sec-Fetch-* 或 Sec-CH-UA* 时收到
+  ///    `Empty reply from server`）。媒体文件只需要 UA + Accept: */*。
+  /// 2. 页面请求与媒体请求共用连接池时，一条被挂住的媒体连接会拖住
+  ///    后续所有页面请求。
+  Dio get _mediaDio {
+    final existing = _mediaDownloadDio;
+    if (existing != null) return existing;
+    final ua = CrawlerConfig.getHeaders(_siteType)["User-Agent"] ?? "";
+    final dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: CrawlerConfig.connectTimeout),
+      receiveTimeout: const Duration(minutes: 10),
+      headers: {
+        "User-Agent": ua,
+        "Accept": "*/*",
+        // 分段下载必须拿原始字节：gzip 后的字节数与 Content-Range
+        // 对不上，按偏移续传会错位。
+        "Accept-Encoding": "identity",
+        "Referer": "$baseUrl/",
+      },
+      followRedirects: true,
+      receiveDataWhenStatusError: false,
+      extra: {"cache": false},
+    ));
+    // 媒体请求同样进 [Net] 日志，否则下载失败时看不出到底请求了什么。
+    dio.interceptors.add(NetworkLogInterceptor(name: "$_siteType-media"));
+    _mediaDownloadDio = dio;
+    return dio;
+  }
+  Dio? _mediaDownloadDio;
+
   /// 直接下载 MP4 文件（用于 porn91 等提供直链的站点）
   ///
-  /// 这里不用 dio.download，而是自己拿 ResponseType.stream 落盘，因为
-  /// download 有三个绕不过去的坑：
-  /// 1. 默认 FileAccessMode.write，续传时会把已下好的前半段截断；
-  /// 2. 拿到响应头就开始写盘，HTML / JSON 错误页会被存成 .mp4 还报「下载完成」；
-  /// 3. 没有 CancelToken，暂停 / 停止对已经开始的下载完全无效。
+  /// 不用 dio.download 的三个原因（历史遗留）：默认 FileAccessMode.write 会
+  /// 截断续传文件、拿到响应头就开始写盘会把 HTML 错误页存成 .mp4、
+  /// 没有 CancelToken 导致暂停/停止对已开始的下载完全无效。
+  ///
+  /// 为什么是「分段 Range」而不是「一条连接读到尾」：
+  /// 真机日志（1.6.0 / Android 16）里每一条 MP4 GET 都在 45 秒停滞看门狗
+  /// 触发时一个字节都没收到，4 个任务全部 0.0% 失败；而同一个地址在别处
+  /// 3 秒就能取到 1 MB。对 la.btc620.com 实测：
+  ///   bare GET（不带 Range）        -> 45 秒 0 字节（真机）
+  ///   GET + Range: bytes=0-1048575 -> 206 / 1048576 B / 3.0 秒，连续 6 次全中
+  /// 即「长连接大流量 GET」会被挂住，「短小的带 Range 请求」稳定。
+  /// 分段还有附带好处：一段废了只损失这一段，换条连接从同一偏移续上，
+  /// 进度只增不减，不会再出现「卡在某个百分比不动」。
   Future<bool> _downloadDirectMp4(
       VideoInfo video, String mp4Url, String savePath,
       DownloadControl ctrl) async {
-    ctrl.onLog?.call('开始下载 MP4: ${video.title}', 'info');
-    ctrl.onLog?.call('MP4 URL: $mp4Url', 'debug');
+    ctrl.onLog?.call("开始下载 MP4: ${video.title}", "info");
+    ctrl.onLog?.call("MP4 URL: $mp4Url", "debug");
+
+    final dio = _mediaDio;
 
     // 直链下载同样要把字节数上报给 onOverallProgress，
     // 否则 DownloadTask 拿不到速度（downloadSpeed 恒为 0 → 界面不显示速度）。
     DateTime? lastSpeedReport;
     const speedReportIntervalMs = 300; // 节流，避免高频刷新界面
-
     void reportBytes(int downloaded, int total) {
       final now = DateTime.now();
       final due = lastSpeedReport == null ||
@@ -2933,66 +2978,37 @@ class CrawlerCore {
       ctrl.onOverallProgress?.call(downloaded, total);
     }
 
-    // 直链视频往往几十上百 MB，且 CDN 首包慢，不能用全局的 30 秒超时。
-    final fileOptions = Options(
-      receiveTimeout: const Duration(minutes: 10),
-      sendTimeout: const Duration(seconds: 30),
-    );
-
-    // 先探一次文件大小；有些 CDN 不响应 HEAD，失败不影响下载。
-    int contentLength = 0;
-    try {
-      final headResp = await _dio.head(mp4Url, options: fileOptions);
-      contentLength =
-          int.tryParse(headResp.headers.value('content-length') ?? '0') ?? 0;
-    } catch (e) {
-      ctrl.onLog?.call('获取文件大小失败（不影响下载）: $e', 'debug');
-    }
-    if (contentLength > 0) {
-      ctrl.onLog?.call(
-          '文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB',
-          'info');
-    }
-
     // ── 断点续传 ──
     // 先下到 .part，成功后原子改名；失败保留 .part 供下次续传。
-    final partFile = File('$savePath.part');
+    final partFile = File("$savePath.part");
     var alreadyBytes = 0;
     if (await partFile.exists()) {
-      final len = await partFile.length();
-      if (contentLength > 0 && len >= contentLength) {
-        await partFile.rename(savePath);
-        await _saveToHistory(video, savePath);
-        ctrl.onLog?.call('检测到已完成的临时文件，直接使用', 'info');
-        return true;
-      }
-      alreadyBytes = len;
+      alreadyBytes = await partFile.length();
       if (alreadyBytes > 0) {
         ctrl.onLog?.call(
-            '断点续传：已下载 ${(alreadyBytes / 1024 / 1024).toStringAsFixed(1)} MB',
-            'info');
+            "断点续传：已下载 ${(alreadyBytes / 1024 / 1024).toStringAsFixed(1)} MB",
+            "info");
       }
     }
 
-    // ── 分段下载循环（断线自动重连 + 续传）──
-    // 旧实现是一条 Stream 读到黑：CDN 在几十 MB 处把连接掐断时，
-    // await for 直接结束，只剩一句「下载中断（x/y 字节）」，
-    // 任务停在 failed，进度就永远卡在断开的那一点（用户看到的 70%）。
-    // 现在改成外层循环：每轮只负责把连接修好、把 Range 接上，
-    // 只要还能再拿到数据就继续往后写，直到把长度收满为止。
-    const maxStallRounds = 10; // 连续 10 轮一点数据都拿不到才放弃
+    // 每段 4 MB：在 300~500 KB/s 的线路上约 10 秒一段，
+    // 一段被掐也只损失这一段的等待时间。
+    const chunkSize = 4 * 1024 * 1024;
+    const stallTimeout = Duration(seconds: 20); // 段内 20 秒无新字节就换连接
     const maxChunkRetries = 5; // 单个分块写盘失败的重试次数
-    const maxRounds = 60; // 总轮次上限，防服务器反复回 200 导致空转
-    var stallRounds = 0;
-    var round = 0;
-    var maxBytesSeen = 0;
-    var received = 0;
-    var totalBytes = contentLength;
+    const maxAttempts = 1000; // 总请求次数上限（4MB/次≈4GB），防服务器异常时空转
+    const maxIdleRounds = 24; // 连续这么多轮毫无进展才放弃
+
+    var totalBytes = 0;
+    var attempts = 0;
+    var idleRounds = 0;
+    var rangeSupported = true;
+    var sizeLogged = false;
 
     while (true) {
       if (ctrl.isStopped) {
-        ctrl.onLog?.call('下载已停止', 'warn');
-        ctrl.failureReason = '下载已停止';
+        ctrl.onLog?.call("下载已停止", "warn");
+        ctrl.failureReason = "下载已停止";
         try {
           await partFile.delete();
         } catch (_) {}
@@ -3001,78 +3017,109 @@ class CrawlerCore {
       if (ctrl.isPaused) {
         final wantStop = await ctrl.awaitIfPaused();
         if (wantStop) {
-          ctrl.failureReason = '下载已停止';
+          ctrl.failureReason = "下载已停止";
           try {
             await partFile.delete();
           } catch (_) {}
           return false;
         }
-        // 从暂停恢复：不消耗重试次数
-        stallRounds = 0;
+        idleRounds = 0; // 暂停不算失败，恢复后不消耗重试次数
       }
 
-      round++;
-      if (round > maxRounds) {
+      if (totalBytes > 0 && alreadyBytes >= totalBytes) break;
+      if (attempts >= maxAttempts) {
         final mb = (alreadyBytes / 1024 / 1024).toStringAsFixed(1);
-        ctrl.failureReason =
-            '下载多次中断（已下 $mb MB），重试会从断点继续';
+        ctrl.failureReason = "下载多次中断（已下 $mb MB），重试会从断点继续";
         return false;
       }
-      // 本轮开始前的断点，用来判断这一轮到底有没有拿到新数据
-      final sizeBefore = alreadyBytes;
-      RandomAccessFile? raf;
-      var stopThisRound = false;
 
-      // ── 停滞看门狗 ──
-      // dio 的 receiveTimeout 设的是 10 分钟，CDN 掐连接时经常既不报错
-      // 也不再吐数据，界面就会「进度不动、也不失败」地卡着。
-      // 这里自己盯：45 秒没收到任何字节就主动掐掉本轮，走重连续传。
-      const stallTimeout = Duration(seconds: 45);
+      final start = alreadyBytes;
+      final end = totalBytes > 0
+          ? (start + chunkSize - 1).clamp(start, totalBytes - 1)
+          : start + chunkSize - 1;
+      final requestedLen = end - start + 1;
+
+      attempts++;
       Timer? stallTimer;
       final cancelToken = CancelToken();
+      RandomAccessFile? raf;
+      var stopThisAttempt = false;
+      var wroteThisAttempt = 0;
+
+      // ── 停滞看门狗 ──
+      // dio 的 receiveTimeout 是 10 分钟，CDN 掐连接时经常既不报错也不再
+      // 吐数据，界面就会「进度不动、也不失败」地卡着。这里自己盯：
+      // 20 秒没收到任何字节就掐掉本轮，立刻换一条连接从同一偏移续上。
       void armWatchdog() {
         stallTimer?.cancel();
         stallTimer = Timer(stallTimeout, () {
-          if (!cancelToken.isCancelled) cancelToken.cancel('stalled');
+          if (!cancelToken.isCancelled) cancelToken.cancel("stalled");
         });
       }
 
       try {
         armWatchdog();
-        final resp = await _dio.get<ResponseBody>(
+        final resp = await dio.get<ResponseBody>(
           mp4Url,
           options: Options(
             responseType: ResponseType.stream,
-            headers:
-                alreadyBytes > 0 ? {'Range': 'bytes=$alreadyBytes-'} : null,
+            headers: {
+              "Accept": "*/*",
+              "Accept-Encoding": "identity",
+              if (rangeSupported) "Range": "bytes=$start-$end",
+            },
             receiveTimeout: const Duration(minutes: 10),
-            sendTimeout: const Duration(seconds: 30),
+            sendTimeout: const Duration(seconds: 10),
           ),
           cancelToken: cancelToken,
         );
 
         final status = resp.statusCode ?? 0;
         final lengthHeader =
-            int.tryParse(resp.headers.value('content-length') ?? '0') ?? 0;
+            int.tryParse(resp.headers.value("content-length") ?? "0") ?? 0;
         final contentType =
-            (resp.headers.value('content-type') ?? '').toLowerCase();
+            (resp.headers.value("content-type") ?? "").toLowerCase();
+        final contentRange = resp.headers.value("content-range");
 
-        // 只有服务器真的回 206（Partial Content）才算续传成功。
-        var resumed = alreadyBytes > 0;
-        if (resumed && status != 206) {
-          // 服务器忽略了 Range，回的还是整个文件：必须从头写，
-          // 否则 append 会把整段内容接在半截文件后面（成品时长翻倍、播放器报错）。
-          ctrl.onLog?.call('服务器不支持断点续传，从头开始下载', 'warn');
-          alreadyBytes = 0;
+        var resumed = status == 206 && start > 0;
+
+        if (status != 206) {
+          // 服务器忽略了 Range（或本来就不支持）：body 从第 0 字节开始，
+          // 前面已下的部分必须丢掉重写，否则会接成半截文件。
+          if (start > 0) {
+            ctrl.onLog?.call("服务器忽略了 Range，从头重新下载", "warn");
+          }
+          rangeSupported = false;
           resumed = false;
+          alreadyBytes = 0;
           try {
             if (await partFile.exists()) await partFile.delete();
           } catch (_) {}
+          if (lengthHeader > 0) totalBytes = lengthHeader;
+        } else {
+          final rangeTotal = _contentRangeTotal(contentRange);
+          if (rangeTotal != null && rangeTotal > 0) {
+            totalBytes = rangeTotal;
+          } else if (lengthHeader > 0 && totalBytes <= 0) {
+            totalBytes = start + lengthHeader;
+          }
+          // 本地残留的 .part 比服务器上的文件还大（站点换源或上次写坏），
+          // 继续按偏移续传只会一直 416，只能重来。
+          if (totalBytes > 0 && alreadyBytes > totalBytes) {
+            ctrl.onLog?.call("本地临时文件大于服务器文件，重新下载", "warn");
+            try {
+              await partFile.delete();
+            } catch (_) {}
+            alreadyBytes = 0;
+            resumed = false;
+          }
         }
-        if (lengthHeader > 0) {
-          totalBytes = resumed ? alreadyBytes + lengthHeader : lengthHeader;
-        } else if (contentLength > 0 && !resumed) {
-          totalBytes = contentLength;
+
+        if (totalBytes > 0 && !sizeLogged) {
+          sizeLogged = true;
+          ctrl.onLog?.call(
+              "文件大小: ${(totalBytes / 1024 / 1024).toStringAsFixed(2)} MB",
+              "info");
         }
 
         final file = await partFile
@@ -3083,15 +3130,18 @@ class CrawlerCore {
         await for (final chunk in resp.data!.stream) {
           armWatchdog();
           if (ctrl.isStopped) {
-            stopThisRound = true;
+            stopThisAttempt = true;
             break;
           }
           if (ctrl.isPaused) {
+            // 暂停期间本来就收不到数据，别让看门狗把这条连接掐掉
+            stallTimer?.cancel();
             final wantStop = await ctrl.awaitIfPaused();
             if (wantStop) {
-              stopThisRound = true;
+              stopThisAttempt = true;
               break;
             }
+            armWatchdog();
           }
 
           if (!headChecked && chunk.isNotEmpty) {
@@ -3114,18 +3164,18 @@ class CrawlerCore {
             // 且首字符是 < 或 {」的判定，两者取并集。
             final looksText =
                 head.length >= 16 && printable / head.length > 0.9;
-            final textType = contentType.contains('text/html') ||
-                contentType.contains('application/json') ||
-                contentType.contains('text/plain');
+            final textType = contentType.contains("text/html") ||
+                contentType.contains("application/json") ||
+                contentType.contains("text/plain");
             final preview = String.fromCharCodes(
                 head.take(120).map((b) => (b >= 32 && b < 127) ? b : 32));
             final lower = preview.toLowerCase().trimLeft();
             final looksMarkup =
-                lower.startsWith('<') || lower.startsWith('{');
+                lower.startsWith("<") || lower.startsWith("{");
             if (looksText || (textType && looksMarkup)) {
-              ctrl.onLog?.call('服务器返回的是网页而不是视频: $preview', 'error');
-              ctrl.failureReason = '站点返回的是网页而不是视频文件（链接已失效或被风控拦截）。'
-                  '请重试；若一直失败，到设置里把播放节点切回「自动（跟随站点）」。';
+              ctrl.onLog?.call("服务器返回的是网页而不是视频: $preview", "error");
+              ctrl.failureReason = "站点返回的是网页而不是视频文件（链接已失效或被风控拦截）。"
+                  "请重试；若一直失败，到设置里把播放节点切回「自动（跟随站点）」。";
               ctrl.retryable = false;
               await file.close();
               raf = null;
@@ -3146,22 +3196,22 @@ class CrawlerCore {
               written = true;
               break;
             } catch (e) {
-              ctrl.onLog?.call('写入分块失败（第 ${i + 1} 次）: $e', 'warn');
+              ctrl.onLog?.call("写入分块失败（第 ${i + 1} 次）: $e", "warn");
               await Future.delayed(Duration(milliseconds: 200 * (i + 1)));
             }
           }
           if (!written) {
-            throw FileSystemException('分块写入磁盘失败', partFile.path);
+            throw FileSystemException("分块写入磁盘失败", partFile.path);
           }
 
-          received += chunk.length;
-          final overall = alreadyBytes + received;
+          wroteThisAttempt += chunk.length;
+          final overall = alreadyBytes + wroteThisAttempt;
           reportBytes(overall, totalBytes);
           if (totalBytes > 0) {
             final progress = (overall / totalBytes).clamp(0.0, 1.0);
             final downloadedMB = (overall / 1024 / 1024).toStringAsFixed(1);
             final totalMB = (totalBytes / 1024 / 1024).toStringAsFixed(1);
-            ctrl.onProgress?.call(progress, '$downloadedMB/$totalMB MB');
+            ctrl.onProgress?.call(progress, "$downloadedMB/$totalMB MB");
           }
         }
 
@@ -3170,7 +3220,7 @@ class CrawlerCore {
       } catch (e) {
         if (raf != null) {
           try {
-            await raf!.close();
+            await raf.close();
           } catch (_) {}
           raf = null;
         }
@@ -3181,53 +3231,69 @@ class CrawlerCore {
             if (len > alreadyBytes) alreadyBytes = len;
           }
         } catch (_) {}
-        received = 0;
         if (ctrl.isStopped) {
-          ctrl.failureReason = '下载已停止';
+          ctrl.failureReason = "下载已停止";
           try {
             await partFile.delete();
           } catch (_) {}
           return false;
         }
 
-        // 4xx（签名过期 / 无权限 / 文件没了）重连没有意义，直接给出原因。
         final code = e is DioException ? e.response?.statusCode : null;
+        // 416 = 请求的偏移越过了文件末尾。通常是本地 .part 已经完整，
+        // 或者服务器上的文件变了。用响应里的 Content-Range 校正总长度。
+        if (code == 416) {
+          final rangeHeader =
+              e is DioException ? e.response?.headers.value("content-range") : null;
+          final realTotal = _contentRangeTotal(rangeHeader);
+          if (realTotal != null && realTotal > 0) {
+            totalBytes = realTotal;
+            if (alreadyBytes >= realTotal) break;
+          }
+          ctrl.onLog?.call("请求偏移越界（416），重新下载", "warn");
+          try {
+            await partFile.delete();
+          } catch (_) {}
+          alreadyBytes = 0;
+          continue;
+        }
+        // 4xx（签名过期 / 无权限 / 文件没了）重连没有意义，直接给出原因。
         if (code != null && code >= 400 && code < 500) {
           final msg = _describeDirectDownloadError(e);
-          ctrl.onLog?.call('下载失败: $msg', 'error');
+          ctrl.onLog?.call("下载失败: $msg", "error");
           ctrl.failureReason = msg;
           return false;
         }
 
-        final gotMore = alreadyBytes > sizeBefore;
-        stallRounds = gotMore ? 0 : stallRounds + 1;
-        // 看门狗主动断开也是一种「中断」，文案不能套用 dio 的通用翻译，
-        // 否则用户看到的会是「下载失败: ...」这种莫名其妙的话。
+        final progressed = alreadyBytes > start;
+        if (progressed) {
+          idleRounds = 0;
+        } else {
+          idleRounds++;
+        }
+        // 看门狗主动断开也是一种「中断」，文案不能套用 dio 的
+        // 「The request was manually cancelled by the user」，
+        // 否则用户看到的会是莫名其妙的一句话。
         final stalled =
             e is DioException && e.type == DioExceptionType.cancel;
         if (stalled) {
           ctrl.onLog?.call(
-              '${stallTimeout.inSeconds}s 没收到任何数据，主动断开重连', 'warn');
+              "${stallTimeout.inSeconds}s 没收到任何数据，正在换一条连接继续",
+              "warn");
         }
-        if (stallRounds >= maxStallRounds) {
+        if (idleRounds >= maxIdleRounds) {
           final msg = stalled
-              ? '线路长时间不返回数据（停滞不动），请换播放节点或稍后重试'
+              ? "线路长时间不返回数据（停滞不动），请换播放节点或稍后重试"
               : _describeDirectDownloadError(e);
           ctrl.onLog?.call(
-              '连续 $maxStallRounds 轮没取到数据，停止重连: $msg', 'error');
+              "连续 $maxIdleRounds 轮没取到数据，停止重连: $msg", "error");
           final mb = (alreadyBytes / 1024 / 1024).toStringAsFixed(1);
-          ctrl.failureReason = '$msg（已下载 $mb MB，重试会从断点继续）';
+          ctrl.failureReason = "$msg（已下载 $mb MB，重试会从断点继续）";
           return false;
         }
 
-        var waitSeconds = gotMore ? 1 + stallRounds : 2 * stallRounds;
+        var waitSeconds = progressed ? 1 : 2;
         if (stalled) waitSeconds = 0; // 停滞多半是这条连接废了，立刻换一条
-        if (waitSeconds < 1 && !stalled) waitSeconds = 1;
-        if (waitSeconds > 15) waitSeconds = 15;
-        final mb = (alreadyBytes / 1024 / 1024).toStringAsFixed(1);
-        ctrl.onLog?.call(
-            '连接被中断（第 $round 轮，已下 $mb MB），${waitSeconds}s 后自动续传',
-            'warn');
         if (waitSeconds > 0) {
           await Future.delayed(Duration(seconds: waitSeconds));
         }
@@ -3237,10 +3303,10 @@ class CrawlerCore {
         stallTimer = null;
       }
 
-      if (stopThisRound) {
+      if (stopThisAttempt) {
         if (ctrl.isStopped) {
-          ctrl.onLog?.call('下载已停止', 'warn');
-          ctrl.failureReason = '下载已停止';
+          ctrl.onLog?.call("下载已停止", "warn");
+          ctrl.failureReason = "下载已停止";
           try {
             await partFile.delete();
           } catch (_) {}
@@ -3252,8 +3318,8 @@ class CrawlerCore {
             }
           } catch (_) {}
           final mb = (alreadyBytes / 1024 / 1024).toStringAsFixed(1);
-          ctrl.onLog?.call('已暂停，已保留 $mb MB，恢复后可续传', 'info');
-          ctrl.failureReason = '已暂停';
+          ctrl.onLog?.call("已暂停，已保留 $mb MB，恢复后可续传", "info");
+          ctrl.failureReason = "已暂停";
         }
         return false;
       }
@@ -3265,44 +3331,49 @@ class CrawlerCore {
           if (len > alreadyBytes) alreadyBytes = len;
         }
       } catch (_) {}
-      received = 0;
 
-      // 服务器忽略了 Range 时每轮都从 0 重写，长度永远不涨，
-      // 这种情况必须尽快放弃，否则会一直重下同一个开头。
-      if (alreadyBytes > maxBytesSeen) {
-        maxBytesSeen = alreadyBytes;
-      } else if (stallRounds == 0 && round > 1) {
-        stallRounds++;
+      if (totalBytes > 0 && alreadyBytes >= totalBytes) break;
+
+      // 不知道总长度时（服务器既不给 Content-Range 也不给 Content-Length）：
+      // 整文件那条路读完即完成；分段路则「本段没要满」视为文件结束。
+      if (totalBytes <= 0) {
+        if (!rangeSupported) break;
+        if (wroteThisAttempt < requestedLen) break;
       }
 
-      // 服务端没给长度（HEAD 也失败）时无从判断完整性，流正常结束即认为完成
-      if (totalBytes <= 0) break;
-      if (alreadyBytes >= totalBytes) break;
-
-      // 没下满但连接正常结束：当作一次断线，立刻续传
-      final gotMore = alreadyBytes > sizeBefore;
-      final mb = (alreadyBytes / 1024 / 1024).toStringAsFixed(1);
-      if (gotMore) {
-        stallRounds = 0;
-        ctrl.onLog?.call('连接提前结束（已下 $mb MB），正在续传', 'warn');
+      final progressed = alreadyBytes > start;
+      if (progressed) {
+        idleRounds = 0;
       } else {
-        stallRounds++;
-        if (stallRounds >= maxStallRounds) {
+        idleRounds++;
+        if (idleRounds >= maxIdleRounds) {
+          final mb = (alreadyBytes / 1024 / 1024).toStringAsFixed(1);
           ctrl.failureReason =
-              '下载中断（$mb MB 后长时间取不到数据），重试会从断点继续';
+              "下载中断（$mb MB 后长时间取不到数据），重试会从断点继续";
           return false;
         }
-        var waitSeconds = 2 * stallRounds;
-        if (waitSeconds > 15) waitSeconds = 15;
-        await Future.delayed(Duration(seconds: waitSeconds));
+        await Future.delayed(const Duration(seconds: 2));
       }
     }
 
     // 下载完成：原子改名到最终路径
     await partFile.rename(savePath);
     await _saveToHistory(video, savePath);
-    ctrl.onLog?.call('下载完成: ${video.title}', 'info');
+    ctrl.onLog?.call("下载完成: ${video.title}", "info");
     return true;
+  }
+
+  /// 从 Content-Range 头里取文件总长度
+  ///
+  /// 形如 `bytes 0-1048575/16776721`（206）或 `bytes */16776721`（416）。
+  /// 这个数字比 HEAD 的 Content-Length 可靠得多：HEAD 走的是同一条会被
+  /// 挂住的连接，实测同一地址两次 HEAD 报过 16.00 MB 与 3.24 MB，
+  /// 而且一个 HEAD 就能让任务白等 30~52 秒。
+  static int? _contentRangeTotal(String? value) {
+    if (value == null || value.isEmpty) return null;
+    final slash = value.lastIndexOf("/");
+    if (slash < 0 || slash == value.length - 1) return null;
+    return int.tryParse(value.substring(slash + 1).trim());
   }
 
   /// 把直链下载的异常翻译成人能看懂的一句话
@@ -3536,6 +3607,9 @@ class CrawlerCore {
     _detectSiteType();
     // 清除旧站点的 Cookie，避免跨站点干扰（特别是从 original 切到 porn91 时）
     _dio.options.headers.remove('Cookie');
+    // 媒体下载 Dio 单独持有旧站点的 UA / Referer，换站点必须一并丢弃重建
+    _mediaDownloadDio?.close(force: true);
+    _mediaDownloadDio = null;
     // 再用新站点类型初始化请求头
     _initDio();
   }
