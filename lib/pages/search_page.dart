@@ -7,6 +7,7 @@ import '../components/app_shell.dart';
 import '../components/empty_state.dart';
 import '../components/cover_image.dart';
 import '../utils/debouncer.dart';
+import '../utils/logger.dart';
 import '../theme/app_tokens.dart';
 import 'streaming_page.dart';
 
@@ -1155,6 +1156,7 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
 
   Future<void> _search() async {
     if (_keywordController.text.isEmpty) return;
+    logger.mark('搜索', '${_isAuthorMode ? "作者" : "视频"}: ${_keywordController.text}');
     
     setState(() {
       _status = '搜索中...';
@@ -1198,7 +1200,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     if (_isAuthorMode) {
       // 搜索作者
       final authors = await crawler.searchAuthors(_keywordController.text);
-      
+      logger.logSync('Search', '作者搜索 "${_keywordController.text}" 返回 ${authors.length} 个');
+
       setState(() {
         _authorResults = authors;
         _isLoading = false;
@@ -1207,7 +1210,8 @@ class _SearchPageState extends State<SearchPage> with AutomaticKeepAliveClientMi
     } else {
       // 搜索视频
       final results = await crawler.searchVideos(_keywordController.text, sort: _sortBy);
-      
+      logger.logSync('Search', '视频搜索 "${_keywordController.text}" (排序 $_sortBy) 返回 ${results.length} 条');
+
       setState(() {
         _results = results;
         _loadedPage = 1;  // 第一次搜索后，已加载第1页

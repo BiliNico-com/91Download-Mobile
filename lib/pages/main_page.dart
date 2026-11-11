@@ -127,6 +127,11 @@ class _MainPageState extends State<MainPage> {
             setState(() {
               _currentIndex = index;
             });
+            // 用户操作打点：页面真正切换后记一条，出问题能还原操作顺序。
+            // 放在 onPageChanged 而不是 goToPage，因为全屏播放等会主动跳页。
+            if (index >= 0 && index < _pageNames.length) {
+              logger.mark('切换页面', _pageNames[index]);
+            }
           },
           children: _pages,
         ),

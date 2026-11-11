@@ -2371,13 +2371,18 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
 
   /// 7. 调试设置区域（默认折叠）
   Widget _buildDebugContent(AppState appState) {
+    final t = AppTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
-          title: Text('Debug模式'),
-          subtitle: Text('开启后将记录运行日志'),
+          title: Text('Debug 日志'),
+          subtitle: Text(
+            '记录手机上每一步操作、每次网络请求与下载全过程，'
+            '重启后保持开启',
+            style: TextStyle(fontSize: 12.5, color: t.text3),
+          ),
           value: appState.debugMode,
           onChanged: (v) async {
             await appState.toggleDebug(v);
@@ -2386,49 +2391,70 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: Text('保存HTML'),
-          subtitle: Text('保存请求的HTML到文件，用于调试'),
+          subtitle: Text(
+            '保存请求的HTML到文件，用于调试解析问题',
+            style: TextStyle(fontSize: 12.5, color: t.text3),
+          ),
           value: appState.saveDebugHtml,
           onChanged: (v) {
             appState.toggleSaveDebugHtml(v);
           },
         ),
         if (appState.debugMode) ...[
-          SizedBox(height: 8),
+          const SizedBox(height: 4),
+          // 新增强调的主入口：一键把日志文件分享出去（微信/QQ 收到的是文件本体，
+          // 不再是把整段文本塞进聊天框被截断）
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _shareLogFile,
+              icon: const Icon(Icons.ios_share_rounded, size: 18),
+              label: const Text('提交日志（分享文件）'),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '遇到问题时点这里，把日志文件发给我即可定位',
+            style: TextStyle(fontSize: 11.5, color: t.text3),
+          ),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: _exportLog,
-                  icon: Icon(Icons.share, size: 18),
-                  label: Text('分享日志'),
+                  onPressed: _openLogCenter,
+                  icon: const Icon(Icons.article_outlined, size: 18),
+                  label: const Text('日志中心'),
                 ),
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () => _saveLog(appState.downloadDir),
-                  icon: Icon(Icons.save, size: 18),
-                  label: Text('保存日志'),
+                  icon: const Icon(Icons.save_alt_rounded, size: 18),
+                  label: const Text('保存到下载目录'),
                 ),
               ),
             ],
           ),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _manageLogs,
-                  icon: Icon(Icons.folder_open, size: 18),
-                  label: Text('管理日志'),
+                  icon: const Icon(Icons.folder_open_rounded, size: 18),
+                  label: const Text('管理日志'),
                 ),
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _clearLog,
-                  icon: Icon(Icons.delete_sweep, size: 18, color: Colors.red),
-                  label: Text('清空日志', style: TextStyle(color: Colors.red)),
+                  icon: const Icon(Icons.delete_sweep_rounded,
+                      size: 18, color: Colors.red),
+                  label: const Text('清空日志',
+                      style: TextStyle(color: Colors.red)),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.red,
                   ),
@@ -2439,6 +2465,29 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         ],
       ],
     );
+  }
+
+  /// 一键把日志文件分享出去
+  Future<void> _shareLogFile() async {
+    final (path, error) = await logger.exportForShare();
+    if (!mounted) return;
+    if (path == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导出日志失败: $error')),
+      );
+      return;
+    }
+    logger.mark('提交日志', path);
+    await Share.shareXFiles(
+      [XFile(path, mimeType: 'text/plain')],
+      subject: '91Download 运行日志',
+      text: '91Download 运行日志（含设备信息与操作记录）',
+    );
+  }
+
+  /// 打开日志中心：实时查看最近日志、直接复制关键片段
+  Future<void> _openLogCenter() async {
+    await _pushSubPage('日志中心', (context) => _LogCenterContent());
   }
 
   /// 8. 关于页面区域
@@ -2971,19 +3020,6 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
   
-  Future<void> _exportLog() async {
-    final content = await logger.getLogContent();
-    if (!mounted) return;
-
-    if (content.isEmpty || content == '暂无日志') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('暂无日志可导出')),
-      );
-      return;
-    }
-    
-    await Share.share(content, subject: '91Download Network Log');
-  }
   
   Future<void> _saveLog(String downloadDir) async {
     if (downloadDir.isEmpty) {
@@ -3331,4 +3367,138 @@ class _SettingsSubPage extends StatelessWidget {
     );
   }
 }
+/// 日志中心：实时查看当前会话日志尾部，支持刷新/复制/分享
+class _LogCenterContent extends StatefulWidget {
+  const _LogCenterContent();
+
+  @override
+  State<_LogCenterContent> createState() => _LogCenterContentState();
+}
+
+class _LogCenterContentState extends State<_LogCenterContent> {
+  String _content = '';
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    setState(() => _loading = true);
+    final tail = await logger.getLogTail(tailLines: 300);
+    if (!mounted) return;
+    setState(() {
+      _content = tail;
+      _loading = false;
+    });
+  }
+
+  Future<void> _copyAll() async {
+    if (_content.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: _content));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('日志已复制到剪贴板')),
+    );
+  }
+
+  Future<void> _shareFile() async {
+    final (path, error) = await logger.exportForShare();
+    if (!mounted) return;
+    if (path == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导出日志失败: $error')),
+      );
+      return;
+    }
+    logger.mark('提交日志', path);
+    await Share.shareXFiles(
+      [XFile(path, mimeType: 'text/plain')],
+      subject: '91Download 运行日志',
+      text: '91Download 运行日志（含设备信息与操作记录）',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppTokens.of(context);
+    final lineCount =
+        _content.isEmpty ? 0 : _content.split(String.fromCharCode(10)).length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _loading
+                    ? '加载中…'
+                    : '最近 $lineCount 行 · ${_content.length} 字符',
+                style: TextStyle(fontSize: 12.5, color: t.text3),
+              ),
+            ),
+            AppIconBtn(
+              icon: Icons.refresh_rounded,
+              tooltip: '刷新',
+              onTap: _reload,
+            ),
+            const SizedBox(width: 8),
+            AppIconBtn(
+              icon: Icons.copy_rounded,
+              tooltip: '复制全部',
+              onTap: _copyAll,
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Container(
+          width: double.infinity,
+          height: 460,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: t.surface2,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(color: t.line),
+          ),
+          child: _loading
+              ? const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      _content.isEmpty
+                          ? '暂无日志，请先开启 Debug 日志。'
+                          : _content,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        height: 1.45,
+                        color: t.text2,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _shareFile,
+            icon: const Icon(Icons.ios_share_rounded, size: 18),
+            label: const Text('提交日志（分享文件）'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 

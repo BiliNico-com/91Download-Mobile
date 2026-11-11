@@ -10,6 +10,7 @@ import '../components/category_chips.dart';
 import '../components/app_shell.dart';
 import '../theme/app_tokens.dart';
 import '../theme/ui_style.dart';
+import '../utils/logger.dart';
 import 'streaming_page.dart';
 
 class BatchPage extends StatefulWidget {
@@ -115,6 +116,11 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     setState(() => _isLoadingMore = true);
     final nextPage = _loadedPage + 1;
     final newVideos = await crawler.getVideoList(_selectedType, nextPage);
+    logger.logSync(
+      'Batch',
+      '列表「$_selectedType」第 $nextPage 页返回 ${newVideos.length} 条'
+      '（站点类型 ${crawler.siteType}，还有下一页: ${crawler.lastRequestHasMore}）',
+    );
 
     if (newVideos.isEmpty) {
       setState(() {
@@ -166,6 +172,8 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     final crawler = appState.crawler;
     if (crawler == null) return;
     
+    logger.mark('进入作者主页', '$authorName ($authorId)');
+
     // 保存当前滚动位置
     _savedScrollOffset = _scrollController.offset;
     
@@ -230,6 +238,10 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
     _authorCurrentPage++;
     
     final newVideos = await crawler.getAuthorVideos(_currentAuthorId, page: _authorCurrentPage);
+    logger.logSync(
+      'Batch',
+      '作者 $_currentAuthorName 第 $_authorCurrentPage 页返回 ${newVideos.length} 条',
+    );
     
     if (newVideos.isEmpty) {
       setState(() {
@@ -502,6 +514,11 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                                               _currentAuthorName);
                                     }
                                     if (!mounted) return;
+                                    logger.mark(
+                                      currentlyFollowed ? '取消关注' : '关注作者',
+                                      '$_currentAuthorName ($_currentAuthorId)'
+                                      '${error == null ? "" : " 失败: $error"}',
+                                    );
                                     setState(() {});
                                     // 写库失败必须让用户看见，否则按钮
                                     // 看上去就是「点了没反应」。
@@ -525,6 +542,7 @@ class _BatchPageState extends State<BatchPage> with AutomaticKeepAliveClientMixi
                                         appState.crawler?.siteType ??
                                             'original')[v] ??
                                     v;
+                                logger.mark('切换分类', '$label ($v)');
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text('已切换到「$label」，正在加载'),

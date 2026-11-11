@@ -205,6 +205,20 @@ class AppState extends ChangeNotifier {
     await _restoreSettingsFromExternal();
     // 备份文件可能覆盖了下载目录本身，重新落盘一次保证一致
     await _saveSettings();
+    // 日志：开关状态已在 _loadSettings 里恢复，这里按用户上次的选择启动。
+    // 以前启动从不 init 日志，导致「重启后 Debug 还开着却没有日志文件」。
+    await logger.init(debugMode);
+    if (debugMode) {
+      await logger.logEnvironment(
+        site: currentSite,
+        siteType: _currentSiteType,
+        downloadDir: downloadDir,
+        theme: themeMode == 2 ? '跟随系统' : (isDarkMode ? '深色' : '浅色'),
+        maxConcurrentTasks: maxConcurrentTasks,
+        maxConcurrentSegments: maxConcurrentSegments,
+        saveHtml: saveDebugHtml,
+      );
+    }
     // 设置外部数据库路径
     _downloadManager.externalDbPath = downloadDir.isNotEmpty ? downloadDir : null;
     // 设置关注作者服务的外部数据库路径
@@ -213,6 +227,9 @@ class AppState extends ChangeNotifier {
     await followedAuthorsService.refresh();
     // 初始化版本服务
     await VersionService.init();
+    // 版本号要等 VersionService.init() 之后才可读，
+    // 之前放在上面会记成 v0.0.0（localVersion 的初始占位值）。
+    logger.mark('启动应用', '版本 ${VersionService.fullVersion}');
     // 恢复未完成的下载任务
     await _downloadManager.restorePendingTasks();
     // 启动后静默检查关注作者更新（后台执行，不阻塞界面）
@@ -318,6 +335,9 @@ class AppState extends ChangeNotifier {
     // 即便 data['appLockEnabled'] 为 true 也一律忽略。
     if (data['privacyMode'] is bool) privacyMode = data['privacyMode'] as bool;
     if (data['nomediaEnabled'] is bool) nomediaEnabled = data['nomediaEnabled'] as bool;
+    // 日志开关随备份恢复，但只在当前没开时补开，避免把用户手动关掉的又翻回来
+    if (data['debugMode'] is bool) debugMode = data['debugMode'] as bool;
+    if (data['saveDebugHtml'] is bool) saveDebugHtml = data['saveDebugHtml'] as bool;
 
     // 一并写回本地，后续启动走正常路径
     await _saveSettings();
@@ -353,6 +373,9 @@ class AppState extends ChangeNotifier {
         // 用户重装后如需上锁，重新设置一次 PIN 是合理代价。
         'privacyMode': privacyMode,
         'nomediaEnabled': nomediaEnabled,
+        // 日志开关跟着备份走：卸载重装后仍能自动续开，用户不必再翻设置
+        'debugMode': debugMode,
+        'saveDebugHtml': saveDebugHtml,
         'backup_time': DateTime.now().toIso8601String(),
       };
 
@@ -433,6 +456,11 @@ class AppState extends ChangeNotifier {
     if (savedDir != null && savedDir.isNotEmpty) {
       downloadDir = savedDir;
     }
+    // Debug 开关必须持久化：此前这三项既不读也不写，重启后一律回到关闭，
+    // 用户「开着日志复现问题」的那次运行，日志其实一重启就断了。
+    debugMode = prefs.getBool('debugMode') ?? false;
+    saveDebugHtml = prefs.getBool('saveDebugHtml') ?? false;
+    realtimeLogEnabled = prefs.getBool('realtimeLogEnabled') ?? debugMode;
     
     notifyListeners();
   }
@@ -470,6 +498,10 @@ class AppState extends ChangeNotifier {
       prefs.setStringList('customSites', customSites),
       // 自定义站点的手动归类（JSON 字符串，SharedPreferences 无 map 类型）
       prefs.setString('customSiteTypes', jsonEncode(customSiteTypes)),
+      // Debug / 日志开关：与下载目录同理，不落盘就等于只有一个进程生命周期有效
+      prefs.setBool('debugMode', debugMode),
+      prefs.setBool('saveDebugHtml', saveDebugHtml),
+      prefs.setBool('realtimeLogEnabled', realtimeLogEnabled),
     ]);
 
     // 同步一份到下载目录，卸载重装后可恢复（SharedPreferences 会随卸载清空）
@@ -756,6 +788,7 @@ class AppState extends ChangeNotifier {
     } else {
       _crawler = null; // 强制下次访问时重新创建
     }
+    logger.context('切换站点', '${siteFamilyOf(site)} · $site');
     _saveSettings();
     notifyListeners();
   }
@@ -893,6 +926,19 @@ class AppState extends ChangeNotifier {
   Future<void> toggleDebug(bool enable) async {
     debugMode = enable;
     await logger.toggle(enable);
+    if (enable) {
+      await logger.logEnvironment(
+        site: currentSite,
+        siteType: _currentSiteType,
+        downloadDir: downloadDir,
+        theme: themeMode == 2 ? '跟随系统' : (isDarkMode ? '深色' : '浅色'),
+        maxConcurrentTasks: maxConcurrentTasks,
+        maxConcurrentSegments: maxConcurrentSegments,
+        saveHtml: saveDebugHtml,
+      );
+      logger.mark('开启 Debug 日志');
+    }
+    await _saveSettings();
     notifyListeners();
   }
   
@@ -903,6 +949,8 @@ class AppState extends ChangeNotifier {
     if (_crawler != null) {
       _crawler!.saveDebugHtml = enable;
     }
+    logger.mark('保存 HTML 调试文件', enable ? '开启' : '关闭');
+    _saveSettings();
     notifyListeners();
   }
 

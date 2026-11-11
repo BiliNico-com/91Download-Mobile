@@ -446,7 +446,13 @@ class DownloadManager extends ChangeNotifier {
     final task = DownloadTask(id: id, video: video);
     _tasks.insert(0, task);
     _taskMap[id] = task;
+    _lastLoggedProgress[id] = 0.0;
     await _saveTaskToDb(task);  // 保存到数据库
+    logger.logSync(
+      'Download',
+      '新任务入队: ${video.title} (${video.id})'
+      '${video.author != null ? " · ${video.author}" : ""}',
+    );
     notifyListeners();
     
     // 按并发限制决定立即下载还是加入队列
@@ -501,6 +507,9 @@ class DownloadManager extends ChangeNotifier {
   /// 进度回调永远不触发（进度条停在 0% 或干脆不刷新），
   /// 暂停/停止也打不到真正在跑的任务。
   final Map<String, DownloadControl> _taskControls = {};
+
+  /// 每个任务已写进日志的进度里程碑（0.1 一档），避免逐切片刷日志
+  final Map<String, double> _lastLoggedProgress = {};
   
   /// 执行下载
   Future<void> _startDownload(DownloadTask task) async {
@@ -514,8 +523,14 @@ class DownloadManager extends ChangeNotifier {
     task.downloadSpeed = 0.0;
     notifyListeners();
     
+    final startedAt = DateTime.now();
     await logger.log('Download', '开始下载: ${task.video.title}');
-    await logger.log('Download', '视频ID: ${task.video.id}, 封面: ${task.video.cover}');
+    await logger.log(
+      'Download',
+      '视频ID: ${task.video.id} | 作者: ${task.video.author ?? task.video.authorId ?? "-"} | 时长: ${task.video.duration ?? "-"}',
+      level: LogLevel.info,
+    );
+    logger.mark('开始下载', task.video.title);
 
     // 本次任务独占的控制句柄。
     // 必须在进入下载前就建好并登记：pauseTask/cancelTask 都按 taskId 找它，
@@ -532,14 +547,18 @@ class DownloadManager extends ChangeNotifier {
       final detail = await _crawler!.getVideoDetail(task.video);
       
       if (detail == null || detail.m3u8Url == null) {
-        await logger.log('Download', '获取视频地址失败: detail=$detail');
+        await logger.log('Download', '获取视频地址失败: detail=$detail', level: LogLevel.error);
         task.status = DownloadStatus.failed;
         task.error = '无法获取视频地址';
         notifyListeners();
         return;
       }
       
-      await logger.log('Download', '获取到视频地址: ${detail.m3u8Url}');
+      await logger.log('Download', '获取到视频地址: ${detail.m3u8Url}', level: LogLevel.debug);
+      logger.logSync(
+        'Download',
+        '详情: 标题=${detail.title ?? "-"}, 时长=${detail.duration ?? "-"}',
+      );
       
       // 2. 下载视频
       // 清理文件名中的非法字符
@@ -574,7 +593,15 @@ class DownloadManager extends ChangeNotifier {
       // 现在把开跑时建好的那份句柄显式交给 downloadVideo。
       final ctrl = taskCtrl ??= _crawler!.createControl();
       _taskControls[task.id] = ctrl;
-      ctrl.onLog = (msg, level) => logger.log('Download', msg);
+      // 爬虫内部的分级日志：把 level 一并带下去，
+      // 失败原因用 warn/error，排查时能一眼看出哪些是真问题
+      ctrl.onLog = (msg, level) => logger.log(
+            'Download',
+            msg,
+            level: level == 'error'
+                ? LogLevel.error
+                : (level == 'warn' ? LogLevel.warn : LogLevel.info),
+          );
       
       // 进度唯一来源是爬虫的「已完成切片数」。
       // progressText 只承载切片进度（如「下载中 13/120」）；
@@ -596,6 +623,18 @@ class DownloadManager extends ChangeNotifier {
           lastPersistAt = now;
           _saveTaskToDb(task);
         }
+        // 进度里程碑：每跨越 10% 记一条，日志里能看出是「一直不动」
+        // 还是「走到 70% 才断」，这是排查卡死的关键分界点
+        final logged = _lastLoggedProgress[task.id] ?? 0.0;
+        if (task.progress - logged >= 0.1 ||
+            (task.progress >= 1.0 && logged < 1.0)) {
+          _lastLoggedProgress[task.id] = task.progress;
+          logger.logSync(
+            'Download',
+            '进度 ${(task.progress * 100).toStringAsFixed(1)}%'
+            '${msg.isEmpty ? "" : " ($msg)"}',
+          );
+        }
         notifyListeners();
       };
       
@@ -611,7 +650,12 @@ class DownloadManager extends ChangeNotifier {
           await _crawler!.downloadVideo(detail, savePath, ctrl: ctrl);
       
       if (success) {
-        await logger.log('Download', '下载完成: ${task.video.title}');
+        final elapsed = DateTime.now().difference(startedAt);
+        await logger.log(
+          'Download',
+          '下载完成: ${task.video.title} | 耗时 ${_formatElapsed(elapsed)}',
+        );
+        logger.mark('下载完成', task.video.title);
         task.status = DownloadStatus.completed;
         task.filePath = savePath;
         task.progress = 1.0;
@@ -622,14 +666,18 @@ class DownloadManager extends ChangeNotifier {
       } else if (ctrl.isPaused || task.status == DownloadStatus.paused) {
         // 暂停：downloadVideo 会在保留已下载切片后返回 false，
         // 这里不能当成失败，否则用户一暂停任务就变成「失败」
-        await logger.log('Download', '已暂停: ${task.video.title}');
+        await logger.log('Download', '已暂停: ${task.video.title}', level: LogLevel.warn);
         task.status = DownloadStatus.paused;
         task.progressText = '已暂停';
         task.downloadSpeed = 0.0;
         task.lastUpdateTime = DateTime.now();
         _saveTaskToDb(task);
       } else {
-        await logger.log('Download', '下载失败: ${task.video.title}');
+        await logger.log(
+          'Download',
+          '下载失败: ${task.video.title} | 原因: ${ctrl.failureReason ?? "未知"} | 已下载 ${(task.progress * 100).toStringAsFixed(1)}%',
+          level: LogLevel.error,
+        );
         task.status = DownloadStatus.failed;
         // 用爬虫给出的具体原因，而不是笼统的「下载失败」：
         // 加密流不支持、站点改版、切片批量失败……这些用户能据此决定是重试还是放弃
@@ -640,7 +688,11 @@ class DownloadManager extends ChangeNotifier {
       }
       
     } catch (e) {
-      await logger.log('Download', '下载异常: $e');
+      await logger.log(
+        'Download',
+        '下载异常: $e' + String.fromCharCode(10) + StackTrace.current.toString(),
+        level: LogLevel.error,
+      );
       task.status = DownloadStatus.failed;
       task.error = e.toString();
       task.downloadSpeed = 0.0;
@@ -660,6 +712,8 @@ class DownloadManager extends ChangeNotifier {
       }
       // 任务已退出下载链路，句柄不再需要；留着只会让人误以为还能暂停它
       _taskControls.remove(task.id);
+      _lastLoggedProgress.remove(task.id);
+      logger.logSync('Download', '任务结束: ${task.video.title} → ${task.status.name}');
       // 无论成功或失败，释放并发槽位并启动下一个等待任务
       _activeDownloads--;
       _activeTaskIds.remove(task.id);
@@ -690,6 +744,17 @@ class DownloadManager extends ChangeNotifier {
     }
   }
   
+  /// 把耗时格式化成「1 分 23 秒」这样，日志里比毫秒直观
+  String _formatElapsed(Duration d) {
+    if (d.inHours > 0) {
+      return '${d.inHours} 小时 ${d.inMinutes % 60} 分 ${d.inSeconds % 60} 秒';
+    }
+    if (d.inMinutes > 0) {
+      return '${d.inMinutes} 分 ${d.inSeconds % 60} 秒';
+    }
+    return '${d.inSeconds} 秒';
+  }
+
   /// 更新任务状态
   void updateStatus(String taskId, DownloadStatus status, {String? error, String? filePath}) {
     final task = _taskMap[taskId];
@@ -733,6 +798,10 @@ class DownloadManager extends ChangeNotifier {
       task.progressText = '已暂停';
       task.downloadSpeed = 0.0;
       _taskControls[taskId]?.pause();
+      logger.mark(
+        '暂停下载',
+        '${task.video.title} @ ${(task.progress * 100).toStringAsFixed(1)}%',
+      );
       notifyListeners();
     }
   }
@@ -740,6 +809,7 @@ class DownloadManager extends ChangeNotifier {
   /// 继续任务
   void resumeTask(String taskId) {
     final task = _taskMap[taskId];
+    logger.mark('继续下载', task?.video.title ?? taskId);
     if (task != null && task.status == DownloadStatus.paused) {
       task.lastUpdateTime = DateTime.now();
       task.lastDownloadedBytes = task.downloadedBytes;
@@ -753,6 +823,7 @@ class DownloadManager extends ChangeNotifier {
   /// 重试任务
   Future<void> retryTask(String taskId) async {
     final task = _taskMap[taskId];
+    logger.mark('重试下载', '${task?.video.title ?? taskId} (上次原因: ${task?.error ?? "-"})');
     if (task != null && task.status == DownloadStatus.failed) {
       // 断点续传：**保留**已下载的切片，重试时 _downloadTs 会跳过它们。
       // （此前这里会删除临时目录，导致每次都从零开始重下，

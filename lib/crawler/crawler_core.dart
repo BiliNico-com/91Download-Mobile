@@ -13,6 +13,7 @@ import 'package:sqflite/sqflite.dart';
 import 'config.dart';
 import '../models/video_info.dart';
 import '../utils/logger.dart';
+import '../utils/network_log_interceptor.dart';
 
 /// 单个下载任务的控制句柄与进度回调容器。
 ///
@@ -223,6 +224,16 @@ class CrawlerCore {
         : null;
     _detectSiteType();
     _initDio();
+    // 网络请求日志：只挂一次。
+    // 不能放进 _initDio —— 它每次都会重建 options，但拦截器挂在
+    // _dio.interceptors 上不会随 options 清空，重复挂会出现多条重复记录。
+    // 无条件挂上：拦截器内部自己判断 logger.enabled。
+    // 若按「创建时是否已开启日志」决定挂不挂，用户中途打开 Debug 后
+    // 已存在的 CrawlerCore 就再也记不到网络请求了。
+    final hasNetLog = _dio.interceptors.any((i) => i is NetworkLogInterceptor);
+    if (!hasNetLog) {
+      _dio.interceptors.add(NetworkLogInterceptor(name: _siteType));
+    }
   }
   
   /// 检测站点类型
