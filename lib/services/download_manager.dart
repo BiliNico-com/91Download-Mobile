@@ -6,6 +6,7 @@ import '../models/video_info.dart';
 import '../crawler/config.dart';
 import '../crawler/crawler_core.dart';
 import '../utils/logger.dart';
+import 'network_info_service.dart';
 
 /// 下载任务状态
 enum DownloadStatus {
@@ -678,6 +679,12 @@ class DownloadManager extends ChangeNotifier {
           '下载失败: ${task.video.title} | 原因: ${ctrl.failureReason ?? "未知"} | 已下载 ${(task.progress * 100).toStringAsFixed(1)}%',
           level: LogLevel.error,
         );
+        // 失败当下的网络快照：很多「下不动」其实是网络路径变了
+        // （切了 WiFi/流量、挂了代理、走了机房出口），日志里带上能少问一轮
+        final snap = NetworkInfoService.last;
+        if (snap != null) {
+          await logger.log('Download', '失败时网络: ${snap.oneLine}', level: LogLevel.warn);
+        }
         task.status = DownloadStatus.failed;
         // 用爬虫给出的具体原因，而不是笼统的「下载失败」：
         // 加密流不支持、站点改版、切片批量失败……这些用户能据此决定是重试还是放弃

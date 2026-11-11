@@ -3,6 +3,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import '../crawler/config.dart';
@@ -218,6 +219,8 @@ class AppState extends ChangeNotifier {
         maxConcurrentSegments: maxConcurrentSegments,
         saveHtml: saveDebugHtml,
       );
+      // 网络环境单独采集：要发几次外部 HTTP，不能卡住启动流程
+      unawaited(logger.logNetworkEnvironment(reason: '启动应用'));
     }
     // 设置外部数据库路径
     _downloadManager.externalDbPath = downloadDir.isNotEmpty ? downloadDir : null;
@@ -937,6 +940,7 @@ class AppState extends ChangeNotifier {
         saveHtml: saveDebugHtml,
       );
       logger.mark('开启 Debug 日志');
+      unawaited(logger.logNetworkEnvironment(reason: '开启 Debug 日志'));
     }
     await _saveSettings();
     notifyListeners();

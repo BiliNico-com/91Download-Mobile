@@ -11,6 +11,7 @@ import '../services/app_state.dart';
 import '../services/version_service.dart';
 
 import '../services/pin_service.dart';
+import '../services/network_info_service.dart';
 import '../utils/logger.dart';
 import '../utils/open_directory.dart';
 import '../theme/ui_style.dart';
@@ -39,6 +40,16 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
   /// 由 State 持有、在 dispose() 里统一释放，而不是在弹窗 Future 返回后
   /// 立刻 dispose —— 那时关闭动画仍在跑，TextField 还会读它。
   TextEditingController? _customSiteController;
+
+  /// 最近一次采集到的网络环境（接入方式 / 出口 IP / 是否走代理）
+  NetworkSnapshot? _netSnap;
+
+  /// 网络环境正在采集中（探测出口 IP 要发外部请求，可能几秒）
+  bool _netProbing = false;
+
+  /// 调试设置是 push 出来的二级路由，父 State 的 setState 建不到它，
+  /// 网络探测结果只能靠这个 notifier 主动触发重建。
+  final ValueNotifier<int> _netRevision = ValueNotifier<int>(0);
 
   /// 播放节点测速结果：host -> 延迟毫秒（-1 表示超时/失败）
   final Map<String, int> _cdnLatency = {};
@@ -106,6 +117,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     _customSiteController?.dispose();
     _customSiteController = null;
     _siteRevision.dispose();
+    _netRevision.dispose();
     super.dispose();
   }
 
@@ -204,8 +216,15 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   title: '调试设置',
                   subtitle:
                       '${appState.debugMode ? 'Debug 已开启' : 'Debug 已关闭'} · ${appState.realtimeLogEnabled ? '实时日志开' : '实时日志关'}',
-                  onTap: () => _pushSubPage(
-                      '调试设置', (context) => _buildDebugContent(appState)),
+                  onTap: () {
+                    // 先拿启动时缓存的那份，页面立刻有内容；
+                    // 缓存过期再后台刷新，不阻塞二级页推入
+                    _netSnap ??= NetworkInfoService.last;
+                    _probeNetwork(force: false);
+                    _pushSubPage(
+                        '调试设置', (context) => _buildDebugContent(appState),
+                        listenable: _netRevision);
+                  },
                 ),
               ]),
               // 版本号做成页脚小字：它只是「当前版本 + 检查更新」的入口，
@@ -2402,6 +2421,10 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
         ),
         if (appState.debugMode) ...[
           const SizedBox(height: 4),
+          // 排查下载失败时第一件事就是确认「当时是不是走了代理」，
+          // 所以把网络环境放在提交日志按钮正上方
+          _buildNetworkCard(t),
+          const SizedBox(height: 10),
           // 新增强调的主入口：一键把日志文件分享出去（微信/QQ 收到的是文件本体，
           // 不再是把整段文本塞进聊天框被截断）
           SizedBox(
@@ -2464,6 +2487,175 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
           ),
         ],
       ],
+    );
+  }
+
+  // ==================== 网络环境 ====================
+
+  /// 采集一次网络环境
+  ///
+  /// 探测出口 IP 要发外部 HTTP（最长十几秒），所以只在用户看这个页面或
+  /// 手动刷新时才跑，不在设置页一进来就卡住首屏。
+  Future<void> _probeNetwork({bool force = true}) async {
+    if (_netProbing) return;
+    setState(() => _netProbing = true);
+    final snap = await NetworkInfoService.collect(force: force);
+    if (!mounted) return;
+    setState(() {
+      _netSnap = snap;
+      _netProbing = false;
+    });
+    _netRevision.value++;
+  }
+
+  /// 判定结论对应的颜色：走代理用警示色，直连用成功色，未知用灰
+  Color _netVerdictColor(AppTokens t, NetworkSnapshot snap) {
+    if (snap.proxySignals.isNotEmpty) return t.warning;
+    if (snap.publicIp == null || snap.publicIp!.isEmpty) return t.text3;
+    return t.success;
+  }
+
+  Widget _buildNetworkCard(AppTokens t) {
+    final snap = _netSnap;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
+      decoration: BoxDecoration(
+        color: t.surface2,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: t.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.wifi_tethering_rounded, size: 16, color: t.accent),
+              const SizedBox(width: 6),
+              Text(
+                '网络环境',
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w700, color: t.text1),
+              ),
+              const Spacer(),
+              if (_netProbing)
+                SizedBox(
+                  width: 13,
+                  height: 13,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: t.accent),
+                )
+              else
+                InkWell(
+                  onTap: () => _probeNetwork(),
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    child: Text(
+                      snap == null ? '检测' : '重新检测',
+                      style: TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600, color: t.accent),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          if (snap == null)
+            Text(
+              _netProbing ? '正在检测网络…' : '尚未检测',
+              style: TextStyle(fontSize: 12, color: t.text3),
+            )
+          else ...[
+            // 结论放最上面：用户和排查者第一眼要看的就是「直连还是代理」
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _netVerdictColor(t, snap).withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: Text(
+                    snap.verdict,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: _netVerdictColor(t, snap),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    snap.transportText,
+                    style: TextStyle(fontSize: 12, color: t.text2),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 7),
+            _buildNetLine(t, '出口 IP', snap.publicIp ?? '获取失败'),
+            _buildNetLine(t, '出口归属', snap.locationText),
+            _buildNetLine(t, '运营商', snap.carrierText),
+            _buildNetLine(t, '内网 IP', snap.localIpv4 ?? '未知'),
+            _buildNetLine(t, '系统代理', snap.systemProxy ?? '无'),
+            if (snap.proxySignals.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              for (final s in snap.proxySignals)
+                Padding(
+                  padding: const EdgeInsets.only(top: 3),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline_rounded,
+                          size: 12, color: t.warning),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          s,
+                          style: TextStyle(
+                              fontSize: 11.5, height: 1.35, color: t.text2),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            if (snap.error != null &&
+                (snap.publicIp == null || snap.publicIp!.isEmpty)) ...[
+              const SizedBox(height: 6),
+              Text(
+                '出口 IP 探测失败: ${snap.error}',
+                style: TextStyle(fontSize: 11.5, color: t.text3),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNetLine(AppTokens t, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 62,
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 11.5, color: t.text3),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(fontSize: 11.5, color: t.text1),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

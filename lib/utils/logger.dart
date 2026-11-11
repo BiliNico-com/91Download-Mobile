@@ -8,6 +8,8 @@ import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../services/network_info_service.dart';
+
 /// 日志级别
 ///
 /// 历史调用点都传字符串（info / warn / error / debug），这里集中定义常量，
@@ -364,6 +366,32 @@ class Logger {
     if (parts.isEmpty) return;
     writeRaw('[${_fmtFull(DateTime.now())}][Env][info] ${parts.join(" | ")}\n');
     await flush();
+  }
+
+  /// 记录网络环境（接入方式 / 内网 IP / 系统代理 / 出口公网 IP），
+  /// 用于判断当前是直连还是走了代理。
+  ///
+  /// 探测本身要发几次 HTTP（最长十几秒），调用方不要把它放在会阻塞
+  /// 首帧的路径上；日志只是排查辅助，晚一点写并无影响。
+  Future<NetworkSnapshot?> logNetworkEnvironment({
+    bool force = true,
+    String reason = '启动',
+  }) async {
+    if (!_enabled) return null;
+    NetworkSnapshot? snap;
+    try {
+      snap = await NetworkInfoService.collect(force: force);
+    } catch (e) {
+      logSync('Env', '网络环境采集失败: $e', level: LogLevel.warn);
+      return null;
+    }
+    final ts = _fmtFull(DateTime.now());
+    writeRaw('[$ts][Env][info] 网络环境（$reason）\n');
+    for (final line in snap.describeLines()) {
+      writeRaw('[$ts][Env][info]   $line\n');
+    }
+    await flush();
+    return snap;
   }
 
   // ==================== 崩溃捕获 ====================

@@ -1,10 +1,16 @@
 package com.bilinico.download_91
 
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.TextUtils
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -13,6 +19,7 @@ class MainActivity : FlutterActivity() {
     private val FLOATING_CHANNEL = "com.bilinico.download_91/floating_video"
     private val OPEN_DIR_CHANNEL = "com.bilinico.download_91/open_directory"
     private val BRIGHTNESS_CHANNEL = "com.bilinico.download_91/brightness"
+    private val NETWORK_CHANNEL = "com.bilinico.download_91/network_info"
 
     /** 进入播放页前的窗口亮度（-1f = 跟随系统），用于退出时还原 */
     private var savedWindowBrightness: Float = -1f
@@ -60,6 +67,14 @@ class MainActivity : FlutterActivity() {
             }
         }
         
+        // 注册网络环境通道：日志里记录「走的是 WiFi 还是流量、有没有配代理、本机内网 IP」
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NETWORK_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getNetworkInfo" -> result.success(collectNetworkInfo())
+                else -> result.notImplemented()
+            }
+        }
+
         // 注册"打开下载目录"通道
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OPEN_DIR_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -290,6 +305,116 @@ class MainActivity : FlutterActivity() {
      *
      * 按优先级尝试，返回 true 表示成功调起了界面。
      */
+    /**
+     * 采集当前网络环境，供日志判断「直连还是走了代理」。
+     *
+     * 说明：App 自身不读系统代理设置（Dio 走的是 Dart 的 HttpClient，
+     * 默认不跟随 Android 的 http_proxy），所以这里只报事实：
+     *  - transports：WiFi / 移动网络 / 有线 / VPN
+     *  - proxyInfo：系统代理（WiFi 高级设置里的代理）或全局代理
+     *  - vpnActive：是否有 VPN 类型的网络在跑（代理软件「VPN 模式」）
+     *  - localIpv4：本机在该网络下的内网地址，配合日志里的公网 IP 可判断出口
+     */
+    private fun collectNetworkInfo(): Map<String, Any?> {
+        val info = HashMap<String, Any?>()
+        info["sdkInt"] = Build.VERSION.SDK_INT
+        var wifi = false
+        var cellular = false
+        var ethernet = false
+        var vpn = false
+        var validated = false
+        var metered: Boolean? = null
+        var httpProxy: String? = null
+        var localIpv4: String? = null
+
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            if (cm != null) {
+                val active = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) cm.activeNetwork else null
+                val caps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && active != null)
+                    cm.getNetworkCapabilities(active) else null
+                if (caps != null) {
+                    wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                    cellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                    ethernet = caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                    vpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    }
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    try {
+                        metered = cm.isActiveNetworkMetered
+                    } catch (_: Exception) {
+                    }
+                }
+                // 任何一条网络带 VPN 传输都算，代理软件常见就是建一条 VPN
+                try {
+                    for (n in cm.allNetworks) {
+                        val c = cm.getNetworkCapabilities(n) ?: continue
+                        if (c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                            vpn = true
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        // 系统代理：AndroidManifest 里没开 usesCleartextTraffic 之外的限制，
+        // getDefaultProxy 在 4.0+ 可直接读取 WiFi 高级代理配置。
+        try {
+            val proxy = java.net.ProxySelector.getDefault()?.select(java.net.URI("https://example.com"))
+            val first = proxy?.firstOrNull()
+            if (first != null && first != java.net.Proxy.NO_PROXY) {
+                val addr = first.address()
+                if (addr is java.net.InetSocketAddress && addr.port > 0) {
+                    httpProxy = addr.hostString + ":" + addr.port
+                }
+            }
+        } catch (_: Exception) {
+        }
+        if (httpProxy == null) {
+            try {
+                val host = System.getProperty("http.proxyHost")
+                val port = System.getProperty("http.proxyPort")
+                if (!TextUtils.isEmpty(host)) {
+                    httpProxy = host + ":" + (port ?: "?")
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        localIpv4 = findLocalIpv4()
+
+        info["wifi"] = wifi
+        info["cellular"] = cellular
+        info["ethernet"] = ethernet
+        info["vpn"] = vpn
+        info["validated"] = validated
+        info["metered"] = metered
+        info["httpProxy"] = httpProxy
+        info["localIpv4"] = localIpv4
+        return info
+    }
+
+    /** 本机在当前网络下的 IPv4 内网地址（去掉回环） */
+    private fun findLocalIpv4(): String? {
+        try {
+            for (nif in NetworkInterface.getNetworkInterfaces() ?: return null) {
+                if (!nif.isUp || nif.isLoopback) continue
+                for (addr in nif.inetAddresses) {
+                    if (addr is Inet4Address && !addr.isLoopbackAddress && !addr.isLinkLocalAddress) {
+                        return addr.hostAddress
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+        return null
+    }
+
     private fun openDirectory(path: String): Boolean {
         if (path.isEmpty()) return false
 
