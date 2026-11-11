@@ -12,10 +12,12 @@
 - 📜 **下载管理** - 本地数据库记录，断点续传
 - 🔒 **应用锁** - PIN码保护隐私
 - 🎨 **深色主题** - Material 3 设计，护眼模式
-- 📱 **良好适配** - 支持Android 7.0+
+- 📱 **良好适配** - 支持 Android 5.0+（minSdk 21，targetSdk 34）
 - 🌐 **多站点** - 91porn / 91porny / jiuse / 嗨碰(hifuli) 站点切换，支持自定义站点；按家族分组展示并内置测速，最快线路自动打标；自定义站点可手动归类到指定站点系，也可随时删除
 - 🚀 **播放线路** - 内置多条视频 CDN 节点，可测速后手动选择
 - 🧹 **干净标题** - 自动剔除标题/作者中的隐形字符，搜索与文件名不再踩坑
+- 📝 **运行日志** - 记录操作、网络请求与下载全流程，出问题可一键提交日志
+- 🛰️ **网络判定** - 日志里自动记录出口 IP、归属地与运营商，判别直连还是代理
 
 ## 截图
 
@@ -77,15 +79,26 @@ flutter analyze
 ```
 lib/
 ├── crawler/          # 数据获取核心
+│   ├── crawler_core.dart      # HTTP、分页状态机、下载链路
+│   ├── config.dart            # 站点表、列表类型、常量、HTML 工具
+│   └── sites/                 # 各站点解析器（porn91 / jiuse / hifuli / original）
 ├── models/           # 数据模型
+├── components/       # 共享组件（app_shell / video_list_items / cover_image…）
 ├── pages/            # 页面UI
+│   ├── main_page.dart
 │   ├── batch_page.dart
 │   ├── search_page.dart
-│   ├── history_page.dart
+│   ├── download_page.dart
 │   └── settings_page.dart
-├── services/         # 服务层
+├── services/         # 服务层（下载调度、版本检查、日志、网络探测…）
+├── theme/            # 设计令牌（app_tokens）与主题
 └── utils/            # 工具类
 ```
+
+## 开发文档
+
+- [VERSIONING.md](VERSIONING.md)：版本号、提交信息与发布流程
+- [HANDOVER.md](HANDOVER.md)：交接文档 —— 历次改动的来龙去脉、代码地图、构建环境、已知问题与踩坑清单
 
 ## License
 
