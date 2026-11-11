@@ -161,7 +161,7 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
                   color: t.success,
                   title: '并发与限速',
                   subtitle:
-                      '${appState.maxConcurrentTasks} 个任务 · ${appState.maxConcurrentSegments} 切片 · 播放节点',
+                      '${appState.maxConcurrentTasks} 个任务 · ${appState.maxConcurrentSegments} 切片 · ${appState.maxMp4Concurrent} MP4块',
                   onTap: () => _pushSubPage('下载设置',
                       (context) => _buildDownloadConcurrencyContent(appState)),
                 ),
@@ -1523,99 +1523,49 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // 同时下载任务数
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('同时下载任务数', style: TextStyle(fontSize: 14)),
-                  Text('同时下载的视频数量', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              ),
-            ),
-            SizedBox(width: 8),
-            Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: Theme.of(context).colorScheme.primary),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  _buildConcurrentButton(
-                    icon: Icons.remove,
-                    onTap: appState.maxConcurrentTasks > 1
-                        ? () => appState.setMaxConcurrentTasks(appState.maxConcurrentTasks - 1)
-                        : null,
-                  ),
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: Text(
-                      '${appState.maxConcurrentTasks}',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  _buildConcurrentButton(
-                    icon: Icons.add,
-                    onTap: appState.maxConcurrentTasks < 5
-                        ? () => appState.setMaxConcurrentTasks(appState.maxConcurrentTasks + 1)
-                        : null,
-                  ),
-                ],
-              ),
-            ),
-          ],
+        _buildConcurrencyRow(
+          title: '同时下载任务数',
+          subtitle: '同时下载的视频数量',
+          value: appState.maxConcurrentTasks,
+          min: DownloadConfig.minConcurrentTasks,
+          max: DownloadConfig.maxConcurrentTasksLimit,
+          step: DownloadConfig.concurrentTasksStep,
+          onChanged: appState.setMaxConcurrentTasks,
         ),
         SizedBox(height: 12),
         Divider(),
-        
+
         // TS切片并发数
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('切片并发数', style: TextStyle(fontSize: 14)),
-                  Text('单个视频TS切片同时下载数', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              ),
-            ),
-            SizedBox(width: 8),
-            Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: Theme.of(context).colorScheme.primary),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  _buildConcurrentButton(
-                    icon: Icons.remove,
-                    onTap: appState.maxConcurrentSegments > 4
-                        ? () => appState.setMaxConcurrentSegments(appState.maxConcurrentSegments - 4)
-                        : null,
-                  ),
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: Text(
-                      '${appState.maxConcurrentSegments}',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  _buildConcurrentButton(
-                    icon: Icons.add,
-                    onTap: appState.maxConcurrentSegments < 64
-                        ? () => appState.setMaxConcurrentSegments(appState.maxConcurrentSegments + 4)
-                        : null,
-                  ),
-                ],
-              ),
-            ),
-          ],
+        _buildConcurrencyRow(
+          title: '切片并发数',
+          subtitle: '单个视频TS切片同时下载数',
+          value: appState.maxConcurrentSegments,
+          min: DownloadConfig.minConcurrentSegments,
+          max: DownloadConfig.maxConcurrentSegmentsLimit,
+          step: DownloadConfig.concurrentSegmentsStep,
+          onChanged: appState.setMaxConcurrentSegments,
         ),
         SizedBox(height: 8),
         Text(
           '建议WiFi下使用32，移动数据下使用8-16',
+          style: TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+        SizedBox(height: 12),
+        Divider(),
+
+        // MP4 分块并发数（与 TS 切片分开，两者最优值不同）
+        _buildConcurrencyRow(
+          title: 'MP4分块并发数',
+          subtitle: '单个MP4直连视频的分块连接数',
+          value: appState.maxMp4Concurrent,
+          min: DownloadConfig.minMp4Concurrent,
+          max: DownloadConfig.maxMp4ConcurrentLimit,
+          step: DownloadConfig.concurrentSegmentsStep,
+          onChanged: appState.setMaxMp4Concurrent,
+        ),
+        SizedBox(height: 8),
+        Text(
+          '仅影响MP4直连下载；调太高容易被CDN限速，建议与切片并发保持一致',
           style: TextStyle(fontSize: 11, color: Colors.grey),
         ),
         SizedBox(height: 12),
@@ -1649,6 +1599,62 @@ class _SettingsPageState extends State<SettingsPage> with AutomaticKeepAliveClie
     );
   }
   
+  /// 一行「标题 + 说明 + 减/值/加」的并发调节控件
+  ///
+  /// 三个设置项（任务数、切片并发、MP4 分块并发）结构完全一样，
+  /// 抽出来复用，顺便把写死在各处的上下限与步长换成 DownloadConfig 常量，
+  /// 以后再调范围只用改一处。
+  Widget _buildConcurrencyRow({
+    required String title,
+    required String subtitle,
+    required int value,
+    required int min,
+    required int max,
+    required int step,
+    required ValueChanged<int> onChanged,
+  }) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: TextStyle(fontSize: 14)),
+              Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey)),
+            ],
+          ),
+        ),
+        SizedBox(width: 8),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).colorScheme.primary),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              _buildConcurrentButton(
+                icon: Icons.remove,
+                // 减完不能低于下限，否则会停在 1/4 这类越界值上
+                onTap: (value - step) >= min ? () => onChanged(value - step) : null,
+              ),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
+                  '$value',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              _buildConcurrentButton(
+                icon: Icons.add,
+                onTap: (value + step) <= max ? () => onChanged(value + step) : null,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   /// 构建并发数调节按钮
   Widget _buildConcurrentButton({required IconData icon, VoidCallback? onTap}) {
     return InkWell(

@@ -44,6 +44,20 @@ class DownloadConfig {
   static const int minConcurrentSegments = 1;
   static const int maxConcurrentSegmentsLimit = 64;
   static const int defaultConcurrentSegments = 32;
+
+  /// MP4 直连分块的并发数。
+  ///
+  /// 原来是直接复用「TS 切片并发数」，但两者的最优值差得很远：
+  /// TS 切片小（几百 KB 的整片），靠请求数堆速度；
+  /// MP4 每块 256 KB~1 MB 且带 Range 头，CDN 按连接给配额，
+  /// 并发开太大会被限速、开太小又拿不满带宽，所以单独给一个开关。
+  static const int minMp4Concurrent = 1;
+  static const int maxMp4ConcurrentLimit = 64;
+  static const int defaultMp4Concurrent = 32;
+
+  /// 切片并发数在设置页按 4 递增，这里统一一下步长
+  static const int concurrentSegmentsStep = 4;
+  static const int concurrentTasksStep = 1;
 }
 
 class AppState extends ChangeNotifier {
@@ -96,6 +110,10 @@ class AppState extends ChangeNotifier {
   
   // TS切片并发下载数
   int maxConcurrentSegments = DownloadConfig.defaultConcurrentSegments;
+
+  // MP4 直连分块并发下载数（与 TS 切片并发分开，两者最优值差很多）
+  int maxMp4Concurrent =
+      DownloadConfig.defaultMp4Concurrent;
   
   // 视频显示模式: 'grid' 大图模式, 'list' 列表模式
   String videoDisplayMode = 'grid';
@@ -179,6 +197,7 @@ class AppState extends ChangeNotifier {
 
     _crawler!.saveDebugHtml = saveDebugHtml;
     _crawler!.maxConcurrentDownloads = maxConcurrentSegments;
+    _crawler!.mp4MaxConcurrentDownloads = maxMp4Concurrent;
     _crawler!.cdnHost = cdnHost;
     _downloadManager.maxConcurrentTasks = maxConcurrentTasks;
     _downloadManager.maxConcurrentSegments = maxConcurrentSegments;
@@ -331,6 +350,9 @@ class AppState extends ChangeNotifier {
     if (data['maxConcurrentSegments'] is int) {
       maxConcurrentSegments = data['maxConcurrentSegments'] as int;
     }
+    if (data['maxMp4Concurrent'] is int) {
+      maxMp4Concurrent = data['maxMp4Concurrent'] as int;
+    }
     // 故意不从备份恢复 appLockEnabled：
     // 1. 旧版本备份里可能残留该字段，恢复它会让用户在没有 PIN 的情况下
     //    处于「已上锁」状态，直接卡在解锁界面进不去；
@@ -369,6 +391,7 @@ class AppState extends ChangeNotifier {
         'useExternalPlayer': useExternalPlayer,
         'maxConcurrentTasks': maxConcurrentTasks,
         'maxConcurrentSegments': maxConcurrentSegments,
+        'maxMp4Concurrent': maxMp4Concurrent,
         // 注意：这里**不写** appLockEnabled。
         // 备份文件在外部存储（<下载目录>/.db/settings_backup.json），
         // 任何 App 都能读。写上它就等于对外宣告「这个 App 有应用锁」，
@@ -450,6 +473,7 @@ class AppState extends ChangeNotifier {
     useExternalPlayer = prefs.getBool('useExternalPlayer') ?? false;
     maxConcurrentTasks = prefs.getInt('maxConcurrentTasks') ?? DownloadConfig.defaultConcurrentTasks;
     maxConcurrentSegments = prefs.getInt('maxConcurrentSegments') ?? DownloadConfig.defaultConcurrentSegments;
+    maxMp4Concurrent = prefs.getInt('maxMp4Concurrent') ?? DownloadConfig.defaultMp4Concurrent;
     appLockEnabled = prefs.getBool('appLockEnabled') ?? false;
     privacyMode = prefs.getBool('privacyMode') ?? false;
     nomediaEnabled = prefs.getBool('nomediaEnabled') ?? false;
@@ -488,6 +512,7 @@ class AppState extends ChangeNotifier {
       prefs.setBool('useExternalPlayer', useExternalPlayer),
       prefs.setInt('maxConcurrentTasks', maxConcurrentTasks),
       prefs.setInt('maxConcurrentSegments', maxConcurrentSegments),
+      prefs.setInt('maxMp4Concurrent', maxMp4Concurrent),
       prefs.setBool('appLockEnabled', appLockEnabled),
       prefs.setBool('privacyMode', privacyMode),
       prefs.setBool('nomediaEnabled', nomediaEnabled),
@@ -994,6 +1019,20 @@ class AppState extends ChangeNotifier {
     _downloadManager.maxConcurrentSegments = maxConcurrentSegments;
     if (_crawler != null) {
       _crawler!.maxConcurrentDownloads = maxConcurrentSegments;
+    }
+    _saveSettings();
+    notifyListeners();
+  }
+
+  // 设置 MP4 分块并发数
+  void setMaxMp4Concurrent(int value) {
+    maxMp4Concurrent = value.clamp(
+      DownloadConfig.minMp4Concurrent,
+      DownloadConfig.maxMp4ConcurrentLimit,
+    );
+    // 只影响 MP4 分块下载，不动 TS 切片那条链路
+    if (_crawler != null) {
+      _crawler!.mp4MaxConcurrentDownloads = maxMp4Concurrent;
     }
     _saveSettings();
     notifyListeners();

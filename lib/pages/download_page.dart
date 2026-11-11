@@ -72,9 +72,13 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
 
   /// 列表底部给毛玻璃底栏预留的高度
   ///
-  /// main_page 用了 extendBody，body 一直铺到屏幕底部，
-  /// MediaQuery 里的 bottom 恰好是底栏总高，直接拿它当内边距。
-  double get _bottomInset => MediaQuery.of(context).padding.bottom + 12;
+  /// main_page 用了 extendBody，body 一直铺到屏幕底部，需要给自绘底栏让位。
+  /// 底栏实际高度是 62 + 底部安全区（见 main_page._buildGlassNavBar），
+  /// 不能只取 MediaQuery.padding.bottom：根 Scaffold 带 bottomNavigationBar 时
+  /// 框架会把 body 里的 bottom padding 扣掉（scaffold.dart removeBottomPadding），
+  /// 那样拿到的通常是 0，列表最后一项就会被底栏压住。
+  double get _bottomInset =>
+      MediaQuery.of(context).viewPadding.bottom + 62 + 12;
 
   @override
   Widget build(BuildContext context) {
@@ -1051,18 +1055,111 @@ class _DownloadPageState extends State<DownloadPage> with SingleTickerProviderSt
         break;
     }
 
+    // 还有没合并的切片时补一个「合并」入口。
+    // 典型场景：切片全下完了，合并那一步被系统杀掉或写盘失败，
+    // 任务停在失败态——没有这个按钮就只能整段重下，几十上百 MB 白费。
+    if (appState.downloadManager.hasPendingSlices(task)) {
+      add(Icons.merge_type_rounded, AppTheme.infoColor, '合并切片',
+          () => _forceMergeTask(task, appState));
+    }
+
     if (buttons.isEmpty) return const SizedBox.shrink();
 
+    // 最多排三个（开始/暂停 + 删除 + 合并），再多右侧就挤到标题了
+    final shown = buttons.take(3).toList();
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        buttons.first,
-        if (buttons.length > 1) ...[
-          const SizedBox(height: 6),
-          buttons[1],
+        for (var i = 0; i < shown.length; i++) ...[
+          if (i > 0) const SizedBox(height: 6),
+          shown[i],
         ],
       ],
     );
+  }
+
+  /// 强制合并：把已下好的切片拼成最终视频文件
+  ///
+  /// 正常合并是下载收尾自动做的，这条路径服务于「切片齐了但合并没跑完」
+  /// 的任务。第一次合并会校验块数/长度；校验不过（缺块）时再问一次，
+  /// 由用户决定要不要接受一个不完整的文件。
+  Future<void> _forceMergeTask(DownloadTask task, AppState appState) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final kind = appState.downloadManager.pendingSliceKind(task);
+    if (kind == null) return;
+    final label = kind == 'ts' ? 'TS 切片' : 'MP4 分块';
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('合并$label'),
+        content: Text('把「${_formatTitle(task.video)}」已下载的$label'
+            '直接拼成一个视频文件？\n\n'
+            '不会重新下载；若分块缺失会提示你是否强行合并。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('合并'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    if (!mounted) return;
+
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      content: Text('正在合并$label…'),
+      duration: const Duration(seconds: 2),
+    ));
+
+    var result = await appState.downloadManager.forceMergeTask(task);
+
+    // 缺块/长度不符：问一次要不要硬拼
+    if (!result.ok && mounted) {
+      final force = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('合并未完成'),
+          content: Text('${result.message}\n\n'
+              '仍要强行合并吗？缺块会被跳过，成片可能在缺失位置卡顿或花屏。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('放弃'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('强行合并'),
+            ),
+          ],
+        ),
+      );
+      if (force == true) {
+        if (!mounted) return;
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(SnackBar(
+          content: Text('正在强行合并$label…'),
+          duration: const Duration(seconds: 2),
+        ));
+        result = await appState.downloadManager.forceMergeTask(
+          task,
+          allowIncomplete: true,
+        );
+      }
+    }
+
+    if (!mounted) return;
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      content: Text(result.message),
+      duration: const Duration(seconds: 3),
+    ));
+    logger.mark('强制合并', '${task.video.title}: ${result.message}');
   }
 
   /// 任务行右侧的方形操作按钮
